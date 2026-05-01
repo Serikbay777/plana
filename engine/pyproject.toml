@@ -1,0 +1,31 @@
+[project]
+name = "plana-engine"
+version = "0.1.0"
+description = "Plana — алгоритмическое ядро для генерации планировок этажей"
+requires-python = ">=3.11"
+dependencies = [
+    "shapely>=2.0",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "ezdxf>=1.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+plana-engine = "plana_engine.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["plana_engine*"]

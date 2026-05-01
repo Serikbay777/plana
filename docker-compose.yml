@@ -1,0 +1,43 @@
+services:
+  engine:
+    build:
+      context: ./engine
+    container_name: plana-engine
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      # норматив-конфиг и каталог тайлов мапим как том,
+      # чтобы заказчик мог править .yaml без пересборки контейнера
+      - ./engine/data:/app/data:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: plana-web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_ENGINE_URL: "http://localhost:8001"
+    ports:
+      - "3000:3000"
+    depends_on:
+      engine:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: plana-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+      - engine
