@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install -e ".[dev]" --no-deps && \
     pip install shapely pydantic pyyaml fastapi "uvicorn[standard]" \
-                python-multipart ezdxf
+                python-multipart ezdxf "openai>=1.40" httpx pillow
 
 COPY plana_engine ./plana_engine
 COPY data ./data
