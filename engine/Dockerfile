@@ -22,6 +22,6 @@ RUN pip install --upgrade pip && pip install -e ".[dev]" --no-deps && \
 COPY plana_engine ./plana_engine
 COPY data ./data
 
-EXPOSE 8001
+EXPOSE 10000
 
-CMD ["uvicorn", "plana_engine.api.main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["sh", "-c", "uvicorn plana_engine.api.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
