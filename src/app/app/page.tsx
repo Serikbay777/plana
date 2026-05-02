@@ -6,10 +6,11 @@ import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight, Box,
+  Sun, Moon, Camera, RotateCw, Pause, Building, Mountain, Compass,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { PlanCanvas } from "@/components/PlanCanvas";
-import { PlanCanvas3D } from "@/components/PlanCanvas3D";
+import { PlanCanvas3D, type PlanCanvas3DHandle, type SceneMode, type CameraPreset } from "@/components/PlanCanvas3D";
 import { AppMetrics } from "@/components/AppMetrics";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { exportPlanPdf, exportAiPlansPdf } from "@/lib/pdf-export";
@@ -1830,6 +1831,50 @@ function View3DTab({
   const aiVariants = aiPlansBag.variants;
   const aiImageUrl = aiVariants[selectedAiIdx]?.imageUrl ?? undefined;
 
+  // ── 3D scene controls ─────────────────────────────────────────────────────
+  const canvasRef = useRef<PlanCanvas3DHandle>(null);
+  const [mode, setMode] = useState<SceneMode>("night");
+  const [autoRotate, setAutoRotate] = useState<boolean>(true);
+  const [visibleFloors, setVisibleFloors] = useState<number>(floors);
+  const [activePreset, setActivePreset] = useState<CameraPreset | null>("iso");
+
+  // Когда меняется количество этажей в форме — сбрасываем срез под новое значение.
+  useEffect(() => {
+    setVisibleFloors(floors);
+  }, [floors]);
+
+  // Sync slider → canvas. Это покрывает случай, когда сцена только что пересобралась
+  // (новый plan / aiImage) и нужно довыставить текущий срез.
+  useEffect(() => {
+    canvasRef.current?.setVisibleFloors(visibleFloors);
+  }, [visibleFloors, plan, aiImageUrl]);
+
+  const handleSetMode = (m: SceneMode) => {
+    setMode(m);
+    canvasRef.current?.setMode(m);
+  };
+  const handleSetAutoRotate = (on: boolean) => {
+    setAutoRotate(on);
+    canvasRef.current?.setAutoRotate(on);
+  };
+  const handleSetVisibleFloors = (n: number) => {
+    setVisibleFloors(n);
+    canvasRef.current?.setVisibleFloors(n);
+  };
+  const handlePreset = (p: CameraPreset) => {
+    setActivePreset(p);
+    setAutoRotate(false);
+    canvasRef.current?.setCameraPreset(p);
+  };
+  const handleScreenshot = () => {
+    const url = canvasRef.current?.screenshot();
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `plana-3d-${Date.now()}.png`;
+    a.click();
+  };
+
   return (
     <>
       {/* Top bar: plan variant + AI plan selector */}
@@ -1922,7 +1967,31 @@ function View3DTab({
         )}
 
         {bag.state === "ready" && plan && (
-          <PlanCanvas3D plan={plan} floors={floors} aiPlanImageUrl={aiImageUrl} />
+          <>
+            <PlanCanvas3D
+              ref={canvasRef}
+              plan={plan}
+              floors={floors}
+              aiPlanImageUrl={aiImageUrl}
+              initialMode={mode}
+              initialAutoRotate={autoRotate}
+              initialVisibleFloors={visibleFloors}
+            />
+
+            {/* ── Floating controls overlay ── */}
+            <SceneControls
+              mode={mode}
+              autoRotate={autoRotate}
+              floors={floors}
+              visibleFloors={visibleFloors}
+              activePreset={activePreset}
+              onSetMode={handleSetMode}
+              onToggleAutoRotate={() => handleSetAutoRotate(!autoRotate)}
+              onSetVisibleFloors={handleSetVisibleFloors}
+              onPreset={handlePreset}
+              onScreenshot={handleScreenshot}
+            />
+          </>
         )}
       </div>
 
@@ -1954,6 +2023,122 @@ function View3DTab({
         </div>
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SceneControls — плавающая панель с переключателями для 3D
+// ---------------------------------------------------------------------------
+
+function SceneControls({
+  mode, autoRotate, floors, visibleFloors, activePreset,
+  onSetMode, onToggleAutoRotate, onSetVisibleFloors, onPreset, onScreenshot,
+}: {
+  mode: SceneMode;
+  autoRotate: boolean;
+  floors: number;
+  visibleFloors: number;
+  activePreset: CameraPreset | null;
+  onSetMode: (m: SceneMode) => void;
+  onToggleAutoRotate: () => void;
+  onSetVisibleFloors: (n: number) => void;
+  onPreset: (p: CameraPreset) => void;
+  onScreenshot: () => void;
+}) {
+  const presets: Array<{ key: CameraPreset; icon: React.ReactNode; label: string }> = [
+    { key: "iso",   icon: <Box size={13} />,      label: "Изометрия" },
+    { key: "top",   icon: <Mountain size={13} />, label: "Сверху" },
+    { key: "front", icon: <Building size={13} />, label: "Фасад" },
+    { key: "side",  icon: <Compass size={13} />,  label: "Сбоку" },
+  ];
+
+  const segBtn = (active: boolean) => [
+    "h-7 px-2.5 rounded-md text-[11px] flex items-center gap-1 transition",
+    active
+      ? "bg-white/[0.12] text-white"
+      : "text-white/55 hover:text-white hover:bg-white/[0.05]",
+  ].join(" ");
+
+  return (
+    <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3 pointer-events-none">
+      {/* Левый кластер: режим + автоповорот + пресеты */}
+      <div className="flex items-center gap-2 pointer-events-auto">
+        {/* Day / Night */}
+        <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
+          <button
+            onClick={() => onSetMode("day")}
+            className={segBtn(mode === "day")}
+            title="Дневной режим"
+          >
+            <Sun size={13} /> День
+          </button>
+          <button
+            onClick={() => onSetMode("night")}
+            className={segBtn(mode === "night")}
+            title="Ночной режим"
+          >
+            <Moon size={13} /> Ночь
+          </button>
+        </div>
+
+        {/* Auto-rotate toggle */}
+        <button
+          onClick={onToggleAutoRotate}
+          className={[
+            "h-8 px-2.5 rounded-lg text-[11px] flex items-center gap-1 border backdrop-blur-md transition",
+            autoRotate
+              ? "bg-violet-500/20 border-violet-400/30 text-violet-100"
+              : "bg-black/40 border-white/10 text-white/65 hover:text-white",
+          ].join(" ")}
+          title={autoRotate ? "Остановить вращение" : "Включить автоповорот"}
+        >
+          {autoRotate ? <Pause size={12} /> : <RotateCw size={12} />}
+          {autoRotate ? "Стоп" : "Авто"}
+        </button>
+
+        {/* Camera presets */}
+        <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
+          {presets.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => onPreset(p.key)}
+              className={segBtn(activePreset === p.key)}
+              title={p.label}
+            >
+              {p.icon}
+              <span className="hidden lg:inline">{p.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Правый кластер: срез этажей + screenshot */}
+      <div className="flex items-center gap-2 pointer-events-auto">
+        <div className="flex items-center gap-2.5 bg-black/40 backdrop-blur-md border border-white/10 rounded-lg px-3 h-8">
+          <Layers size={12} className="text-white/55 flex-shrink-0" />
+          <span className="text-[11px] text-white/55 whitespace-nowrap">Этажи</span>
+          <input
+            type="range"
+            min={1}
+            max={floors}
+            value={visibleFloors}
+            onChange={(e) => onSetVisibleFloors(Number(e.target.value))}
+            className="w-28 accent-violet-400 cursor-pointer"
+          />
+          <span className="text-[11px] tabular text-white/85 min-w-[28px] text-right">
+            {visibleFloors}/{floors}
+          </span>
+        </div>
+
+        <button
+          onClick={onScreenshot}
+          className="h-8 px-2.5 rounded-lg text-[11px] flex items-center gap-1 bg-black/40 backdrop-blur-md border border-white/10 text-white/65 hover:text-white hover:bg-black/55 transition"
+          title="Сохранить кадр в PNG"
+        >
+          <Camera size={12} /> PNG
+        </button>
+      </div>
+    </div>
   );
 }
 

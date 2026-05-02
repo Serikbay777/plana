@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { Plan, Polygon } from "@/lib/engine";
@@ -64,421 +64,618 @@ function extrude(
   return mesh;
 }
 
-// ── component ─────────────────────────────────────────────────────────────────
+// ── public API ───────────────────────────────────────────────────────────────
+
+export type SceneMode = "day" | "night";
+export type CameraPreset = "iso" | "top" | "front" | "side";
+
+export type PlanCanvas3DHandle = {
+  setMode: (mode: SceneMode) => void;
+  setAutoRotate: (on: boolean) => void;
+  /** 1..floors — сколько этажей показывать (срез сверху) */
+  setVisibleFloors: (n: number) => void;
+  setCameraPreset: (preset: CameraPreset) => void;
+  /** PNG dataURL текущего кадра */
+  screenshot: () => string;
+};
 
 export type PlanCanvas3DProps = {
   plan: Plan;
   floors: number;
   aiPlanImageUrl?: string;
+  initialMode?: SceneMode;
+  initialAutoRotate?: boolean;
+  /** Сколько этажей показать сразу после сборки (по умолчанию все). */
+  initialVisibleFloors?: number;
 };
 
-export function PlanCanvas3D({ plan, floors, aiPlanImageUrl }: PlanCanvas3DProps) {
-  const mountRef = useRef<HTMLDivElement>(null);
+// ── component ────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) return;
+export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
+  function PlanCanvas3D(
+    {
+      plan, floors, aiPlanImageUrl,
+      initialMode = "night",
+      initialAutoRotate = true,
+      initialVisibleFloors,
+    },
+    ref,
+  ) {
+    const mountRef = useRef<HTMLDivElement>(null);
+    const apiRef = useRef<PlanCanvas3DHandle | null>(null);
 
-    const W = mount.clientWidth || 900;
-    const H = mount.clientHeight || 620;
-    const FH = 3.15;
-    const TOTAL = floors * FH;
-    const bb = bbox(plan.floor_polygon);
-    const { cx, cy } = bb;
-    const diag = Math.sqrt(bb.w ** 2 + bb.d ** 2);
+    useImperativeHandle(ref, () => ({
+      setMode: (m) => apiRef.current?.setMode(m),
+      setAutoRotate: (on) => apiRef.current?.setAutoRotate(on),
+      setVisibleFloors: (n) => apiRef.current?.setVisibleFloors(n),
+      setCameraPreset: (p) => apiRef.current?.setCameraPreset(p),
+      screenshot: () => apiRef.current?.screenshot() ?? "",
+    }), []);
 
-    // ── renderer ──────────────────────────────────────────────────────────────
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setSize(W, H);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.35;
-    renderer.setClearColor(0x060914);
-    mount.appendChild(renderer.domElement);
+    useEffect(() => {
+      const mount = mountRef.current;
+      if (!mount) return;
 
-    // ── scene ─────────────────────────────────────────────────────────────────
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x060914);
-    scene.fog = new THREE.FogExp2(0x060914, 0.004);
+      const W = mount.clientWidth || 900;
+      const H = mount.clientHeight || 620;
+      const FH = 3.15;
+      const TOTAL = floors * FH;
+      const bb = bbox(plan.floor_polygon);
+      const { cx, cy } = bb;
+      const diag = Math.sqrt(bb.w ** 2 + bb.d ** 2);
 
-    // ── camera ────────────────────────────────────────────────────────────────
-    const camera = new THREE.PerspectiveCamera(34, W / H, 0.5, 800);
-    const camDist = diag * 1.15 + TOTAL * 0.85;
-    camera.position.set(cx + camDist * 0.6, cy - camDist * 1.0, TOTAL * 1.55);
-    camera.up.set(0, 0, 1);
+      // ── renderer ──────────────────────────────────────────────────────────
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: false,
+        preserveDrawingBuffer: true, // нужно для screenshot()
+      });
+      renderer.setSize(W, H);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.35;
+      renderer.localClippingEnabled = true;
+      mount.appendChild(renderer.domElement);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(cx, cy, TOTAL * 0.40);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.minDistance = 10;
-    controls.maxDistance = 600;
-    controls.maxPolarAngle = Math.PI / 2.06;
-    controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.4;
-    camera.lookAt(controls.target);
-    controls.update();
+      // Плоскость отсечения для среза этажей. Нормаль вниз, всё что ниже плоскости — видимо.
+      // plane: dot(n, p) + c >= 0 → видимо. n=(0,0,-1), c = h → -z + h >= 0 → z <= h.
+      const clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), TOTAL + 100);
 
-    // ── lights ────────────────────────────────────────────────────────────────
-    // Тёмное ночное небо
-    scene.add(new THREE.HemisphereLight(0x1a2a4a, 0x080810, 0.5));
+      // ── scene ─────────────────────────────────────────────────────────────
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x060914);
+      scene.fog = new THREE.FogExp2(0x060914, 0.004);
 
-    // Луна — холодный синий свет слева-сверху
-    const moon = new THREE.DirectionalLight(0x7090d0, 1.4);
-    moon.position.set(cx - 120, cy + 80, 200);
-    moon.castShadow = true;
-    moon.shadow.mapSize.set(4096, 4096);
-    const sc = moon.shadow.camera as THREE.OrthographicCamera;
-    const r = diag + 40;
-    sc.left = sc.bottom = -r; sc.right = sc.top = r;
-    sc.near = 1; sc.far = 800;
-    scene.add(moon);
+      // ── camera ────────────────────────────────────────────────────────────
+      const camera = new THREE.PerspectiveCamera(34, W / H, 0.5, 800);
+      const camDist = diag * 1.15 + TOTAL * 0.85;
+      const isoPos: [number, number, number] = [
+        cx + camDist * 0.6, cy - camDist * 1.0, TOTAL * 1.55,
+      ];
+      camera.position.set(...isoPos);
+      camera.up.set(0, 0, 1);
 
-    // Тёплый акцент справа (закатный отблеск)
-    const warm = new THREE.DirectionalLight(0xff8844, 0.55);
-    warm.position.set(cx + 80, cy - 60, 60);
-    scene.add(warm);
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(cx, cy, TOTAL * 0.40);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.minDistance = 10;
+      controls.maxDistance = 600;
+      controls.maxPolarAngle = Math.PI / 2.06;
+      controls.autoRotate = initialAutoRotate;
+      controls.autoRotateSpeed = 0.4;
+      camera.lookAt(controls.target);
+      controls.update();
 
-    // Точечные огни на земле у основания здания
-    const groundGlow1 = new THREE.PointLight(0x4466ff, 3.5, 35);
-    groundGlow1.position.set(bb.minX - 3, bb.minY - 3, 1);
-    scene.add(groundGlow1);
-    const groundGlow2 = new THREE.PointLight(0x3355ee, 2.5, 30);
-    groundGlow2.position.set(bb.maxX + 3, bb.maxY + 3, 1);
-    scene.add(groundGlow2);
+      // ── lights (создаём ОБА набора, потом включаем нужный) ────────────────
+      // Ночные источники
+      const hemiNight = new THREE.HemisphereLight(0x1a2a4a, 0x080810, 0.5);
+      const moon = new THREE.DirectionalLight(0x7090d0, 1.4);
+      moon.position.set(cx - 120, cy + 80, 200);
+      moon.castShadow = true;
+      moon.shadow.mapSize.set(2048, 2048);
+      const moonSc = moon.shadow.camera as THREE.OrthographicCamera;
+      const r = diag + 40;
+      moonSc.left = moonSc.bottom = -r; moonSc.right = moonSc.top = r;
+      moonSc.near = 1; moonSc.far = 800;
+      const warmAccent = new THREE.DirectionalLight(0xff8844, 0.55);
+      warmAccent.position.set(cx + 80, cy - 60, 60);
 
-    // Тёплые огни этажей (каждые 3 этажа)
-    for (let f = 0; f < floors; f += 3) {
-      const fl = new THREE.PointLight(0xffcc88, 1.8, 20);
-      fl.position.set(cx, cy, f * FH + FH * 0.5);
-      scene.add(fl);
-    }
+      // Дневные источники
+      const hemiDay = new THREE.HemisphereLight(0xbfd9ff, 0x6b6b5c, 1.0);
+      const sun = new THREE.DirectionalLight(0xfff2d6, 2.4);
+      sun.position.set(cx + 60, cy + 80, 220);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(2048, 2048);
+      const sunSc = sun.shadow.camera as THREE.OrthographicCamera;
+      sunSc.left = sunSc.bottom = -r; sunSc.right = sunSc.top = r;
+      sunSc.near = 1; sunSc.far = 800;
 
-    // ── звёздное небо ──────────────────────────────────────────────────────────
-    const starCount = 2200;
-    const starPos = new Float32Array(starCount * 3);
-    const starSphere = 450;
-    for (let i = 0; i < starCount; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      starPos[i * 3]     = starSphere * Math.sin(phi) * Math.cos(theta) + cx;
-      starPos[i * 3 + 1] = starSphere * Math.sin(phi) * Math.sin(theta) + cy;
-      starPos[i * 3 + 2] = Math.abs(starSphere * Math.cos(phi)); // только верхняя полусфера
-    }
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
-    const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.35, sizeAttenuation: true });
-    scene.add(new THREE.Points(starGeo, starMat));
+      scene.add(hemiNight, moon, warmAccent, hemiDay, sun);
 
-    // ── земля — тёмная отражающая ─────────────────────────────────────────────
-    const gnd = new THREE.Mesh(
-      new THREE.PlaneGeometry(700, 700, 1, 1),
-      stdMat(0x090c16, 0.18, 0.35),  // полуотражающий тёмный
-    );
-    gnd.position.set(cx, cy, -0.02);
-    gnd.receiveShadow = true;
-    scene.add(gnd);
+      // Точечные «земляные» огни — только ночь
+      const groundGlow1 = new THREE.PointLight(0x4466ff, 3.5, 35);
+      groundGlow1.position.set(bb.minX - 3, bb.minY - 3, 1);
+      const groundGlow2 = new THREE.PointLight(0x3355ee, 2.5, 30);
+      groundGlow2.position.set(bb.maxX + 3, bb.maxY + 3, 1);
+      scene.add(groundGlow1, groundGlow2);
 
-    // Небольшое синее свечение от земли у основания
-    const glowRing = new THREE.Mesh(
-      new THREE.PlaneGeometry(bb.w + 12, bb.d + 12, 1, 1),
-      new THREE.MeshBasicMaterial({
-        color: 0x1a2860,
-        transparent: true,
-        opacity: 0.18,
-      }),
-    );
-    glowRing.position.set(cx, cy, 0.01);
-    scene.add(glowRing);
+      const floorLights: THREE.PointLight[] = [];
+      for (let f = 0; f < floors; f += 3) {
+        const fl = new THREE.PointLight(0xffcc88, 1.8, 20);
+        fl.position.set(cx, cy, f * FH + FH * 0.5);
+        scene.add(fl);
+        floorLights.push(fl);
+      }
 
-    // Контур здания на земле — неоновый
-    const footPts = [
-      ...plan.floor_polygon.exterior.map((p) => new THREE.Vector3(p.x, p.y, 0.08)),
-    ];
-    footPts.push(footPts[0]);
-    scene.add(new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(footPts),
-      new THREE.LineBasicMaterial({ color: 0x4455ff }),
-    ));
+      // ── звёзды (только ночь) ──────────────────────────────────────────────
+      const starCount = 2200;
+      const starPos = new Float32Array(starCount * 3);
+      const starSphere = 450;
+      for (let i = 0; i < starCount; i++) {
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        starPos[i * 3]     = starSphere * Math.sin(phi) * Math.cos(theta) + cx;
+        starPos[i * 3 + 1] = starSphere * Math.sin(phi) * Math.sin(theta) + cy;
+        starPos[i * 3 + 2] = Math.abs(starSphere * Math.cos(phi));
+      }
+      const starGeo = new THREE.BufferGeometry();
+      starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+      const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.35, sizeAttenuation: true });
+      const stars = new THREE.Points(starGeo, starMat);
+      scene.add(stars);
 
-    // Тонкая сетка
-    const grid = new THREE.GridHelper(500, 60, 0x151828, 0x101522);
-    grid.position.set(cx, cy, 0.03);
-    grid.rotation.x = Math.PI / 2;
-    scene.add(grid);
+      // ── земля ─────────────────────────────────────────────────────────────
+      const gndMat = stdMat(0x090c16, 0.18, 0.35);
+      const gnd = new THREE.Mesh(new THREE.PlaneGeometry(700, 700, 1, 1), gndMat);
+      gnd.position.set(cx, cy, -0.02);
+      gnd.receiveShadow = true;
+      scene.add(gnd);
 
-    // ── здание — тёмный стеклянный фасад ──────────────────────────────────────
-    const bldShape = polygonToShape(plan.floor_polygon);
-
-    // Основной корпус — тёмно-серое стекло/бетон
-    scene.add(extrude(bldShape, TOTAL, stdMat(0x1c2030, 0.65, 0.15)));
-
-    // Стеклянная "обёртка" — полупрозрачная синеватая плёнка поверх
-    scene.add(extrude(bldShape, TOTAL, stdMat(0x2244aa, 0.05, 0.6, 0.12)));
-
-    // ── перекрытия (тёмные горизонтальные полосы между этажами) ───────────────
-    const slabMat = stdMat(0x0e111e, 0.85, 0.2);
-    for (let f = 1; f <= floors; f++) {
-      const s = extrude(bldShape, 0.28, slabMat, f * FH - 0.28, false);
-      s.receiveShadow = true;
-      scene.add(s);
-    }
-
-    // ── вертикальные угловые акценты ──────────────────────────────────────────
-    const edgeMat = stdMat(0x2233aa, 0.1, 0.8, 1, 0x112299, 0.4);
-    const edgeW = 0.35;
-    const corners = [
-      { x: bb.minX, y: bb.minY },
-      { x: bb.maxX, y: bb.minY },
-      { x: bb.maxX, y: bb.maxY },
-      { x: bb.minX, y: bb.maxY },
-    ];
-    for (const c of corners) {
-      const edgeMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(edgeW, edgeW, TOTAL + 1.2),
-        edgeMat,
+      // Свечение от земли (ночное)
+      const glowRing = new THREE.Mesh(
+        new THREE.PlaneGeometry(bb.w + 12, bb.d + 12, 1, 1),
+        new THREE.MeshBasicMaterial({ color: 0x1a2860, transparent: true, opacity: 0.18 }),
       );
-      edgeMesh.position.set(c.x, c.y, TOTAL / 2);
-      scene.add(edgeMesh);
-    }
+      glowRing.position.set(cx, cy, 0.01);
+      scene.add(glowRing);
 
-    // ── окна — СВЕТЯЩИЕСЯ изнутри ─────────────────────────────────────────────
-    const WIN_W = 1.3, WIN_H = 1.6, WIN_D = 0.06, WIN_Z = 0.55;
-    const WIN_SPACING = 3.0;
+      // Контур здания на земле (неоновая обводка, только ночь)
+      const footPts = [
+        ...plan.floor_polygon.exterior.map((p) => new THREE.Vector3(p.x, p.y, 0.08)),
+      ];
+      footPts.push(footPts[0]);
+      const footLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(footPts),
+        new THREE.LineBasicMaterial({ color: 0x4455ff }),
+      );
+      scene.add(footLine);
 
-    // Разные "состояния" окон: горят / тускло / совсем тёмные
-    type WinState = "bright" | "dim" | "off";
-    const rng = (seed: number) => {
-      const x = Math.sin(seed) * 43758.5453;
-      return x - Math.floor(x);
-    };
-    const winState = (f: number, c: number, face: number): WinState => {
-      const v = rng(f * 131 + c * 17 + face * 7);
-      if (v < 0.55) return "bright";
-      if (v < 0.75) return "dim";
-      return "off";
-    };
+      // Сетка
+      const grid = new THREE.GridHelper(500, 60, 0x151828, 0x101522);
+      grid.position.set(cx, cy, 0.03);
+      grid.rotation.x = Math.PI / 2;
+      scene.add(grid);
 
-    // Стёкла: тёмное стекло + внутренний свет (эмиссия)
-    const glassDark = stdMat(0x0a1020, 0.05, 0.7, 0.9, 0x000000, 0);
+      // ── материалы здания (с клиппингом для среза) ─────────────────────────
+      const clipPlanes = [clipPlane];
+      const bodyMat = stdMat(0x1c2030, 0.65, 0.15);
+      bodyMat.clippingPlanes = clipPlanes;
+      const wrapMat = stdMat(0x2244aa, 0.05, 0.6, 0.12);
+      wrapMat.clippingPlanes = clipPlanes;
+      const slabMat = stdMat(0x0e111e, 0.85, 0.2);
+      slabMat.clippingPlanes = clipPlanes;
+      const edgeMat = stdMat(0x2233aa, 0.1, 0.8, 1, 0x112299, 0.4);
+      edgeMat.clippingPlanes = clipPlanes;
+      const lobbyGlassMat = stdMat(0x1a3060, 0.04, 0.7, 0.55, 0x4488ff, 0.15);
+      lobbyGlassMat.clippingPlanes = clipPlanes;
+      const coreMat = stdMat(0x0a0c14, 0.6, 0.25);
+      coreMat.clippingPlanes = clipPlanes;
+      const parapetMat = stdMat(0x141826, 0.7, 0.2, 1, 0x2233aa, 0.12);
+      parapetMat.clippingPlanes = clipPlanes;
 
-    type FaceSide = { axis: "x" | "y"; val: number; dir: 1 | -1; len: number; start: number; fi: number };
-    const faces: FaceSide[] = [
-      { axis: "y", val: bb.minY, dir: -1, len: bb.w, start: bb.minX, fi: 0 },
-      { axis: "y", val: bb.maxY, dir:  1, len: bb.w, start: bb.minX, fi: 1 },
-      { axis: "x", val: bb.minX, dir: -1, len: bb.d, start: bb.minY, fi: 2 },
-      { axis: "x", val: bb.maxX, dir:  1, len: bb.d, start: bb.minY, fi: 3 },
-    ];
+      const bldShape = polygonToShape(plan.floor_polygon);
 
-    for (const face of faces) {
-      const cols = Math.max(1, Math.floor(face.len / WIN_SPACING));
-      const spacing = face.len / cols;
+      // Корпус и стеклянная плёнка
+      scene.add(extrude(bldShape, TOTAL, bodyMat));
+      scene.add(extrude(bldShape, TOTAL, wrapMat));
 
-      for (let f = 0; f < floors; f++) {
-        const zBase = f * FH + WIN_Z;
+      // Перекрытия — отслеживаем по этажу
+      const slabMeshes: THREE.Mesh[] = [];
+      for (let f = 1; f <= floors; f++) {
+        const s = extrude(bldShape, 0.28, slabMat, f * FH - 0.28, false);
+        s.receiveShadow = true;
+        s.userData.floor = f;
+        scene.add(s);
+        slabMeshes.push(s);
+      }
 
-        for (let c = 0; c < cols; c++) {
-          const t = face.start + spacing * (c + 0.5);
-          const state = winState(f, c, face.fi);
+      // Угловые акценты
+      const corners = [
+        { x: bb.minX, y: bb.minY },
+        { x: bb.maxX, y: bb.minY },
+        { x: bb.maxX, y: bb.maxY },
+        { x: bb.minX, y: bb.maxY },
+      ];
+      const edgeW = 0.35;
+      for (const c of corners) {
+        const edgeMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(edgeW, edgeW, TOTAL + 1.2),
+          edgeMat,
+        );
+        edgeMesh.position.set(c.x, c.y, TOTAL / 2);
+        scene.add(edgeMesh);
+      }
 
-          // Внутренний свет (эмиссивная плашка чуть позади стекла)
-          if (state !== "off") {
-            const intensity = state === "bright" ? 0.9 : 0.35;
-            // Тёплый жёлто-оранжевый или холодный синий (разнообразие)
-            const warmCold = rng(f * 53 + c * 31 + face.fi * 11) > 0.25;
-            const emColor = warmCold ? 0xffcc66 : 0x99bbff;
-            const innerMat = stdMat(emColor, 0.5, 0, 1, emColor, intensity);
+      // ── окна — InstancedMesh для производительности ───────────────────────
+      const WIN_W = 1.3, WIN_H = 1.6, WIN_D = 0.06, WIN_Z = 0.55;
+      const WIN_SPACING = 3.0;
 
-            const innerGeo = face.axis === "y"
-              ? new THREE.BoxGeometry(WIN_W * 0.85, 0.02, WIN_H * 0.85)
-              : new THREE.BoxGeometry(0.02, WIN_W * 0.85, WIN_H * 0.85);
-            const inner = new THREE.Mesh(innerGeo, innerMat);
-            const offset = 0.15 * face.dir;
-            if (face.axis === "y") {
-              inner.position.set(t, face.val + offset, zBase + WIN_H / 2);
-            } else {
-              inner.position.set(face.val + offset, t, zBase + WIN_H / 2);
+      type WinState = "bright" | "dim" | "off";
+      const rng = (seed: number) => {
+        const x = Math.sin(seed) * 43758.5453;
+        return x - Math.floor(x);
+      };
+      const winState = (f: number, c: number, face: number): WinState => {
+        const v = rng(f * 131 + c * 17 + face * 7);
+        if (v < 0.55) return "bright";
+        if (v < 0.75) return "dim";
+        return "off";
+      };
+
+      type FaceSide = { axis: "x" | "y"; val: number; dir: 1 | -1; len: number; start: number; fi: number };
+      const faces: FaceSide[] = [
+        { axis: "y", val: bb.minY, dir: -1, len: bb.w, start: bb.minX, fi: 0 },
+        { axis: "y", val: bb.maxY, dir:  1, len: bb.w, start: bb.minX, fi: 1 },
+        { axis: "x", val: bb.minX, dir: -1, len: bb.d, start: bb.minY, fi: 2 },
+        { axis: "x", val: bb.maxX, dir:  1, len: bb.d, start: bb.minY, fi: 3 },
+      ];
+
+      const glassDarkMat = stdMat(0x0a1020, 0.05, 0.7, 0.9, 0x000000, 0);
+      glassDarkMat.clippingPlanes = clipPlanes;
+
+      // Светящиеся плашки за стеклом — храним по этажу для среза.
+      type WindowGroup = { floor: number; meshes: THREE.Mesh[] };
+      const windowGroups: WindowGroup[] = [];
+      for (let f = 0; f < floors; f++) windowGroups.push({ floor: f + 1, meshes: [] });
+
+      // Эмиссивные плашки (ночь) и стёкла. Используем shared materials по «состоянию×цвету».
+      const innerMatWarmBright = stdMat(0xffcc66, 0.5, 0, 1, 0xffcc66, 0.9);
+      const innerMatWarmDim    = stdMat(0xffcc66, 0.5, 0, 1, 0xffcc66, 0.35);
+      const innerMatColdBright = stdMat(0x99bbff, 0.5, 0, 1, 0x99bbff, 0.9);
+      const innerMatColdDim    = stdMat(0x99bbff, 0.5, 0, 1, 0x99bbff, 0.35);
+      [innerMatWarmBright, innerMatWarmDim, innerMatColdBright, innerMatColdDim].forEach((m) => {
+        m.clippingPlanes = clipPlanes;
+      });
+
+      for (const face of faces) {
+        const cols = Math.max(1, Math.floor(face.len / WIN_SPACING));
+        const spacing = face.len / cols;
+
+        for (let f = 0; f < floors; f++) {
+          const zBase = f * FH + WIN_Z;
+
+          for (let c = 0; c < cols; c++) {
+            const t = face.start + spacing * (c + 0.5);
+            const state = winState(f, c, face.fi);
+
+            if (state !== "off") {
+              const warmCold = rng(f * 53 + c * 31 + face.fi * 11) > 0.25;
+              const innerMat =
+                state === "bright"
+                  ? (warmCold ? innerMatWarmBright : innerMatColdBright)
+                  : (warmCold ? innerMatWarmDim : innerMatColdDim);
+
+              const innerGeo = face.axis === "y"
+                ? new THREE.BoxGeometry(WIN_W * 0.85, 0.02, WIN_H * 0.85)
+                : new THREE.BoxGeometry(0.02, WIN_W * 0.85, WIN_H * 0.85);
+              const inner = new THREE.Mesh(innerGeo, innerMat);
+              const offset = 0.15 * face.dir;
+              if (face.axis === "y") {
+                inner.position.set(t, face.val + offset, zBase + WIN_H / 2);
+              } else {
+                inner.position.set(face.val + offset, t, zBase + WIN_H / 2);
+              }
+              inner.userData.floor = f + 1;
+              scene.add(inner);
+              windowGroups[f].meshes.push(inner);
             }
-            scene.add(inner);
-          }
 
-          // Само стекло поверх
-          const wGeo = face.axis === "y"
-            ? new THREE.BoxGeometry(WIN_W, WIN_D, WIN_H)
-            : new THREE.BoxGeometry(WIN_D, WIN_W, WIN_H);
-          const glass = new THREE.Mesh(wGeo, glassDark.clone());
-          const offset = WIN_D * 0.5 * face.dir;
-          if (face.axis === "y") {
-            glass.position.set(t, face.val + offset, zBase + WIN_H / 2);
-          } else {
-            glass.position.set(face.val + offset, t, zBase + WIN_H / 2);
+            const wGeo = face.axis === "y"
+              ? new THREE.BoxGeometry(WIN_W, WIN_D, WIN_H)
+              : new THREE.BoxGeometry(WIN_D, WIN_W, WIN_H);
+            const glass = new THREE.Mesh(wGeo, glassDarkMat);
+            const offset = WIN_D * 0.5 * face.dir;
+            if (face.axis === "y") {
+              glass.position.set(t, face.val + offset, zBase + WIN_H / 2);
+            } else {
+              glass.position.set(face.val + offset, t, zBase + WIN_H / 2);
+            }
+            glass.userData.floor = f + 1;
+            scene.add(glass);
           }
-          scene.add(glass);
         }
       }
-    }
 
-    // ── балконы ───────────────────────────────────────────────────────────────
-    const balcMat = stdMat(0x1a2038, 0.6, 0.4);
-    const railMat = stdMat(0x3355aa, 0.2, 0.8, 0.7, 0x1133aa, 0.25);
+      // ── балконы ───────────────────────────────────────────────────────────
+      const balcMat = stdMat(0x1a2038, 0.6, 0.4);
+      balcMat.clippingPlanes = clipPlanes;
+      const railMat = stdMat(0x3355aa, 0.2, 0.8, 0.7, 0x1133aa, 0.25);
+      railMat.clippingPlanes = clipPlanes;
 
-    for (let f = 2; f < floors; f += 3) {
-      const bW = bb.w * 0.52, bD = 1.0, bT = 0.15;
-      const bZ = f * FH + 0.9;
+      const balconyMeshes: THREE.Mesh[] = [];
+      for (let f = 2; f < floors; f += 3) {
+        const bW = bb.w * 0.52, bD = 1.0, bT = 0.15;
+        const bZ = f * FH + 0.9;
 
-      const balc = new THREE.Mesh(new THREE.BoxGeometry(bW, bD, bT), balcMat);
-      balc.position.set(cx, bb.minY - bD / 2, bZ);
-      balc.castShadow = true;
-      balc.receiveShadow = true;
-      scene.add(balc);
+        const balc = new THREE.Mesh(new THREE.BoxGeometry(bW, bD, bT), balcMat);
+        balc.position.set(cx, bb.minY - bD / 2, bZ);
+        balc.castShadow = true;
+        balc.receiveShadow = true;
+        balc.userData.floor = f + 1;
+        scene.add(balc);
+        balconyMeshes.push(balc);
 
-      // Стеклянные перила
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(bW, 0.06, 1.1), railMat);
-      rail.position.set(cx, bb.minY - bD + 0.03, bZ + 0.58);
-      scene.add(rail);
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(bW, 0.06, 1.1), railMat);
+        rail.position.set(cx, bb.minY - bD + 0.03, bZ + 0.58);
+        rail.userData.floor = f + 1;
+        scene.add(rail);
+        balconyMeshes.push(rail);
 
-      for (let i = 0; i < 6; i++) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 1.1), railMat);
-        post.position.set(
-          cx - bW / 2 + (i + 0.5) * (bW / 6),
-          bb.minY - bD + 0.03,
-          bZ + 0.58,
-        );
-        scene.add(post);
+        for (let i = 0; i < 6; i++) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 1.1), railMat);
+          post.position.set(
+            cx - bW / 2 + (i + 0.5) * (bW / 6),
+            bb.minY - bD + 0.03,
+            bZ + 0.58,
+          );
+          post.userData.floor = f + 1;
+          scene.add(post);
+          balconyMeshes.push(post);
+        }
       }
-    }
 
-    // ── лобби (первый этаж — стеклянный) ──────────────────────────────────────
-    const lobbyGlassMat = stdMat(0x1a3060, 0.04, 0.7, 0.55, 0x4488ff, 0.15);
-    scene.add(extrude(bldShape, FH * 0.95, lobbyGlassMat));
+      // ── лобби (стеклянный первый этаж) ────────────────────────────────────
+      scene.add(extrude(bldShape, FH * 0.95, lobbyGlassMat));
 
-    // ── лифтовое ядро ─────────────────────────────────────────────────────────
-    const coreShape = polygonToShape(plan.core.polygon);
-    scene.add(extrude(coreShape, TOTAL + 5, stdMat(0x0a0c14, 0.6, 0.25)));
+      // ── лифтовое ядро ─────────────────────────────────────────────────────
+      const coreShape = polygonToShape(plan.core.polygon);
+      scene.add(extrude(coreShape, TOTAL + 5, coreMat));
 
-    // Машинное отделение
-    const cbb = bbox(plan.core.polygon);
-    const mrMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(cbb.w + 0.6, cbb.d + 0.6, 3.4),
-      stdMat(0x0d1020, 0.5, 0.3),
-    );
-    mrMesh.position.set(cbb.cx, cbb.cy, TOTAL + 5 + 1.7);
-    mrMesh.castShadow = true;
-    scene.add(mrMesh);
+      const cbb = bbox(plan.core.polygon);
+      const mrMat = stdMat(0x0d1020, 0.5, 0.3);
+      mrMat.clippingPlanes = clipPlanes;
+      const mrMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(cbb.w + 0.6, cbb.d + 0.6, 3.4),
+        mrMat,
+      );
+      mrMesh.position.set(cbb.cx, cbb.cy, TOTAL + 5 + 1.7);
+      mrMesh.castShadow = true;
+      scene.add(mrMesh);
 
-    // Антенна
-    const ant = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.06, 0.12, 8, 6),
-      stdMat(0x223366, 0.4, 0.6, 1, 0x3355aa, 0.3),
-    );
-    ant.rotation.x = Math.PI / 2;
-    ant.position.set(cbb.cx, cbb.cy, TOTAL + 5 + 3.4 + 4);
-    scene.add(ant);
+      // Антенна
+      const antMat = stdMat(0x223366, 0.4, 0.6, 1, 0x3355aa, 0.3);
+      antMat.clippingPlanes = clipPlanes;
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.12, 8, 6), antMat);
+      ant.rotation.x = Math.PI / 2;
+      ant.position.set(cbb.cx, cbb.cy, TOTAL + 5 + 3.4 + 4);
+      scene.add(ant);
 
-    // Мигающий огонёк антенны
-    const beacon = new THREE.Mesh(
-      new THREE.SphereGeometry(0.2, 8, 8),
-      stdMat(0xff2222, 0.1, 0.2, 1, 0xff0000, 1.5),
-    );
-    beacon.position.set(cbb.cx, cbb.cy, TOTAL + 5 + 3.4 + 8.1);
-    scene.add(beacon);
+      // Маячок
+      const beaconMat = stdMat(0xff2222, 0.1, 0.2, 1, 0xff0000, 1.5);
+      beaconMat.clippingPlanes = clipPlanes;
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), beaconMat);
+      beacon.position.set(cbb.cx, cbb.cy, TOTAL + 5 + 3.4 + 8.1);
+      scene.add(beacon);
 
-    // ── парапет крыши с подсветкой ────────────────────────────────────────────
-    const parapetMat = stdMat(0x141826, 0.7, 0.2, 1, 0x2233aa, 0.12);
-    scene.add(extrude(bldShape, 1.15, parapetMat, TOTAL));
+      // Парапет
+      scene.add(extrude(bldShape, 1.15, parapetMat, TOTAL));
 
-    // Полоса LED подсветки по периметру крыши
-    const ledPts = plan.floor_polygon.exterior.map(
-      (p) => new THREE.Vector3(p.x, p.y, TOTAL + 1.18),
-    );
-    ledPts.push(ledPts[0]);
-    scene.add(new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(ledPts),
-      new THREE.LineBasicMaterial({ color: 0x4466ff }),
-    ));
+      // LED по периметру крыши (ночь)
+      const ledPts = plan.floor_polygon.exterior.map(
+        (p) => new THREE.Vector3(p.x, p.y, TOTAL + 1.18),
+      );
+      ledPts.push(ledPts[0]);
+      const ledLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(ledPts),
+        new THREE.LineBasicMaterial({ color: 0x4466ff }),
+      );
+      scene.add(ledLine);
 
-    // ── КРЫША: AI-чертёж как текстура ─────────────────────────────────────────
-    if (aiPlanImageUrl) {
-      const loader = new THREE.TextureLoader();
-      loader.load(aiPlanImageUrl, (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 16);
+      // ── AI-чертёж на крыше ────────────────────────────────────────────────
+      let roofMesh: THREE.Mesh | null = null;
+      if (aiPlanImageUrl) {
+        const loader = new THREE.TextureLoader();
+        loader.load(aiPlanImageUrl, (tex) => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 16);
 
-        const roofGeo = new THREE.PlaneGeometry(bb.w, bb.d);
-        const roofMat = new THREE.MeshBasicMaterial({
-          map: tex,
-          transparent: true,
-          opacity: 0.92,
+          const roofMat = new THREE.MeshBasicMaterial({
+            map: tex, transparent: true, opacity: 0.92,
+          });
+          roofMat.clippingPlanes = clipPlanes;
+          roofMesh = new THREE.Mesh(new THREE.PlaneGeometry(bb.w, bb.d), roofMat);
+          roofMesh.position.set(cx, cy, TOTAL + 1.16);
+          scene.add(roofMesh);
+
+          const bPts = [
+            new THREE.Vector3(bb.minX - 0.3, bb.minY - 0.3, TOTAL + 1.18),
+            new THREE.Vector3(bb.maxX + 0.3, bb.minY - 0.3, TOTAL + 1.18),
+            new THREE.Vector3(bb.maxX + 0.3, bb.maxY + 0.3, TOTAL + 1.18),
+            new THREE.Vector3(bb.minX - 0.3, bb.maxY + 0.3, TOTAL + 1.18),
+            new THREE.Vector3(bb.minX - 0.3, bb.minY - 0.3, TOTAL + 1.18),
+          ];
+          scene.add(new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints(bPts),
+            new THREE.LineBasicMaterial({ color: 0x6688ff }),
+          ));
         });
-        const roofMesh = new THREE.Mesh(roofGeo, roofMat);
-        roofMesh.position.set(cx, cy, TOTAL + 1.16);
-        scene.add(roofMesh);
+      } else {
+        plan.tiles.forEach((tile) => {
+          const m = stdMat(APT_COLORS[tile.apt_type] ?? "#a78bfa", 0.4, 0.1, 0.88, APT_COLORS[tile.apt_type] ?? "#a78bfa", 0.15);
+          m.clippingPlanes = clipPlanes;
+          scene.add(extrude(polygonToShape(tile.polygon), 0.22, m, TOTAL + 1.16, false));
+        });
+        plan.corridors.forEach((c) => {
+          const m = stdMat(0x141825, 0.9);
+          m.clippingPlanes = clipPlanes;
+          scene.add(extrude(polygonToShape(c.polygon), 0.1, m, TOTAL + 1.16, false));
+        });
+      }
 
-        // Неоновая рамка вокруг чертежа
-        const bPts = [
-          new THREE.Vector3(bb.minX - 0.3, bb.minY - 0.3, TOTAL + 1.18),
-          new THREE.Vector3(bb.maxX + 0.3, bb.minY - 0.3, TOTAL + 1.18),
-          new THREE.Vector3(bb.maxX + 0.3, bb.maxY + 0.3, TOTAL + 1.18),
-          new THREE.Vector3(bb.minX - 0.3, bb.maxY + 0.3, TOTAL + 1.18),
-          new THREE.Vector3(bb.minX - 0.3, bb.minY - 0.3, TOTAL + 1.18),
-        ];
-        scene.add(new THREE.Line(
-          new THREE.BufferGeometry().setFromPoints(bPts),
-          new THREE.LineBasicMaterial({ color: 0x6688ff }),
-        ));
+      // ── режим день/ночь ───────────────────────────────────────────────────
+      let mode: SceneMode = initialMode;
+
+      const applyMode = (m: SceneMode) => {
+        mode = m;
+        const isNight = m === "night";
+
+        // Фон + туман + экспозиция
+        scene.background = new THREE.Color(isNight ? 0x060914 : 0xb8d4f0);
+        scene.fog = isNight
+          ? new THREE.FogExp2(0x060914, 0.004)
+          : new THREE.FogExp2(0xc8dcf2, 0.0025);
+        renderer.toneMappingExposure = isNight ? 1.35 : 1.0;
+
+        // Источники
+        hemiNight.visible = isNight;
+        moon.visible = isNight;
+        warmAccent.visible = isNight;
+        groundGlow1.visible = isNight;
+        groundGlow2.visible = isNight;
+        floorLights.forEach((fl) => (fl.visible = isNight));
+        hemiDay.visible = !isNight;
+        sun.visible = !isNight;
+
+        // Звёзды и неоновая декорация
+        stars.visible = isNight;
+        glowRing.visible = isNight;
+        footLine.visible = isNight;
+        ledLine.visible = isNight;
+
+        // Окна — днём гасим эмиссию
+        const e = isNight ? 1 : 0;
+        innerMatWarmBright.emissiveIntensity = 0.9 * e;
+        innerMatWarmDim.emissiveIntensity = 0.35 * e;
+        innerMatColdBright.emissiveIntensity = 0.9 * e;
+        innerMatColdDim.emissiveIntensity = 0.35 * e;
+        // Маячок и подсветка торцов
+        beaconMat.emissiveIntensity = isNight ? 1.5 : 0;
+        edgeMat.emissiveIntensity = isNight ? 0.4 : 0;
+        parapetMat.emissiveIntensity = isNight ? 0.12 : 0;
+        lobbyGlassMat.emissiveIntensity = isNight ? 0.15 : 0.05;
+        railMat.emissiveIntensity = isNight ? 0.25 : 0;
+
+        // Земля светлее днём
+        gndMat.color = new THREE.Color(isNight ? 0x090c16 : 0x4a5468);
+      };
+      applyMode(initialMode);
+
+      // ── срез этажей ────────────────────────────────────────────────────────
+      // (применяется initialVisibleFloors ниже, после объявления applyVisibleFloors)
+      // ──────────────────────────────────────────────────────────────────────
+      let visibleFloors = floors;
+      const applyVisibleFloors = (n: number) => {
+        visibleFloors = Math.max(1, Math.min(floors, Math.round(n)));
+        // Плоскость отсечения = верх верхнего видимого этажа.
+        // При полном здании отодвигаем плоскость вверх, чтобы парапет/антенна не клипались.
+        clipPlane.constant = visibleFloors >= floors
+          ? TOTAL + 100
+          : visibleFloors * FH + 0.05;
+
+        // Перекрытия / окна / балконы — отдельные меши с userData.floor
+        slabMeshes.forEach((m) => (m.visible = (m.userData.floor as number) <= visibleFloors));
+        windowGroups.forEach((g) => {
+          const on = g.floor <= visibleFloors;
+          g.meshes.forEach((m) => (m.visible = on));
+        });
+        balconyMeshes.forEach((m) => (m.visible = (m.userData.floor as number) <= visibleFloors));
+
+        // Стёкла — общий material, но мы их не складывали в группы для производительности.
+        // Они клиппятся плоскостью сверху — этого достаточно (срезаются в верхней части).
+      };
+
+      // ── камера: пресеты ───────────────────────────────────────────────────
+      const applyPreset = (p: CameraPreset) => {
+        controls.autoRotate = false;
+        const target = new THREE.Vector3(cx, cy, TOTAL * 0.4);
+        const D = diag * 1.4 + TOTAL * 0.6;
+        switch (p) {
+          case "iso":
+            camera.position.set(cx + D * 0.6, cy - D * 1.0, TOTAL * 1.55);
+            break;
+          case "top":
+            camera.position.set(cx, cy + 0.001, TOTAL + diag * 1.6);
+            target.set(cx, cy, TOTAL * 0.5);
+            break;
+          case "front":
+            camera.position.set(cx, cy - D * 1.4, TOTAL * 0.55);
+            break;
+          case "side":
+            camera.position.set(cx + D * 1.4, cy, TOTAL * 0.55);
+            break;
+        }
+        controls.target.copy(target);
+        camera.lookAt(target);
+        controls.update();
+      };
+
+      // Применяем стартовый срез, если задан
+      if (typeof initialVisibleFloors === "number" && initialVisibleFloors < floors) {
+        applyVisibleFloors(initialVisibleFloors);
+      }
+
+      // ── публикуем API ─────────────────────────────────────────────────────
+      apiRef.current = {
+        setMode: applyMode,
+        setAutoRotate: (on) => { controls.autoRotate = on; },
+        setVisibleFloors: applyVisibleFloors,
+        setCameraPreset: applyPreset,
+        screenshot: () => {
+          renderer.render(scene, camera);
+          return renderer.domElement.toDataURL("image/png");
+        },
+      };
+
+      // ── анимация ──────────────────────────────────────────────────────────
+      let animId = 0;
+      let t = 0;
+      const animate = () => {
+        animId = requestAnimationFrame(animate);
+        t += 0.016;
+
+        if (mode === "night") {
+          beaconMat.emissiveIntensity = 0.6 + Math.sin(t * 2.5) * 0.6;
+          groundGlow1.intensity = 3.0 + Math.sin(t * 0.7) * 0.5;
+          groundGlow2.intensity = 2.2 + Math.cos(t * 0.5) * 0.4;
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+      };
+      animate();
+
+      // ── resize ────────────────────────────────────────────────────────────
+      const ro = new ResizeObserver(() => {
+        const w = mount.clientWidth, h = mount.clientHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
       });
-    } else {
-      // Фолбэк: цветные квартирные патчи
-      plan.tiles.forEach((tile) => {
-        scene.add(extrude(
-          polygonToShape(tile.polygon), 0.22,
-          stdMat(APT_COLORS[tile.apt_type] ?? "#a78bfa", 0.4, 0.1, 0.88, APT_COLORS[tile.apt_type] ?? "#a78bfa", 0.15),
-          TOTAL + 1.16, false,
-        ));
-      });
-      plan.corridors.forEach((c) => {
-        scene.add(extrude(polygonToShape(c.polygon), 0.1, stdMat(0x141825, 0.9), TOTAL + 1.16, false));
-      });
-    }
+      ro.observe(mount);
 
-    // ── анимация ──────────────────────────────────────────────────────────────
-    let animId: number;
-    let t = 0;
-    const animate = () => {
-      animId = requestAnimationFrame(animate);
-      t += 0.016;
+      return () => {
+        cancelAnimationFrame(animId);
+        ro.disconnect();
+        controls.dispose();
+        renderer.dispose();
+        if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
+        apiRef.current = null;
+      };
+    }, [plan, floors, aiPlanImageUrl, initialMode, initialAutoRotate]);
 
-      // Мигание антенны
-      beacon.material.emissiveIntensity = 0.6 + Math.sin(t * 2.5) * 0.6;
-
-      // Пульсация наземного свечения
-      groundGlow1.intensity = 3.0 + Math.sin(t * 0.7) * 0.5;
-      groundGlow2.intensity = 2.2 + Math.cos(t * 0.5) * 0.4;
-
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    // ── resize ────────────────────────────────────────────────────────────────
-    const ro = new ResizeObserver(() => {
-      const w = mount.clientWidth, h = mount.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    });
-    ro.observe(mount);
-
-    return () => {
-      cancelAnimationFrame(animId);
-      ro.disconnect();
-      controls.dispose();
-      renderer.dispose();
-      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
-    };
-  }, [plan, floors, aiPlanImageUrl]);
-
-  return <div ref={mountRef} className="w-full h-full" />;
-}
+    return <div ref={mountRef} className="w-full h-full" />;
+  },
+);
