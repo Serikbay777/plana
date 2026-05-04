@@ -68,6 +68,7 @@ function extrude(
 
 export type SceneMode = "day" | "night";
 export type CameraPreset = "iso" | "top" | "front" | "side";
+export type ViewMode = "exterior" | "lobby";
 
 export type PlanCanvas3DHandle = {
   setMode: (mode: SceneMode) => void;
@@ -77,6 +78,10 @@ export type PlanCanvas3DHandle = {
   setCameraPreset: (preset: CameraPreset) => void;
   /** PNG dataURL текущего кадра */
   screenshot: () => string;
+  /** Переход между уровнями (наружный вид / лобби / ...) */
+  setView: (view: ViewMode) => void;
+  /** Текущий уровень. Полезно для UI после анимации переходов. */
+  getView: () => ViewMode;
 };
 
 export type PlanCanvas3DProps = {
@@ -110,6 +115,8 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
       setVisibleFloors: (n) => apiRef.current?.setVisibleFloors(n),
       setCameraPreset: (p) => apiRef.current?.setCameraPreset(p),
       screenshot: () => apiRef.current?.screenshot() ?? "",
+      setView: (v) => apiRef.current?.setView(v),
+      getView: () => apiRef.current?.getView() ?? "exterior",
     }), []);
 
     useEffect(() => {
@@ -147,6 +154,13 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x060914);
       scene.fog = new THREE.FogExp2(0x060914, 0.004);
+
+      // Группы под уровни walkthrough'а. Лайты остаются в scene (общие).
+      const exteriorGroup = new THREE.Group();
+      const lobbyGroup = new THREE.Group();
+      scene.add(exteriorGroup);
+      scene.add(lobbyGroup);
+      lobbyGroup.visible = false;
 
       // ── camera ────────────────────────────────────────────────────────────
       const camera = new THREE.PerspectiveCamera(34, W / H, 0.5, 800);
@@ -530,6 +544,9 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
 
       const applyMode = (m: SceneMode) => {
         mode = m;
+        // Внутри лобби визуальные настройки экстерьера не применяем —
+        // mode сохраняется и восстановится при возврате наружу.
+        if (lobbyGroup.visible) return;
         const isNight = m === "night";
 
         // Фон + туман + экспозиция
@@ -572,6 +589,98 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         gndMat.color = new THREE.Color(isNight ? 0x090c16 : 0x4a5468);
       };
       applyMode(initialMode);
+
+      // ── перемещаем все экстерьер-объекты из scene в exteriorGroup ─────────
+      // (лайты, exteriorGroup и lobbyGroup оставляем в scene)
+      const movables = scene.children.filter(
+        (o) => !(o instanceof THREE.Light) && o !== exteriorGroup && o !== lobbyGroup,
+      );
+      movables.forEach((o) => exteriorGroup.add(o));
+
+      // ── lobby: пол, потолок, стены, ядро, свет ────────────────────────────
+      const floorShape = polygonToShape(plan.floor_polygon);
+
+      // Пол лобби — текстура AI-чертежа сверху, если есть
+      const lobbyFloorMat = new THREE.MeshStandardMaterial({
+        color: 0x2a2e3a,
+        roughness: 0.7,
+        metalness: 0.05,
+      });
+      if (aiPlanImageUrl) {
+        new THREE.TextureLoader().load(aiPlanImageUrl, (tex) => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 16);
+          lobbyFloorMat.map = tex;
+          lobbyFloorMat.color.set(0xffffff);
+          lobbyFloorMat.needsUpdate = true;
+        });
+      }
+      const lobbyFloor = new THREE.Mesh(new THREE.ShapeGeometry(floorShape), lobbyFloorMat);
+      lobbyFloor.position.z = 0.06;
+      lobbyFloor.receiveShadow = true;
+      lobbyGroup.add(lobbyFloor);
+
+      // Потолок (плоскость, направленная вниз)
+      const lobbyCeilMat = new THREE.MeshStandardMaterial({
+        color: 0x14171f, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide,
+      });
+      const lobbyCeil = new THREE.Mesh(new THREE.ShapeGeometry(floorShape), lobbyCeilMat);
+      lobbyCeil.position.z = FH;
+      lobbyGroup.add(lobbyCeil);
+
+      // Стены — extrude с BackSide, чтобы видеть изнутри
+      const lobbyWallMat = new THREE.MeshStandardMaterial({
+        color: 0x252b3c, roughness: 0.9, metalness: 0.05, side: THREE.BackSide,
+      });
+      const lobbyWalls = new THREE.Mesh(
+        new THREE.ExtrudeGeometry(floorShape, { depth: FH, bevelEnabled: false }),
+        lobbyWallMat,
+      );
+      lobbyWalls.receiveShadow = true;
+      lobbyGroup.add(lobbyWalls);
+
+      // Лифтовое ядро — стенка комнаты с лифтами
+      const lobbyCoreMat = new THREE.MeshStandardMaterial({
+        color: 0x3a4256, roughness: 0.55, metalness: 0.35,
+      });
+      const lobbyCoreShape = polygonToShape(plan.core.polygon);
+      const lobbyCore = new THREE.Mesh(
+        new THREE.ExtrudeGeometry(lobbyCoreShape, { depth: FH, bevelEnabled: false }),
+        lobbyCoreMat,
+      );
+      lobbyCore.castShadow = true;
+      lobbyCore.receiveShadow = true;
+      lobbyGroup.add(lobbyCore);
+
+      // Имитация лифтовых дверей — тонкие панели на грани ядра, обращённой к лобби
+      const liftDoorMat = new THREE.MeshStandardMaterial({
+        color: 0xc8b87a, roughness: 0.35, metalness: 0.85,
+        emissive: 0x6a5a30, emissiveIntensity: 0.18,
+      });
+      const lDoorH = FH * 0.78, lDoorW = 0.85, lDoorT = 0.05;
+      const liftDoorY = cbb.cy < cy ? cbb.maxY + lDoorT * 0.5 : cbb.minY - lDoorT * 0.5;
+      for (let i = 0; i < 2; i++) {
+        const door = new THREE.Mesh(
+          new THREE.BoxGeometry(lDoorW, lDoorT, lDoorH),
+          liftDoorMat,
+        );
+        door.position.set(
+          cbb.cx + (i === 0 ? -lDoorW * 0.6 : lDoorW * 0.6),
+          liftDoorY,
+          lDoorH / 2 + 0.05,
+        );
+        lobbyGroup.add(door);
+      }
+
+      // Освещение лобби — тёплый потолочный + амбиент
+      const lobbyAmbient = new THREE.AmbientLight(0x404858, 0.45);
+      const lobbyCeilLight = new THREE.PointLight(0xffe8c0, 1.6, 60, 1.7);
+      lobbyCeilLight.position.set(cx, cy, FH - 0.4);
+      lobbyCeilLight.castShadow = true;
+      lobbyCeilLight.shadow.mapSize.set(1024, 1024);
+      const lobbyEntryLight = new THREE.PointLight(0xa8c8ff, 0.8, 25, 1.6);
+      lobbyEntryLight.position.set(cx, bb.minY + 0.6, FH - 0.6);
+      lobbyGroup.add(lobbyAmbient, lobbyCeilLight, lobbyEntryLight);
 
       // ── срез этажей ────────────────────────────────────────────────────────
       // (применяется initialVisibleFloors ниже, после объявления applyVisibleFloors)
@@ -627,6 +736,76 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         applyVisibleFloors(initialVisibleFloors);
       }
 
+      // ── walkthrough: переходы между уровнями ──────────────────────────────
+      let view: ViewMode = "exterior";
+
+      // Камера-якоря под каждый уровень
+      const exteriorAnchorPos = new THREE.Vector3().copy(camera.position);
+      const exteriorAnchorTarget = new THREE.Vector3().copy(controls.target);
+      const lobbyAnchorPos = new THREE.Vector3(cx, bb.minY + 1.6, FH * 0.55);
+      const lobbyAnchorTarget = new THREE.Vector3(cx, cy, FH * 0.5);
+
+      // Простой tween камеры (easeInOutQuad по позиции и таргету).
+      let tweenActive = false;
+      let tweenT = 0;
+      const tweenDur = 1.0;
+      const tweenFrom = new THREE.Vector3();
+      const tweenTo = new THREE.Vector3();
+      const tweenTargetFrom = new THREE.Vector3();
+      const tweenTargetTo = new THREE.Vector3();
+      const tweenCamera = (toPos: THREE.Vector3, toTarget: THREE.Vector3) => {
+        tweenFrom.copy(camera.position);
+        tweenTo.copy(toPos);
+        tweenTargetFrom.copy(controls.target);
+        tweenTargetTo.copy(toTarget);
+        tweenT = 0;
+        tweenActive = true;
+      };
+
+      const applyView = (v: ViewMode) => {
+        if (v === view) return;
+        // Запоминаем последнюю позицию в exterior, чтобы вернуться к ней.
+        if (view === "exterior") {
+          exteriorAnchorPos.copy(camera.position);
+          exteriorAnchorTarget.copy(controls.target);
+        }
+        view = v;
+
+        if (v === "exterior") {
+          exteriorGroup.visible = true;
+          lobbyGroup.visible = false;
+          // Восстанавливаем экстерьер-освещение в зависимости от режима
+          applyMode(mode);
+          controls.autoRotate = false; // не включаем сам по себе после перехода
+          controls.minDistance = 10;
+          controls.maxDistance = 600;
+          controls.maxPolarAngle = Math.PI / 2.06;
+          tweenCamera(exteriorAnchorPos, exteriorAnchorTarget);
+        } else if (v === "lobby") {
+          exteriorGroup.visible = false;
+          lobbyGroup.visible = true;
+          // Гасим всё уличное освещение — внутри светят только лобби-лайты
+          hemiNight.visible = false;
+          hemiDay.visible = false;
+          moon.visible = false;
+          sun.visible = false;
+          warmAccent.visible = false;
+          groundGlow1.visible = false;
+          groundGlow2.visible = false;
+          floorLights.forEach((fl) => (fl.visible = false));
+          // Тёмный интерьерный фон без тумана
+          scene.background = new THREE.Color(0x06080c);
+          scene.fog = null;
+          renderer.toneMappingExposure = 1.0;
+          controls.autoRotate = false;
+          controls.minDistance = 0.5;
+          // Orbit-радиус ≤ половины короткой стороны, чтобы камера осталась внутри стен.
+          controls.maxDistance = Math.min(bb.w, bb.d) * 0.45;
+          controls.maxPolarAngle = Math.PI - 0.05; // позволяем смотреть выше горизонта
+          tweenCamera(lobbyAnchorPos, lobbyAnchorTarget);
+        }
+      };
+
       // ── публикуем API ─────────────────────────────────────────────────────
       apiRef.current = {
         setMode: applyMode,
@@ -637,6 +816,8 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           renderer.render(scene, camera);
           return renderer.domElement.toDataURL("image/png");
         },
+        setView: applyView,
+        getView: () => view,
       };
 
       // ── анимация ──────────────────────────────────────────────────────────
@@ -646,10 +827,21 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         animId = requestAnimationFrame(animate);
         t += 0.016;
 
-        if (mode === "night") {
+        if (view === "exterior" && mode === "night") {
           beaconMat.emissiveIntensity = 0.6 + Math.sin(t * 2.5) * 0.6;
           groundGlow1.intensity = 3.0 + Math.sin(t * 0.7) * 0.5;
           groundGlow2.intensity = 2.2 + Math.cos(t * 0.5) * 0.4;
+        }
+
+        if (tweenActive) {
+          tweenT = Math.min(1, tweenT + 0.016 / tweenDur);
+          // easeInOutQuad
+          const e = tweenT < 0.5
+            ? 2 * tweenT * tweenT
+            : 1 - Math.pow(-2 * tweenT + 2, 2) / 2;
+          camera.position.lerpVectors(tweenFrom, tweenTo, e);
+          controls.target.lerpVectors(tweenTargetFrom, tweenTargetTo, e);
+          if (tweenT >= 1) tweenActive = false;
         }
 
         controls.update();

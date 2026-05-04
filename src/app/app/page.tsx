@@ -7,10 +7,11 @@ import {
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight, Box,
   Sun, Moon, Camera, RotateCw, Pause, Building, Mountain, Compass,
+  DoorOpen, ArrowLeft,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { PlanCanvas } from "@/components/PlanCanvas";
-import { PlanCanvas3D, type PlanCanvas3DHandle, type SceneMode, type CameraPreset } from "@/components/PlanCanvas3D";
+import { PlanCanvas3D, type PlanCanvas3DHandle, type SceneMode, type CameraPreset, type ViewMode } from "@/components/PlanCanvas3D";
 import { AppMetrics } from "@/components/AppMetrics";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { exportPlanPdf, exportAiPlansPdf } from "@/lib/pdf-export";
@@ -1837,6 +1838,7 @@ function View3DTab({
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
   const [visibleFloors, setVisibleFloors] = useState<number>(floors);
   const [activePreset, setActivePreset] = useState<CameraPreset | null>("iso");
+  const [view, setView] = useState<ViewMode>("exterior");
 
   // Когда меняется количество этажей в форме — сбрасываем срез под новое значение.
   useEffect(() => {
@@ -1848,6 +1850,11 @@ function View3DTab({
   useEffect(() => {
     canvasRef.current?.setVisibleFloors(visibleFloors);
   }, [visibleFloors, plan, aiImageUrl]);
+
+  // Аналогичный sync для walkthrough-уровня (после ребилда canvas начинает с exterior).
+  useEffect(() => {
+    canvasRef.current?.setView(view);
+  }, [view, plan, aiImageUrl]);
 
   const handleSetMode = (m: SceneMode) => {
     setMode(m);
@@ -1873,6 +1880,14 @@ function View3DTab({
     a.href = url;
     a.download = `plana-3d-${Date.now()}.png`;
     a.click();
+  };
+  const handleSetView = (v: ViewMode) => {
+    setView(v);
+    canvasRef.current?.setView(v);
+    if (v === "lobby") {
+      setAutoRotate(false);
+      setActivePreset(null);
+    }
   };
 
   return (
@@ -1980,6 +1995,7 @@ function View3DTab({
 
             {/* ── Floating controls overlay ── */}
             <SceneControls
+              view={view}
               mode={mode}
               autoRotate={autoRotate}
               floors={floors}
@@ -1990,7 +2006,19 @@ function View3DTab({
               onSetVisibleFloors={handleSetVisibleFloors}
               onPreset={handlePreset}
               onScreenshot={handleScreenshot}
+              onSetView={handleSetView}
             />
+
+            {/* «Войти в подъезд» — выделенная CTA в режиме exterior */}
+            {view === "exterior" && (
+              <button
+                onClick={() => handleSetView("lobby")}
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 h-11 px-5 rounded-full bg-violet-500/90 hover:bg-violet-500 text-white text-[13px] font-medium flex items-center gap-2 shadow-lg shadow-violet-500/30 backdrop-blur-md border border-violet-300/30 transition"
+                title="Перейти в 3D-обзор лобби"
+              >
+                <DoorOpen size={15} /> Войти в подъезд
+              </button>
+            )}
           </>
         )}
       </div>
@@ -2031,9 +2059,10 @@ function View3DTab({
 // ---------------------------------------------------------------------------
 
 function SceneControls({
-  mode, autoRotate, floors, visibleFloors, activePreset,
-  onSetMode, onToggleAutoRotate, onSetVisibleFloors, onPreset, onScreenshot,
+  view, mode, autoRotate, floors, visibleFloors, activePreset,
+  onSetMode, onToggleAutoRotate, onSetVisibleFloors, onPreset, onScreenshot, onSetView,
 }: {
+  view: ViewMode;
   mode: SceneMode;
   autoRotate: boolean;
   floors: number;
@@ -2044,6 +2073,7 @@ function SceneControls({
   onSetVisibleFloors: (n: number) => void;
   onPreset: (p: CameraPreset) => void;
   onScreenshot: () => void;
+  onSetView: (v: ViewMode) => void;
 }) {
   const presets: Array<{ key: CameraPreset; icon: React.ReactNode; label: string }> = [
     { key: "iso",   icon: <Box size={13} />,      label: "Изометрия" },
@@ -2059,76 +2089,86 @@ function SceneControls({
       : "text-white/55 hover:text-white hover:bg-white/[0.05]",
   ].join(" ");
 
+  const inLobby = view === "lobby";
+
   return (
     <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3 pointer-events-none">
-      {/* Левый кластер: режим + автоповорот + пресеты */}
+      {/* Левый кластер */}
       <div className="flex items-center gap-2 pointer-events-auto">
-        {/* Day / Night */}
-        <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
+        {/* В лобби — кнопка «Назад» вместо обычных контролей */}
+        {inLobby && (
           <button
-            onClick={() => onSetMode("day")}
-            className={segBtn(mode === "day")}
-            title="Дневной режим"
+            onClick={() => onSetView("exterior")}
+            className="h-8 px-3 rounded-lg text-[12px] flex items-center gap-1.5 bg-black/55 backdrop-blur-md border border-white/15 text-white/85 hover:text-white hover:bg-black/70 transition"
+            title="Вернуться к виду снаружи"
           >
+            <ArrowLeft size={13} /> Снаружи
+          </button>
+        )}
+
+        {/* Day / Night — доступен везде */}
+        <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
+          <button onClick={() => onSetMode("day")} className={segBtn(mode === "day")} title="Дневной режим">
             <Sun size={13} /> День
           </button>
-          <button
-            onClick={() => onSetMode("night")}
-            className={segBtn(mode === "night")}
-            title="Ночной режим"
-          >
+          <button onClick={() => onSetMode("night")} className={segBtn(mode === "night")} title="Ночной режим">
             <Moon size={13} /> Ночь
           </button>
         </div>
 
-        {/* Auto-rotate toggle */}
-        <button
-          onClick={onToggleAutoRotate}
-          className={[
-            "h-8 px-2.5 rounded-lg text-[11px] flex items-center gap-1 border backdrop-blur-md transition",
-            autoRotate
-              ? "bg-violet-500/20 border-violet-400/30 text-violet-100"
-              : "bg-black/40 border-white/10 text-white/65 hover:text-white",
-          ].join(" ")}
-          title={autoRotate ? "Остановить вращение" : "Включить автоповорот"}
-        >
-          {autoRotate ? <Pause size={12} /> : <RotateCw size={12} />}
-          {autoRotate ? "Стоп" : "Авто"}
-        </button>
-
-        {/* Camera presets */}
-        <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
-          {presets.map((p) => (
+        {/* Контроли только в exterior */}
+        {!inLobby && (
+          <>
             <button
-              key={p.key}
-              onClick={() => onPreset(p.key)}
-              className={segBtn(activePreset === p.key)}
-              title={p.label}
+              onClick={onToggleAutoRotate}
+              className={[
+                "h-8 px-2.5 rounded-lg text-[11px] flex items-center gap-1 border backdrop-blur-md transition",
+                autoRotate
+                  ? "bg-violet-500/20 border-violet-400/30 text-violet-100"
+                  : "bg-black/40 border-white/10 text-white/65 hover:text-white",
+              ].join(" ")}
+              title={autoRotate ? "Остановить вращение" : "Включить автоповорот"}
             >
-              {p.icon}
-              <span className="hidden lg:inline">{p.label}</span>
+              {autoRotate ? <Pause size={12} /> : <RotateCw size={12} />}
+              {autoRotate ? "Стоп" : "Авто"}
             </button>
-          ))}
-        </div>
+
+            <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
+              {presets.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => onPreset(p.key)}
+                  className={segBtn(activePreset === p.key)}
+                  title={p.label}
+                >
+                  {p.icon}
+                  <span className="hidden lg:inline">{p.label}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Правый кластер: срез этажей + screenshot */}
+      {/* Правый кластер: слайдер этажей (только exterior) + screenshot */}
       <div className="flex items-center gap-2 pointer-events-auto">
-        <div className="flex items-center gap-2.5 bg-black/40 backdrop-blur-md border border-white/10 rounded-lg px-3 h-8">
-          <Layers size={12} className="text-white/55 flex-shrink-0" />
-          <span className="text-[11px] text-white/55 whitespace-nowrap">Этажи</span>
-          <input
-            type="range"
-            min={1}
-            max={floors}
-            value={visibleFloors}
-            onChange={(e) => onSetVisibleFloors(Number(e.target.value))}
-            className="w-28 accent-violet-400 cursor-pointer"
-          />
-          <span className="text-[11px] tabular text-white/85 min-w-[28px] text-right">
-            {visibleFloors}/{floors}
-          </span>
-        </div>
+        {!inLobby && (
+          <div className="flex items-center gap-2.5 bg-black/40 backdrop-blur-md border border-white/10 rounded-lg px-3 h-8">
+            <Layers size={12} className="text-white/55 flex-shrink-0" />
+            <span className="text-[11px] text-white/55 whitespace-nowrap">Этажи</span>
+            <input
+              type="range"
+              min={1}
+              max={floors}
+              value={visibleFloors}
+              onChange={(e) => onSetVisibleFloors(Number(e.target.value))}
+              className="w-28 accent-violet-400 cursor-pointer"
+            />
+            <span className="text-[11px] tabular text-white/85 min-w-[28px] text-right">
+              {visibleFloors}/{floors}
+            </span>
+          </div>
+        )}
 
         <button
           onClick={onScreenshot}
