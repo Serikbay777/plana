@@ -69,6 +69,15 @@ function extrude(
 export type SceneMode = "day" | "night";
 export type CameraPreset = "iso" | "top" | "front" | "side";
 export type ViewMode = "exterior" | "lobby";
+/** Предустановленная точка обзора. Юзер листает их стрелками. */
+export type SpotKey =
+  | "iso"        // изометрия снаружи
+  | "front"      // фасад
+  | "side"       // сбоку
+  | "top"        // сверху
+  | "entrance"   // главный вход (снаружи у двери)
+  | "lobby"      // внутри лобби
+  | "lift";      // крупно на лифты
 
 export type PlanCanvas3DHandle = {
   setMode: (mode: SceneMode) => void;
@@ -82,6 +91,8 @@ export type PlanCanvas3DHandle = {
   setView: (view: ViewMode) => void;
   /** Текущий уровень. Полезно для UI после анимации переходов. */
   getView: () => ViewMode;
+  /** Прыгнуть в предустановленную точку обзора. */
+  setSpot: (key: SpotKey) => void;
 };
 
 export type PlanCanvas3DProps = {
@@ -117,6 +128,7 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
       screenshot: () => apiRef.current?.screenshot() ?? "",
       setView: (v) => apiRef.current?.setView(v),
       getView: () => apiRef.current?.getView() ?? "exterior",
+      setSpot: (k) => apiRef.current?.setSpot(k),
     }), []);
 
     useEffect(() => {
@@ -920,6 +932,74 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         }
       };
 
+      // ── spots: предустановленные точки обзора ─────────────────────────────
+      type SpotConfig = {
+        view: ViewMode;
+        pos: THREE.Vector3;
+        target: THREE.Vector3;
+        fov: number;
+      };
+      const camDistExt = diag * 1.15 + TOTAL * 0.85;
+      const D = diag * 1.4 + TOTAL * 0.6;
+      const spots: Record<SpotKey, SpotConfig> = {
+        iso: {
+          view: "exterior",
+          pos: new THREE.Vector3(cx + camDistExt * 0.6, cy - camDistExt, TOTAL * 1.55),
+          target: new THREE.Vector3(cx, cy, TOTAL * 0.4),
+          fov: exteriorFov,
+        },
+        front: {
+          view: "exterior",
+          pos: new THREE.Vector3(cx, cy - D * 1.4, TOTAL * 0.55),
+          target: new THREE.Vector3(cx, cy, TOTAL * 0.4),
+          fov: exteriorFov,
+        },
+        side: {
+          view: "exterior",
+          pos: new THREE.Vector3(cx + D * 1.4, cy, TOTAL * 0.55),
+          target: new THREE.Vector3(cx, cy, TOTAL * 0.4),
+          fov: exteriorFov,
+        },
+        top: {
+          view: "exterior",
+          pos: new THREE.Vector3(cx, cy + 0.001, TOTAL + diag * 1.6),
+          target: new THREE.Vector3(cx, cy, TOTAL * 0.5),
+          fov: exteriorFov,
+        },
+        entrance: {
+          view: "exterior",
+          pos: new THREE.Vector3(cx, bb.minY - Math.max(8, bb.d * 0.25), 1.8),
+          target: new THREE.Vector3(cx, bb.minY, 2.2),
+          fov: 50,
+        },
+        lobby: {
+          view: "lobby",
+          pos: lobbyAnchorPos.clone(),
+          target: lobbyAnchorTarget.clone(),
+          fov: 65,
+        },
+        lift: {
+          view: "lobby",
+          pos: new THREE.Vector3(lobbyCx, lobbyMaxY - 2.4, 1.6),
+          target: new THREE.Vector3(lobbyCx, lobbyMaxY - 0.13, 1.5),
+          fov: 55,
+        },
+      };
+
+      const applySpot = (key: SpotKey) => {
+        const s = spots[key];
+        if (!s) return;
+        // Сначала переключаем уровень (groups + освещение + scene background) если надо
+        if (s.view !== view) {
+          applyView(s.view);
+        }
+        // Потом — точная позиция/таргет/FOV для spot'а
+        camera.fov = s.fov;
+        camera.updateProjectionMatrix();
+        controls.autoRotate = false;
+        teleportCamera(s.pos, s.target);
+      };
+
       // ── публикуем API ─────────────────────────────────────────────────────
       apiRef.current = {
         setMode: applyMode,
@@ -932,6 +1012,7 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         },
         setView: applyView,
         getView: () => view,
+        setSpot: applySpot,
       };
 
       // ── анимация ──────────────────────────────────────────────────────────

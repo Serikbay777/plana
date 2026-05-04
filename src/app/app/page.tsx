@@ -7,11 +7,11 @@ import {
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight, Box,
   Sun, Moon, Camera, RotateCw, Pause, Building, Mountain, Compass,
-  DoorOpen, ArrowLeft,
+  DoorOpen, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { PlanCanvas } from "@/components/PlanCanvas";
-import { PlanCanvas3D, type PlanCanvas3DHandle, type SceneMode, type CameraPreset, type ViewMode } from "@/components/PlanCanvas3D";
+import { PlanCanvas3D, type PlanCanvas3DHandle, type SceneMode, type ViewMode, type SpotKey } from "@/components/PlanCanvas3D";
 import { AppMetrics } from "@/components/AppMetrics";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { exportPlanPdf, exportAiPlansPdf } from "@/lib/pdf-export";
@@ -1817,6 +1817,23 @@ function AiPlansTab({ bag, onGenerate, onGoToViz }: { bag: AiPlansBag; onGenerat
 // 3D View Tab
 // ---------------------------------------------------------------------------
 
+type SpotMeta = {
+  key: SpotKey;
+  label: string;
+  view: ViewMode;
+  icon: React.ReactNode;
+};
+
+const SPOTS: SpotMeta[] = [
+  { key: "iso",      label: "Изометрия",     view: "exterior", icon: <Box size={13} /> },
+  { key: "front",    label: "Фасад",         view: "exterior", icon: <Building size={13} /> },
+  { key: "side",     label: "Сбоку",         view: "exterior", icon: <Compass size={13} /> },
+  { key: "top",      label: "Сверху",        view: "exterior", icon: <Mountain size={13} /> },
+  { key: "entrance", label: "Главный вход",  view: "exterior", icon: <DoorOpen size={13} /> },
+  { key: "lobby",    label: "Лобби",         view: "lobby",    icon: <Building2 size={13} /> },
+  { key: "lift",     label: "Лифты",         view: "lobby",    icon: <Layers size={13} /> },
+];
+
 function View3DTab({
   bag, floors, onGenerate, aiPlansBag,
 }: {
@@ -1837,8 +1854,8 @@ function View3DTab({
   const [mode, setMode] = useState<SceneMode>("night");
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
   const [visibleFloors, setVisibleFloors] = useState<number>(floors);
-  const [activePreset, setActivePreset] = useState<CameraPreset | null>("iso");
-  const [view, setView] = useState<ViewMode>("exterior");
+  const [spotIdx, setSpotIdx] = useState<number>(0);
+  const view: ViewMode = SPOTS[spotIdx]?.view ?? "exterior";
 
   // Когда меняется количество этажей в форме — сбрасываем срез под новое значение.
   useEffect(() => {
@@ -1851,10 +1868,10 @@ function View3DTab({
     canvasRef.current?.setVisibleFloors(visibleFloors);
   }, [visibleFloors, plan, aiImageUrl]);
 
-  // Аналогичный sync для walkthrough-уровня (после ребилда canvas начинает с exterior).
+  // Sync активного spot'а с canvas (включая ребилд сцены).
   useEffect(() => {
-    canvasRef.current?.setView(view);
-  }, [view, plan, aiImageUrl]);
+    canvasRef.current?.setSpot(SPOTS[spotIdx].key);
+  }, [spotIdx, plan, aiImageUrl]);
 
   const handleSetMode = (m: SceneMode) => {
     setMode(m);
@@ -1868,11 +1885,6 @@ function View3DTab({
     setVisibleFloors(n);
     canvasRef.current?.setVisibleFloors(n);
   };
-  const handlePreset = (p: CameraPreset) => {
-    setActivePreset(p);
-    setAutoRotate(false);
-    canvasRef.current?.setCameraPreset(p);
-  };
   const handleScreenshot = () => {
     const url = canvasRef.current?.screenshot();
     if (!url) return;
@@ -1881,14 +1893,33 @@ function View3DTab({
     a.download = `plana-3d-${Date.now()}.png`;
     a.click();
   };
-  const handleSetView = (v: ViewMode) => {
-    setView(v);
-    canvasRef.current?.setView(v);
-    if (v === "lobby") {
-      setAutoRotate(false);
-      setActivePreset(null);
-    }
+
+  const handleSpotPrev = () => {
+    setSpotIdx((i) => (i - 1 + SPOTS.length) % SPOTS.length);
+    setAutoRotate(false);
   };
+  const handleSpotNext = () => {
+    setSpotIdx((i) => (i + 1) % SPOTS.length);
+    setAutoRotate(false);
+  };
+  const handleSpotSelect = (i: number) => {
+    setSpotIdx(i);
+    setAutoRotate(false);
+  };
+
+  // Стрелки клавиатуры тоже листают spots.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (bag.state !== "ready") return;
+      // не перехватываем когда пользователь в инпуте
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "ArrowLeft")  { e.preventDefault(); handleSpotPrev(); }
+      if (e.key === "ArrowRight") { e.preventDefault(); handleSpotNext(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [bag.state]);
 
   return (
     <>
@@ -1993,32 +2024,27 @@ function View3DTab({
               initialVisibleFloors={visibleFloors}
             />
 
-            {/* ── Floating controls overlay ── */}
+            {/* ── Top controls overlay (день/ночь, авто, этажи, png) ── */}
             <SceneControls
               view={view}
               mode={mode}
               autoRotate={autoRotate}
               floors={floors}
               visibleFloors={visibleFloors}
-              activePreset={activePreset}
               onSetMode={handleSetMode}
               onToggleAutoRotate={() => handleSetAutoRotate(!autoRotate)}
               onSetVisibleFloors={handleSetVisibleFloors}
-              onPreset={handlePreset}
               onScreenshot={handleScreenshot}
-              onSetView={handleSetView}
             />
 
-            {/* «Войти в подъезд» — выделенная CTA в режиме exterior */}
-            {view === "exterior" && (
-              <button
-                onClick={() => handleSetView("lobby")}
-                className="absolute bottom-4 left-1/2 -translate-x-1/2 h-11 px-5 rounded-full bg-violet-500/90 hover:bg-violet-500 text-white text-[13px] font-medium flex items-center gap-2 shadow-lg shadow-violet-500/30 backdrop-blur-md border border-violet-300/30 transition"
-                title="Перейти в 3D-обзор лобби"
-              >
-                <DoorOpen size={15} /> Войти в подъезд
-              </button>
-            )}
+            {/* ── Spot navigator снизу — стрелки + название точки + доты ── */}
+            <SpotNavigator
+              spots={SPOTS}
+              spotIdx={spotIdx}
+              onPrev={handleSpotPrev}
+              onNext={handleSpotNext}
+              onSelect={handleSpotSelect}
+            />
           </>
         )}
       </div>
@@ -2059,29 +2085,19 @@ function View3DTab({
 // ---------------------------------------------------------------------------
 
 function SceneControls({
-  view, mode, autoRotate, floors, visibleFloors, activePreset,
-  onSetMode, onToggleAutoRotate, onSetVisibleFloors, onPreset, onScreenshot, onSetView,
+  view, mode, autoRotate, floors, visibleFloors,
+  onSetMode, onToggleAutoRotate, onSetVisibleFloors, onScreenshot,
 }: {
   view: ViewMode;
   mode: SceneMode;
   autoRotate: boolean;
   floors: number;
   visibleFloors: number;
-  activePreset: CameraPreset | null;
   onSetMode: (m: SceneMode) => void;
   onToggleAutoRotate: () => void;
   onSetVisibleFloors: (n: number) => void;
-  onPreset: (p: CameraPreset) => void;
   onScreenshot: () => void;
-  onSetView: (v: ViewMode) => void;
 }) {
-  const presets: Array<{ key: CameraPreset; icon: React.ReactNode; label: string }> = [
-    { key: "iso",   icon: <Box size={13} />,      label: "Изометрия" },
-    { key: "top",   icon: <Mountain size={13} />, label: "Сверху" },
-    { key: "front", icon: <Building size={13} />, label: "Фасад" },
-    { key: "side",  icon: <Compass size={13} />,  label: "Сбоку" },
-  ];
-
   const segBtn = (active: boolean) => [
     "h-7 px-2.5 rounded-md text-[11px] flex items-center gap-1 transition",
     active
@@ -2093,20 +2109,7 @@ function SceneControls({
 
   return (
     <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3 pointer-events-none">
-      {/* Левый кластер */}
       <div className="flex items-center gap-2 pointer-events-auto">
-        {/* В лобби — кнопка «Назад» вместо обычных контролей */}
-        {inLobby && (
-          <button
-            onClick={() => onSetView("exterior")}
-            className="h-8 px-3 rounded-lg text-[12px] flex items-center gap-1.5 bg-black/55 backdrop-blur-md border border-white/15 text-white/85 hover:text-white hover:bg-black/70 transition"
-            title="Вернуться к виду снаружи"
-          >
-            <ArrowLeft size={13} /> Снаружи
-          </button>
-        )}
-
-        {/* Day / Night — доступен везде */}
         <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
           <button onClick={() => onSetMode("day")} className={segBtn(mode === "day")} title="Дневной режим">
             <Sun size={13} /> День
@@ -2116,41 +2119,23 @@ function SceneControls({
           </button>
         </div>
 
-        {/* Контроли только в exterior */}
         {!inLobby && (
-          <>
-            <button
-              onClick={onToggleAutoRotate}
-              className={[
-                "h-8 px-2.5 rounded-lg text-[11px] flex items-center gap-1 border backdrop-blur-md transition",
-                autoRotate
-                  ? "bg-violet-500/20 border-violet-400/30 text-violet-100"
-                  : "bg-black/40 border-white/10 text-white/65 hover:text-white",
-              ].join(" ")}
-              title={autoRotate ? "Остановить вращение" : "Включить автоповорот"}
-            >
-              {autoRotate ? <Pause size={12} /> : <RotateCw size={12} />}
-              {autoRotate ? "Стоп" : "Авто"}
-            </button>
-
-            <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
-              {presets.map((p) => (
-                <button
-                  key={p.key}
-                  onClick={() => onPreset(p.key)}
-                  className={segBtn(activePreset === p.key)}
-                  title={p.label}
-                >
-                  {p.icon}
-                  <span className="hidden lg:inline">{p.label}</span>
-                </button>
-              ))}
-            </div>
-          </>
+          <button
+            onClick={onToggleAutoRotate}
+            className={[
+              "h-8 px-2.5 rounded-lg text-[11px] flex items-center gap-1 border backdrop-blur-md transition",
+              autoRotate
+                ? "bg-violet-500/20 border-violet-400/30 text-violet-100"
+                : "bg-black/40 border-white/10 text-white/65 hover:text-white",
+            ].join(" ")}
+            title={autoRotate ? "Остановить вращение" : "Включить автоповорот"}
+          >
+            {autoRotate ? <Pause size={12} /> : <RotateCw size={12} />}
+            {autoRotate ? "Стоп" : "Авто"}
+          </button>
         )}
       </div>
 
-      {/* Правый кластер: слайдер этажей (только exterior) + screenshot */}
       <div className="flex items-center gap-2 pointer-events-auto">
         {!inLobby && (
           <div className="flex items-center gap-2.5 bg-black/40 backdrop-blur-md border border-white/10 rounded-lg px-3 h-8">
@@ -2177,6 +2162,68 @@ function SceneControls({
         >
           <Camera size={12} /> PNG
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SpotNavigator — нижняя панель с предустановленными точками обзора
+// ---------------------------------------------------------------------------
+
+function SpotNavigator({
+  spots, spotIdx, onPrev, onNext, onSelect,
+}: {
+  spots: SpotMeta[];
+  spotIdx: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onSelect: (i: number) => void;
+}) {
+  const current = spots[spotIdx];
+  if (!current) return null;
+
+  return (
+    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 pointer-events-auto">
+      <button
+        onClick={onPrev}
+        className="size-9 grid place-items-center rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white/80 hover:text-white hover:bg-black/75 transition"
+        title="Предыдущая точка (←)"
+      >
+        <ChevronLeft size={16} />
+      </button>
+
+      <div className="flex items-center gap-2 bg-black/55 backdrop-blur-md border border-white/15 rounded-full px-4 h-9">
+        <span className="text-violet-300/80 flex-shrink-0">{current.icon}</span>
+        <span className="text-[12.5px] font-medium text-white whitespace-nowrap">{current.label}</span>
+        <span className="text-[10.5px] text-white/40 tabular ml-1">
+          {spotIdx + 1}/{spots.length}
+        </span>
+      </div>
+
+      <button
+        onClick={onNext}
+        className="size-9 grid place-items-center rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white/80 hover:text-white hover:bg-black/75 transition"
+        title="Следующая точка (→)"
+      >
+        <ChevronRight size={16} />
+      </button>
+
+      {/* Доты-индикаторы — клик переключает */}
+      <div className="ml-3 flex items-center gap-1.5 bg-black/35 backdrop-blur-md border border-white/10 rounded-full px-2.5 h-7">
+        {spots.map((s, i) => (
+          <button
+            key={s.key}
+            onClick={() => onSelect(i)}
+            className={[
+              "size-1.5 rounded-full transition",
+              i === spotIdx
+                ? "bg-violet-300 scale-125"
+                : "bg-white/30 hover:bg-white/60",
+            ].join(" ")}
+            title={s.label}
+          />
+        ))}
       </div>
     </div>
   );
