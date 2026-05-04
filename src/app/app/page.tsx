@@ -7,7 +7,7 @@ import {
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight, Box,
   Sun, Moon, Camera, RotateCw, Pause, Building, Mountain, Compass,
-  DoorOpen, ChevronLeft, ChevronRight, ArrowUp, ArrowDown,
+  DoorOpen, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, FileDown,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { PlanCanvas } from "@/components/PlanCanvas";
@@ -17,6 +17,7 @@ import { ComparisonTable } from "@/components/ComparisonTable";
 import { exportPlanPdf, exportAiPlansPdf } from "@/lib/pdf-export";
 import {
   generateFromRect,
+  generateFromDxf,
   visualizeExterior,
   visualizeFloorplanFurniture,
   visualizeInterior,
@@ -165,6 +166,9 @@ export default function AppPage() {
 
   // Tab 1
   const [floorBag, setFloorBag] = useState<FloorBag>(EMPTY_FLOOR_BAG);
+  // Опциональный DXF-контур этажа. Если задан, generateFloor идёт через
+  // /generate/dxf и игнорирует rect-параметры (ширина/глубина/отступы).
+  const [floorDxfFile, setFloorDxfFile] = useState<File | null>(null);
   // Tab 2
   const [siteBag, setSiteBag] = useState<ImageBag>(EMPTY_IMAGE_BAG);
   // Tab 3 — три независимых стейта
@@ -212,21 +216,23 @@ export default function AppPage() {
   const generateFloor = async () => {
     setFloorBag({ ...EMPTY_FLOOR_BAG, state: "loading" });
     try {
-      const res = await generateFromRect({
-        site_width_m: form.site_width_m,
-        site_depth_m: form.site_depth_m,
-        setback_front_m: form.setback_front_m,
-        setback_side_m: form.setback_side_m,
-        setback_rear_m: form.setback_rear_m,
-        floors: form.floors,
-        purpose: form.purpose,
-        target_mix: {
-          studio: form.studio_pct / 100,
-          k1: form.k1_pct / 100,
-          k2: form.k2_pct / 100,
-          k3: form.k3_pct / 100,
-        },
-      });
+      const res = floorDxfFile
+        ? await generateFromDxf(floorDxfFile, { floors: form.floors })
+        : await generateFromRect({
+            site_width_m: form.site_width_m,
+            site_depth_m: form.site_depth_m,
+            setback_front_m: form.setback_front_m,
+            setback_side_m: form.setback_side_m,
+            setback_rear_m: form.setback_rear_m,
+            floors: form.floors,
+            purpose: form.purpose,
+            target_mix: {
+              studio: form.studio_pct / 100,
+              k1: form.k1_pct / 100,
+              k2: form.k2_pct / 100,
+              k3: form.k3_pct / 100,
+            },
+          });
       setFloorBag({ state: "ready", response: res, selectedVariant: 0, showCompare: false, errorMessage: null });
     } catch (e) {
       setFloorBag({ state: "error", response: null, selectedVariant: 0, showCompare: false, errorMessage: (e as Error).message });
@@ -431,6 +437,8 @@ export default function AppPage() {
               onSelectVariant={(i) => setFloorBag(b => ({ ...b, selectedVariant: i }))}
               onToggleCompare={() => setFloorBag(b => ({ ...b, showCompare: !b.showCompare }))}
               onGoToViz={() => setTab("viz")}
+              dxfFile={floorDxfFile}
+              onPickDxf={setFloorDxfFile}
             />
           )}
           {tab === "3d" && (
@@ -570,6 +578,7 @@ function TabStrip({ tab, onChange }: { tab: TopTab; onChange: (t: TopTab) => voi
 
 function FloorTab({
   bag, floors, form, onGenerate, onSelectVariant, onToggleCompare, onGoToViz,
+  dxfFile, onPickDxf,
 }: {
   bag: FloorBag;
   floors: number;
@@ -578,11 +587,21 @@ function FloorTab({
   onSelectVariant: (i: number) => void;
   onToggleCompare: () => void;
   onGoToViz: () => void;
+  dxfFile: File | null;
+  onPickDxf: (f: File | null) => void;
 }) {
   const planDivRef = useRef<HTMLDivElement>(null);
+  const dxfInputRef = useRef<HTMLInputElement>(null);
   const plan = bag.response?.variants[bag.selectedVariant] ?? null;
   const requestId = bag.response?.request_id ?? null;
   const plans = bag.response?.variants ?? [];
+
+  const onDxfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) onPickDxf(f);
+    // Сбросим value чтобы можно было выбрать тот же файл повторно
+    if (dxfInputRef.current) dxfInputRef.current.value = "";
+  };
 
   return (
     <>
@@ -631,9 +650,32 @@ function FloorTab({
             Сравнение
           </button>
 
-          <div className="ml-auto pl-3 text-[11px] text-white/35 tabular flex-shrink-0 flex items-center gap-1">
-            <CheckCircle2 size={11} className="text-emerald-400/60" />
-            {bag.response.elapsed_ms} мс
+          <div className="ml-auto pl-3 text-[11px] text-white/35 tabular flex-shrink-0 flex items-center gap-2.5">
+            {/* Источник контура: rect / DXF */}
+            {dxfFile ? (
+              <span
+                className="flex items-center gap-1 text-violet-300/80 bg-violet-500/[0.08] border border-violet-400/20 rounded-md px-2 py-0.5"
+                title="Контур этажа загружен из DXF"
+              >
+                <FileDown size={10} />
+                <span className="max-w-[160px] truncate">{dxfFile.name}</span>
+                <button
+                  onClick={() => onPickDxf(null)}
+                  className="text-white/40 hover:text-white ml-0.5"
+                  title="Сбросить и вернуться к прямоугольному вводу"
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ) : (
+              <span className="text-white/30">
+                Контур: {form.site_width_m}×{form.site_depth_m} м
+              </span>
+            )}
+            <span className="flex items-center gap-1">
+              <CheckCircle2 size={11} className="text-emerald-400/60" />
+              {bag.response.elapsed_ms} мс
+            </span>
           </div>
         </div>
       )}
@@ -662,9 +704,41 @@ function FloorTab({
                       <Sparkles size={22} className="text-white/85" />
                     </div>
                     <div className="text-[20px] font-semibold tracking-display mb-2.5">Поэтажная планировка</div>
-                    <div className="text-[13px] text-white/55 leading-relaxed">
+                    <div className="text-[13px] text-white/55 leading-relaxed mb-5">
                       Заполни параметры слева, нажми «Сгенерировать» — движок выдаст 5 вариантов за 1–3 сек.
                     </div>
+
+                    {/* DXF-импорт: альтернативный путь к генерации */}
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-white/30 mb-2">
+                      или загрузите контур этажа
+                    </div>
+                    {dxfFile ? (
+                      <div className="inline-flex items-center gap-2 bg-violet-500/[0.08] border border-violet-400/25 rounded-lg px-3 h-9 text-[12px] text-violet-200">
+                        <FileDown size={13} />
+                        <span className="max-w-[220px] truncate">{dxfFile.name}</span>
+                        <button
+                          onClick={() => onPickDxf(null)}
+                          className="text-white/45 hover:text-white"
+                          title="Убрать DXF"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => dxfInputRef.current?.click()}
+                        className="inline-flex items-center gap-2 h-9 px-3.5 rounded-lg surface text-[12px] hover:bg-white/[0.08] transition"
+                      >
+                        <Upload size={13} /> Загрузить DXF
+                      </button>
+                    )}
+                    <input
+                      ref={dxfInputRef}
+                      type="file"
+                      accept=".dxf"
+                      onChange={onDxfChange}
+                      className="hidden"
+                    />
                   </div>
                 </div>
               )}
