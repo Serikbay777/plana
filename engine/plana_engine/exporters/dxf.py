@@ -54,6 +54,7 @@ def _setup_layers(doc: ezdxf.document.Drawing) -> None:
         ("TEXT_APT",       7, "Continuous", 25),
         ("DIM",            7, "Continuous", 18),
         ("GRID",           8, "DASHED",     13),
+        ("ENGINEERING",    4, "DASHED",     25),   # ИТП, электрощит, мусорокамера
     ]
     for name, color, ltype, lw in specs:
         if name in layers:
@@ -165,6 +166,26 @@ def _draw_core(msp, core: CoreSpec) -> None:
         (minx + w / 2, miny + h - 0.35),
         align=TextEntityAlignment.MIDDLE_CENTER,
     )
+
+
+def _draw_engineering(msp, plan: Plan) -> None:
+    """Инженерные помещения первого этажа — пунктирный контур + подпись."""
+    rooms = getattr(plan, "engineering_rooms", None) or []
+    for room in rooms:
+        pts = _poly_pts(room.polygon)
+        msp.add_lwpolyline(
+            pts + [pts[0]],
+            close=True,
+            dxfattribs={"layer": "ENGINEERING"},
+        )
+        # центр для подписи
+        cx = sum(x for x, _ in pts) / len(pts)
+        cy = sum(y for _, y in pts) / len(pts)
+        text = msp.add_text(
+            f"{room.label}\n{room.area:.1f} м²",
+            dxfattribs={"layer": "ENGINEERING", "height": 0.25},
+        )
+        text.set_placement((cx, cy), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
 
 
 def _draw_corridor(msp, corridor: Corridor) -> None:
@@ -457,6 +478,7 @@ def export_plan_to_dxf(plan: Plan, path: Path | str) -> Path:
     for c in plan.corridors:
         _draw_corridor(msp, c)
     _draw_core(msp, plan.core)
+    _draw_engineering(msp, plan)
     for tile in plan.tiles:
         _draw_apartment(msp, tile)
     _draw_dimensions(msp, plan)
@@ -479,6 +501,7 @@ def dxf_bytes(plan: Plan) -> bytes:
     for c in plan.corridors:
         _draw_corridor(msp, c)
     _draw_core(msp, plan.core)
+    _draw_engineering(msp, plan)
     for tile in plan.tiles:
         _draw_apartment(msp, tile)
     _draw_dimensions(msp, plan)

@@ -67,6 +67,23 @@ export type Corridor = {
   length: number;
 };
 
+export type EngineeringKind = "itp" | "electrical" | "waste" | "vent" | "pump";
+
+export type EngineeringRoom = {
+  kind: EngineeringKind;
+  polygon: Polygon;
+  label: string;
+  area: number;
+};
+
+export const ENG_COLORS: Record<EngineeringKind, string> = {
+  itp:        "#7c8cff",   // тепловой пункт — синий
+  electrical: "#ffb84d",   // щит — оранжевый
+  waste:      "#9aa0a6",   // мусор — серый
+  vent:       "#5fc6c6",   // венткамера — бирюза
+  pump:       "#b08aff",   // насосная — фиолет
+};
+
 export type PlanMetrics = {
   floor_area: number;
   saleable_area: number;
@@ -98,6 +115,8 @@ export type Plan = {
   core: CoreSpec;
   corridors: Corridor[];
   tiles: PlacedTile[];
+  /** Инженерные помещения первого этажа (ИТП, электрощит, мусор и т.п.). */
+  engineering_rooms?: EngineeringRoom[];
   metrics: PlanMetrics;
   norms: NormsReport;
   preset: PresetKey;

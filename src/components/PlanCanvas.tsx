@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ENG_COLORS,
   ZONE_COLORS,
   type Plan,
   type PlacedTile,
@@ -123,6 +124,40 @@ export function PlanCanvas({
 
         {/* Ядро (ЛЛУ) с лестничным маршем */}
         <CoreShaft core={plan.core.polygon} />
+
+        {/* Инженерные помещения первого этажа (ИТП, электрощит, мусор) */}
+        {plan.engineering_rooms?.map((room, i) => {
+          const rb = bbox(room.polygon);
+          const cx = (rb.minx + rb.maxx) / 2;
+          const cy = (rb.miny + rb.maxy) / 2;
+          const fill = ENG_COLORS[room.kind];
+          return (
+            <g key={`eng-${i}`}>
+              <path
+                d={polyPath(room.polygon)}
+                fill={fill}
+                fillOpacity={0.18}
+                stroke={fill}
+                strokeWidth={stroke * 1.2}
+                strokeDasharray={`${stroke * 4} ${stroke * 2}`}
+              />
+              {showLabels && (
+                <text
+                  x={cx}
+                  y={-cy}
+                  fontSize={Math.min(rb.w, rb.h) * 0.32}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill={fill}
+                  fontWeight={600}
+                  style={{ pointerEvents: "none" }}
+                >
+                  {room.label}
+                </text>
+              )}
+            </g>
+          );
+        })}
 
         {/* Квартиры */}
         {plan.tiles.map((t, i) => (

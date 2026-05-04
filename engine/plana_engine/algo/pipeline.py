@@ -22,6 +22,7 @@ from ..parser import parse_rect
 
 from .core import place_core
 from .corridor import lay_corridors, FacadeBelt
+from .engineering import place_engineering_rooms
 from .tile import place_tile_in_slot, fits_slot
 
 # чтобы не импортировать validator до его готовности — отложенный импорт
@@ -189,11 +190,20 @@ def generate_variant(
         edges=edges,
     )
 
+    # Инженерные помещения первого этажа — добавляем после tiles, на metrics не влияют.
+    # Опционально: если placer упадёт, оставляем пустой список — это лучше, чем
+    # поломать всю генерацию из-за декоративного слоя.
+    try:
+        engineering_rooms = place_engineering_rooms(core, contour)
+    except Exception:
+        engineering_rooms = []
+
     plan = Plan(
         floor_polygon=contour,
         core=core,
         corridors=corridor_plan.corridors,
         tiles=tiles,
+        engineering_rooms=engineering_rooms,
         metrics=metrics,
         norms=_check_norms_lazy({
             "core": core,

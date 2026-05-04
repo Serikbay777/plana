@@ -136,6 +136,28 @@ class CoreSpec(BaseModel):
     has_shaft: bool = True
 
 
+class EngineeringKind(str, Enum):
+    """Тип инженерного помещения первого этажа / подвала."""
+    ITP = "itp"                    # индивидуальный тепловой пункт
+    ELECTRICAL = "electrical"      # электрощитовая
+    WASTE = "waste"                # мусорокамера
+    VENT = "vent"                  # венткамера
+    PUMP = "pump"                  # насосная
+
+
+class EngineeringRoom(BaseModel):
+    """Инженерное помещение, размещаемое на первом этаже у ядра.
+
+    Не входит в `saleable_area` метрик, но учитывается в `floor_area` и
+    отображается отдельным слоем на плане. Размещение — рядом с core,
+    на стороне противоположной коридору, чтобы не обрезать квартиры.
+    """
+    kind: EngineeringKind
+    polygon: Polygon
+    label: str
+    area: float
+
+
 class CorridorKind(str, Enum):
     LINEAR = "linear"          # прямой коридор вдоль здания
     RING = "ring"              # кольцевой / замкнутый
@@ -186,6 +208,7 @@ class Plan(BaseModel):
     core: CoreSpec
     corridors: list[Corridor]
     tiles: list[PlacedTile]
+    engineering_rooms: list[EngineeringRoom] = Field(default_factory=list)
     metrics: PlanMetrics
     norms: NormsReport
     preset: PresetKey
