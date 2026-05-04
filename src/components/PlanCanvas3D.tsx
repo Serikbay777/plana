@@ -3,7 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { Plan, Polygon } from "@/lib/engine";
+import type { Plan, Polygon, AptType } from "@/lib/engine";
 import { APT_COLORS } from "@/lib/engine";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ function extrude(
 
 export type SceneMode = "day" | "night";
 export type CameraPreset = "iso" | "top" | "front" | "side";
-export type ViewMode = "exterior" | "lobby";
+export type ViewMode = "exterior" | "lobby" | "apartment";
 /** Предустановленная точка обзора. Юзер листает их стрелками. */
 export type SpotKey =
   | "iso"          // изометрия снаружи
@@ -85,7 +85,10 @@ export type SpotKey =
   | "lobby"        // внутри лобби, у входа
   | "reception"    // ресепшен крупно
   | "lobby_back"   // взгляд от лифтов на вход
-  | "lift";        // крупно на лифты
+  | "lift"         // крупно на лифты
+  // Внутри квартиры — по типам
+  | "apt_studio" | "apt_k1" | "apt_euro1" | "apt_k2" | "apt_euro2"
+  | "apt_k3" | "apt_euro3" | "apt_k4";
 
 export type PlanCanvas3DHandle = {
   setMode: (mode: SceneMode) => void;
@@ -111,6 +114,12 @@ export type PlanCanvas3DProps = {
   initialAutoRotate?: boolean;
   /** Сколько этажей показать сразу после сборки (по умолчанию все). */
   initialVisibleFloors?: number;
+  /**
+   * AI-картинки интерьеров по типу квартиры (data URL или URL).
+   * Если задано — для каждого типа строится мини-комната с картинкой на стене,
+   * и появляются spot'ы apt_<type>.
+   */
+  interiorImagesByType?: Partial<Record<AptType, string>>;
 };
 
 // ── component ────────────────────────────────────────────────────────────────
@@ -122,6 +131,7 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
       initialMode = "night",
       initialAutoRotate = true,
       initialVisibleFloors,
+      interiorImagesByType,
     },
     ref,
   ) {
@@ -813,6 +823,160 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
       entryMat.receiveShadow = true;
       lobbyGroup.add(entryMat);
 
+      // ── apartment-комнаты по типам ────────────────────────────────────────
+      // Размещаем «галерею» комнат далеко в стороне от здания, чтобы
+      // освещение/материалы экстерьера не влияли. Каждая комната — отдельный
+      // anchor для своего spot'а apt_<type>.
+      const apartmentGroup = new THREE.Group();
+      apartmentGroup.visible = false;
+      scene.add(apartmentGroup);
+
+      type AptAnchor = { center: THREE.Vector3; w: number; d: number };
+      const aptAnchors = new Map<AptType, AptAnchor>();
+
+      const APT_TYPES_ORDER: AptType[] = [
+        "studio", "k1", "euro1", "k2", "euro2", "k3", "euro3", "k4",
+      ];
+      const APT_LABELS_RU: Record<AptType, string> = {
+        studio: "Студия",
+        k1: "1-комнатная",
+        euro1: "Евро-1",
+        k2: "2-комнатная",
+        euro2: "Евро-2",
+        k3: "3-комнатная",
+        euro3: "Евро-3",
+        k4: "4-комнатная",
+      };
+
+      // Освещение apartment-галереи — общее
+      const aptAmbient = new THREE.AmbientLight(0xffffff, 0.6);
+      apartmentGroup.add(aptAmbient);
+
+      let aptCursorX = cx + Math.max(bb.w, bb.d) * 0.5 + 80;
+      const APT_GAP = 10;
+
+      for (const aptType of APT_TYPES_ORDER) {
+        const url = interiorImagesByType?.[aptType];
+        if (!url) continue;
+        const tile = plan.tiles.find((t) => t.apt_type === aptType);
+        if (!tile) continue;
+
+        const area = Math.max(20, tile.area);
+        // Условные пропорции: ширина в 1.4 раз больше глубины
+        const w = Math.max(4.0, Math.sqrt(area * 1.4));
+        const d = Math.max(3.0, Math.sqrt(area / 1.4));
+        const center = new THREE.Vector3(aptCursorX + w / 2, cy, 0);
+        aptCursorX += w + APT_GAP;
+
+        const minX = center.x - w / 2;
+        const maxX = center.x + w / 2;
+        const minY = center.y - d / 2;
+        const maxY = center.y + d / 2;
+
+        const aptShape = new THREE.Shape();
+        aptShape.moveTo(minX, minY);
+        aptShape.lineTo(maxX, minY);
+        aptShape.lineTo(maxX, maxY);
+        aptShape.lineTo(minX, maxY);
+        aptShape.closePath();
+
+        // Пол — паркет
+        const floorM = new THREE.MeshStandardMaterial({
+          color: 0xb89870, roughness: 0.55, metalness: 0.05,
+        });
+        const floor = new THREE.Mesh(new THREE.ShapeGeometry(aptShape), floorM);
+        floor.position.z = 0.04;
+        floor.receiveShadow = true;
+        apartmentGroup.add(floor);
+
+        // Потолок — белый
+        const ceilM = new THREE.MeshStandardMaterial({
+          color: 0xf2efe8, roughness: 0.95, side: THREE.DoubleSide,
+        });
+        const ceil = new THREE.Mesh(new THREE.ShapeGeometry(aptShape), ceilM);
+        ceil.position.z = FH;
+        apartmentGroup.add(ceil);
+
+        // Стены — кремовые внутри
+        const wallM = new THREE.MeshStandardMaterial({
+          color: 0xefe6d4, roughness: 0.85, side: THREE.BackSide,
+        });
+        const walls = new THREE.Mesh(
+          new THREE.ExtrudeGeometry(aptShape, { depth: FH, bevelEnabled: false }),
+          wallM,
+        );
+        apartmentGroup.add(walls);
+
+        // AI-картинка интерьера на дальней (северной) стене
+        new THREE.TextureLoader().load(url, (tex) => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 16);
+          const aiM = new THREE.MeshStandardMaterial({
+            map: tex,
+            roughness: 0.4,
+            emissive: 0xffffff,
+            emissiveMap: tex,
+            emissiveIntensity: 0.18,
+          });
+          const aiPlane = new THREE.Mesh(
+            new THREE.PlaneGeometry(w * 0.92, FH * 0.85),
+            aiM,
+          );
+          aiPlane.position.set(center.x, maxY - 0.06, FH / 2);
+          aiPlane.rotation.x = Math.PI / 2;
+          apartmentGroup.add(aiPlane);
+        });
+
+        // Табличка с типом квартиры — над «дверью» (южная стена)
+        const labelCanvas = document.createElement("canvas");
+        labelCanvas.width = 768; labelCanvas.height = 128;
+        const lctx = labelCanvas.getContext("2d");
+        if (lctx) {
+          lctx.fillStyle = "#1a1f2e";
+          lctx.fillRect(0, 0, 768, 128);
+          lctx.fillStyle = "#a8c4ff";
+          lctx.font = "bold 64px -apple-system, system-ui, sans-serif";
+          lctx.textAlign = "center";
+          lctx.textBaseline = "middle";
+          lctx.fillText(APT_LABELS_RU[aptType], 384, 64);
+          lctx.fillStyle = "#ffffff80";
+          lctx.font = "28px -apple-system, system-ui, sans-serif";
+          lctx.fillText(`${tile.area.toFixed(0)} м²`, 384, 110);
+        }
+        const labelTex = new THREE.CanvasTexture(labelCanvas);
+        labelTex.colorSpace = THREE.SRGBColorSpace;
+        const labelM = new THREE.MeshStandardMaterial({
+          map: labelTex, emissive: 0xffffff, emissiveMap: labelTex,
+          emissiveIntensity: 0.5,
+        });
+        const labelMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(2.2, 0.55),
+          labelM,
+        );
+        labelMesh.position.set(center.x, minY + 0.06, FH * 0.88);
+        // лицевой стороной внутрь комнаты (нормаль +Y)
+        labelMesh.rotation.x = -Math.PI / 2;
+        apartmentGroup.add(labelMesh);
+
+        // Лампа на потолке
+        const aptLamp = new THREE.PointLight(0xffe8c4, 1.4, 10, 1.4);
+        aptLamp.position.set(center.x, center.y, FH - 0.35);
+        apartmentGroup.add(aptLamp);
+
+        // Видимый плафон
+        const fixtureM = new THREE.MeshStandardMaterial({
+          color: 0xfff4d8, emissive: 0xfff4d8, emissiveIntensity: 1.0,
+        });
+        const fixture = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7, 0.7, 0.05),
+          fixtureM,
+        );
+        fixture.position.set(center.x, center.y, FH - 0.04);
+        apartmentGroup.add(fixture);
+
+        aptAnchors.set(aptType, { center, w, d });
+      }
+
       // ── срез этажей ────────────────────────────────────────────────────────
       // (применяется initialVisibleFloors ниже, после объявления applyVisibleFloors)
       // ──────────────────────────────────────────────────────────────────────
@@ -891,6 +1055,18 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         controls.update();
       };
 
+      // Хелпер — гасим всё уличное освещение (общая часть для интерьеров)
+      const killExteriorLights = () => {
+        hemiNight.visible = false;
+        hemiDay.visible = false;
+        moon.visible = false;
+        sun.visible = false;
+        warmAccent.visible = false;
+        groundGlow1.visible = false;
+        groundGlow2.visible = false;
+        floorLights.forEach((fl) => (fl.visible = false));
+      };
+
       const applyView = (v: ViewMode) => {
         if (v === view) return;
         // Запоминаем последнюю позицию в exterior, чтобы вернуться к ней.
@@ -903,7 +1079,7 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         if (v === "exterior") {
           exteriorGroup.visible = true;
           lobbyGroup.visible = false;
-          // Восстанавливаем экстерьер-освещение в зависимости от режима
+          apartmentGroup.visible = false;
           applyMode(mode);
           controls.autoRotate = false;
           controls.minDistance = 10;
@@ -915,28 +1091,33 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         } else if (v === "lobby") {
           exteriorGroup.visible = false;
           lobbyGroup.visible = true;
-          // Гасим всё уличное освещение — внутри светят только лобби-лайты
-          hemiNight.visible = false;
-          hemiDay.visible = false;
-          moon.visible = false;
-          sun.visible = false;
-          warmAccent.visible = false;
-          groundGlow1.visible = false;
-          groundGlow2.visible = false;
-          floorLights.forEach((fl) => (fl.visible = false));
-          // Светлый интерьерный фон без тумана
+          apartmentGroup.visible = false;
+          killExteriorLights();
           scene.background = new THREE.Color(0x1a1f2a);
           scene.fog = null;
           renderer.toneMappingExposure = 1.0;
-          // Широкий FOV чтобы помещение читалось
           camera.fov = 65;
           camera.updateProjectionMatrix();
           controls.autoRotate = false;
           controls.minDistance = 0.4;
-          // Orbit-радиус ≤ половины меньшей стороны лобби — камера не выйдет за стены
           controls.maxDistance = Math.min(lobbyW, LOBBY_D) * 0.45;
           controls.maxPolarAngle = Math.PI - 0.1;
           teleportCamera(lobbyAnchorPos, lobbyAnchorTarget);
+        } else if (v === "apartment") {
+          exteriorGroup.visible = false;
+          lobbyGroup.visible = false;
+          apartmentGroup.visible = true;
+          killExteriorLights();
+          scene.background = new THREE.Color(0x18202c);
+          scene.fog = null;
+          renderer.toneMappingExposure = 1.0;
+          camera.fov = 68;
+          camera.updateProjectionMatrix();
+          controls.autoRotate = false;
+          controls.minDistance = 0.3;
+          controls.maxDistance = 8;
+          controls.maxPolarAngle = Math.PI - 0.1;
+          // teleport to anchor задаётся в applySpot — здесь только переключаем уровень
         }
       };
 
@@ -946,6 +1127,15 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         pos: THREE.Vector3;
         target: THREE.Vector3;
         fov: number;
+        /** apt-spot с false-флагом — тип отсутствует в плане/галерее. UI его прячет. */
+        unavailable?: boolean;
+      };
+      const dummySpot: SpotConfig = {
+        view: "apartment",
+        pos: new THREE.Vector3(0, 0, 0),
+        target: new THREE.Vector3(0, 0, 0),
+        fov: 60,
+        unavailable: true,
       };
       const camDistExt = diag * 1.15 + TOTAL * 0.85;
       const D = diag * 1.4 + TOTAL * 0.6;
@@ -1045,11 +1235,35 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           target: new THREE.Vector3(lobbyCx, lobbyMaxY - 0.13, 1.5),
           fov: 55,
         },
+        // apt-spots — заполняем динамически из aptAnchors ниже
+        apt_studio: dummySpot, apt_k1: dummySpot, apt_euro1: dummySpot,
+        apt_k2: dummySpot, apt_euro2: dummySpot, apt_k3: dummySpot,
+        apt_euro3: dummySpot, apt_k4: dummySpot,
       };
+
+      // Заполняем apt-spots по реальным якорям комнат
+      for (const [aptType, anchor] of aptAnchors.entries()) {
+        const key = `apt_${aptType}` as SpotKey;
+        spots[key] = {
+          view: "apartment",
+          // камера у южной стены, на уровне глаз, смотрит на AI-картинку (северная стена)
+          pos: new THREE.Vector3(
+            anchor.center.x,
+            anchor.center.y - anchor.d * 0.5 + 0.6,
+            1.7,
+          ),
+          target: new THREE.Vector3(
+            anchor.center.x,
+            anchor.center.y + anchor.d * 0.5 - 0.06,
+            1.5,
+          ),
+          fov: 68,
+        };
+      }
 
       const applySpot = (key: SpotKey) => {
         const s = spots[key];
-        if (!s) return;
+        if (!s || s.unavailable) return;
         // Сначала переключаем уровень (groups + освещение + scene background) если надо
         if (s.view !== view) {
           applyView(s.view);
@@ -1111,7 +1325,7 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
         if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
         apiRef.current = null;
       };
-    }, [plan, floors, aiPlanImageUrl, initialMode, initialAutoRotate]);
+    }, [plan, floors, aiPlanImageUrl, initialMode, initialAutoRotate, interiorImagesByType]);
 
     return <div ref={mountRef} className="w-full h-full" />;
   },

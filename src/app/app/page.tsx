@@ -439,6 +439,7 @@ export default function AppPage() {
               floors={form.floors}
               onGenerate={generateFloor}
               aiPlansBag={aiPlansBag}
+              intGallery={vizIntGallery}
             />
           )}
           {tab === "site" && (
@@ -1823,7 +1824,7 @@ type SpotMeta = {
   view: ViewMode;
   icon: React.ReactNode;
   /** Группа для разделителей в навигаторе. */
-  group: "building" | "details" | "interior";
+  group: "building" | "details" | "interior" | "apartment";
 };
 
 const SPOTS: SpotMeta[] = [
@@ -1845,15 +1846,25 @@ const SPOTS: SpotMeta[] = [
   { key: "reception",  label: "Ресепшен",       view: "lobby",    icon: <Eye size={13} />,       group: "interior" },
   { key: "lobby_back", label: "Взгляд на вход", view: "lobby",    icon: <ArrowDown size={13} />, group: "interior" },
   { key: "lift",       label: "Лифты",          view: "lobby",    icon: <DoorOpen size={13} />,  group: "interior" },
+  // Внутри квартир — фильтруются по plan.tiles + наличию AI-интерьера
+  { key: "apt_studio", label: "Студия",         view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
+  { key: "apt_k1",     label: "1-комнатная",    view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
+  { key: "apt_euro1",  label: "Евро-1",         view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
+  { key: "apt_k2",     label: "2-комнатная",    view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
+  { key: "apt_euro2",  label: "Евро-2",         view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
+  { key: "apt_k3",     label: "3-комнатная",    view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
+  { key: "apt_euro3",  label: "Евро-3",         view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
+  { key: "apt_k4",     label: "4-комнатная",    view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
 ];
 
 function View3DTab({
-  bag, floors, onGenerate, aiPlansBag,
+  bag, floors, onGenerate, aiPlansBag, intGallery,
 }: {
   bag: FloorBag;
   floors: number;
   onGenerate: () => void;
   aiPlansBag: AiPlansBag;
+  intGallery: InteriorGalleryBag;
 }) {
   const plan = bag.response?.variants[bag.selectedVariant] ?? null;
   const plans = bag.response?.variants ?? [];
@@ -1862,13 +1873,42 @@ function View3DTab({
   const aiVariants = aiPlansBag.variants;
   const aiImageUrl = aiVariants[selectedAiIdx]?.imageUrl ?? undefined;
 
+  // Map apt_type → dataURL для интерьеров. Стабильный reference через useMemo.
+  const interiorImagesByType = useMemo<Partial<Record<AptType, string>>>(() => {
+    const out: Partial<Record<AptType, string>> = {};
+    for (const item of intGallery.items) {
+      out[item.apt_type] = `data:image/png;base64,${item.image_b64}`;
+    }
+    return out;
+  }, [intGallery.items]);
+
+  // Какие apt-spots реально доступны (есть и tile в плане, и AI-картинка).
+  const availableAptTypes = useMemo<Set<AptType>>(() => {
+    if (!plan) return new Set();
+    const planTypes = new Set<AptType>(plan.tiles.map((t) => t.apt_type));
+    const out = new Set<AptType>();
+    for (const t of Object.keys(interiorImagesByType) as AptType[]) {
+      if (planTypes.has(t)) out.add(t);
+    }
+    return out;
+  }, [plan, interiorImagesByType]);
+
+  // Видимые spots = базовые + те apt-spots, для которых есть и tile, и картинка.
+  const visibleSpots = useMemo<SpotMeta[]>(() => {
+    return SPOTS.filter((s) => {
+      if (!s.key.startsWith("apt_")) return true;
+      const aptType = s.key.replace("apt_", "") as AptType;
+      return availableAptTypes.has(aptType);
+    });
+  }, [availableAptTypes]);
+
   // ── 3D scene controls ─────────────────────────────────────────────────────
   const canvasRef = useRef<PlanCanvas3DHandle>(null);
   const [mode, setMode] = useState<SceneMode>("night");
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
   const [visibleFloors, setVisibleFloors] = useState<number>(floors);
   const [spotIdx, setSpotIdx] = useState<number>(0);
-  const view: ViewMode = SPOTS[spotIdx]?.view ?? "exterior";
+  const view: ViewMode = visibleSpots[spotIdx]?.view ?? "exterior";
 
   // Когда меняется количество этажей в форме — сбрасываем срез под новое значение.
   useEffect(() => {
@@ -1881,10 +1921,16 @@ function View3DTab({
     canvasRef.current?.setVisibleFloors(visibleFloors);
   }, [visibleFloors, plan, aiImageUrl]);
 
+  // Если visibleSpots уменьшился (apt-spots ушли) — обрежем индекс.
+  useEffect(() => {
+    if (spotIdx >= visibleSpots.length) setSpotIdx(0);
+  }, [visibleSpots.length, spotIdx]);
+
   // Sync активного spot'а с canvas (включая ребилд сцены).
   useEffect(() => {
-    canvasRef.current?.setSpot(SPOTS[spotIdx].key);
-  }, [spotIdx, plan, aiImageUrl]);
+    const spot = visibleSpots[spotIdx];
+    if (spot) canvasRef.current?.setSpot(spot.key);
+  }, [spotIdx, plan, aiImageUrl, visibleSpots, interiorImagesByType]);
 
   const handleSetMode = (m: SceneMode) => {
     setMode(m);
@@ -1908,11 +1954,11 @@ function View3DTab({
   };
 
   const handleSpotPrev = () => {
-    setSpotIdx((i) => (i - 1 + SPOTS.length) % SPOTS.length);
+    setSpotIdx((i) => (i - 1 + visibleSpots.length) % visibleSpots.length);
     setAutoRotate(false);
   };
   const handleSpotNext = () => {
-    setSpotIdx((i) => (i + 1) % SPOTS.length);
+    setSpotIdx((i) => (i + 1) % visibleSpots.length);
     setAutoRotate(false);
   };
   const handleSpotSelect = (i: number) => {
@@ -2035,6 +2081,7 @@ function View3DTab({
               initialMode={mode}
               initialAutoRotate={autoRotate}
               initialVisibleFloors={visibleFloors}
+              interiorImagesByType={interiorImagesByType}
             />
 
             {/* ── Top controls overlay (день/ночь, авто, этажи, png) ── */}
@@ -2052,7 +2099,7 @@ function View3DTab({
 
             {/* ── Spot navigator снизу — стрелки + название точки + доты ── */}
             <SpotNavigator
-              spots={SPOTS}
+              spots={visibleSpots}
               spotIdx={spotIdx}
               onPrev={handleSpotPrev}
               onNext={handleSpotNext}
