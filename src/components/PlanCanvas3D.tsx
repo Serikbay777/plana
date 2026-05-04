@@ -838,6 +838,7 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
             break;
         }
         controls.target.copy(target);
+        camera.up.set(0, 0, 1);
         camera.lookAt(target);
         controls.update();
       };
@@ -860,21 +861,14 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
       // Сохраним оригинальный FOV экстерьера, чтобы восстановить
       const exteriorFov = camera.fov;
 
-      // Простой tween камеры (easeInOutQuad по позиции и таргету).
-      let tweenActive = false;
-      let tweenT = 0;
-      const tweenDur = 1.0;
-      const tweenFrom = new THREE.Vector3();
-      const tweenTo = new THREE.Vector3();
-      const tweenTargetFrom = new THREE.Vector3();
-      const tweenTargetTo = new THREE.Vector3();
-      const tweenCamera = (toPos: THREE.Vector3, toTarget: THREE.Vector3) => {
-        tweenFrom.copy(camera.position);
-        tweenTo.copy(toPos);
-        tweenTargetFrom.copy(controls.target);
-        tweenTargetTo.copy(toTarget);
-        tweenT = 0;
-        tweenActive = true;
+      // Камера-телепорт. Tween между уровнями ломал spherical-state OrbitControls
+      // (резкий спуск с z=36м на z=1.7м давал наклон), поэтому переход — прямой.
+      const teleportCamera = (toPos: THREE.Vector3, toTarget: THREE.Vector3) => {
+        camera.position.copy(toPos);
+        controls.target.copy(toTarget);
+        camera.up.set(0, 0, 1);
+        camera.lookAt(toTarget);
+        controls.update();
       };
 
       const applyView = (v: ViewMode) => {
@@ -897,7 +891,7 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           controls.maxPolarAngle = Math.PI / 2.06;
           camera.fov = exteriorFov;
           camera.updateProjectionMatrix();
-          tweenCamera(exteriorAnchorPos, exteriorAnchorTarget);
+          teleportCamera(exteriorAnchorPos, exteriorAnchorTarget);
         } else if (v === "lobby") {
           exteriorGroup.visible = false;
           lobbyGroup.visible = true;
@@ -922,7 +916,7 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           // Orbit-радиус ≤ половины меньшей стороны лобби — камера не выйдет за стены
           controls.maxDistance = Math.min(lobbyW, LOBBY_D) * 0.45;
           controls.maxPolarAngle = Math.PI - 0.1;
-          tweenCamera(lobbyAnchorPos, lobbyAnchorTarget);
+          teleportCamera(lobbyAnchorPos, lobbyAnchorTarget);
         }
       };
 
@@ -951,17 +945,6 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           beaconMat.emissiveIntensity = 0.6 + Math.sin(t * 2.5) * 0.6;
           groundGlow1.intensity = 3.0 + Math.sin(t * 0.7) * 0.5;
           groundGlow2.intensity = 2.2 + Math.cos(t * 0.5) * 0.4;
-        }
-
-        if (tweenActive) {
-          tweenT = Math.min(1, tweenT + 0.016 / tweenDur);
-          // easeInOutQuad
-          const e = tweenT < 0.5
-            ? 2 * tweenT * tweenT
-            : 1 - Math.pow(-2 * tweenT + 2, 2) / 2;
-          camera.position.lerpVectors(tweenFrom, tweenTo, e);
-          controls.target.lerpVectors(tweenTargetFrom, tweenTargetTo, e);
-          if (tweenT >= 1) tweenActive = false;
         }
 
         controls.update();
