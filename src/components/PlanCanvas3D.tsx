@@ -597,90 +597,201 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
       );
       movables.forEach((o) => exteriorGroup.add(o));
 
-      // ── lobby: пол, потолок, стены, ядро, свет ────────────────────────────
-      const floorShape = polygonToShape(plan.floor_polygon);
+      // ── lobby: компактная светлая комната у входа ────────────────────────
+      // Не на весь footprint здания (слишком огромно), а вырез у южной грани.
+      const LOBBY_D = Math.min(8, bb.d * 0.45);
+      const lobbyMinX = bb.minX + 0.1;
+      const lobbyMaxX = bb.maxX - 0.1;
+      const lobbyMinY = bb.minY + 0.05;
+      const lobbyMaxY = lobbyMinY + LOBBY_D;
+      const lobbyW = lobbyMaxX - lobbyMinX;
+      const lobbyCx = (lobbyMinX + lobbyMaxX) / 2;
+      const lobbyCy = (lobbyMinY + lobbyMaxY) / 2;
 
-      // Пол лобби — текстура AI-чертежа сверху, если есть
+      const lobbyShape = new THREE.Shape();
+      lobbyShape.moveTo(lobbyMinX, lobbyMinY);
+      lobbyShape.lineTo(lobbyMaxX, lobbyMinY);
+      lobbyShape.lineTo(lobbyMaxX, lobbyMaxY);
+      lobbyShape.lineTo(lobbyMinX, lobbyMaxY);
+      lobbyShape.closePath();
+
+      // Пол — светлый шлифованный камень
       const lobbyFloorMat = new THREE.MeshStandardMaterial({
-        color: 0x2a2e3a,
-        roughness: 0.7,
-        metalness: 0.05,
+        color: 0xc9c2b4, roughness: 0.4, metalness: 0.15,
       });
-      if (aiPlanImageUrl) {
-        new THREE.TextureLoader().load(aiPlanImageUrl, (tex) => {
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 16);
-          lobbyFloorMat.map = tex;
-          lobbyFloorMat.color.set(0xffffff);
-          lobbyFloorMat.needsUpdate = true;
-        });
-      }
-      const lobbyFloor = new THREE.Mesh(new THREE.ShapeGeometry(floorShape), lobbyFloorMat);
+      const lobbyFloor = new THREE.Mesh(new THREE.ShapeGeometry(lobbyShape), lobbyFloorMat);
       lobbyFloor.position.z = 0.06;
       lobbyFloor.receiveShadow = true;
       lobbyGroup.add(lobbyFloor);
 
-      // Потолок (плоскость, направленная вниз)
+      // Потолок — белый
       const lobbyCeilMat = new THREE.MeshStandardMaterial({
-        color: 0x14171f, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide,
+        color: 0xeeeeee, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide,
       });
-      const lobbyCeil = new THREE.Mesh(new THREE.ShapeGeometry(floorShape), lobbyCeilMat);
+      const lobbyCeil = new THREE.Mesh(new THREE.ShapeGeometry(lobbyShape), lobbyCeilMat);
       lobbyCeil.position.z = FH;
       lobbyGroup.add(lobbyCeil);
 
-      // Стены — extrude с BackSide, чтобы видеть изнутри
+      // Стены — кремовые внутри (extrude + BackSide)
       const lobbyWallMat = new THREE.MeshStandardMaterial({
-        color: 0x252b3c, roughness: 0.9, metalness: 0.05, side: THREE.BackSide,
+        color: 0xe5dfd0, roughness: 0.85, metalness: 0.02, side: THREE.BackSide,
       });
       const lobbyWalls = new THREE.Mesh(
-        new THREE.ExtrudeGeometry(floorShape, { depth: FH, bevelEnabled: false }),
+        new THREE.ExtrudeGeometry(lobbyShape, { depth: FH, bevelEnabled: false }),
         lobbyWallMat,
       );
       lobbyWalls.receiveShadow = true;
       lobbyGroup.add(lobbyWalls);
 
-      // Лифтовое ядро — стенка комнаты с лифтами
-      const lobbyCoreMat = new THREE.MeshStandardMaterial({
-        color: 0x3a4256, roughness: 0.55, metalness: 0.35,
+      // Стенка с лифтами — отдельный плоский блок на дальней (северной) стене лобби,
+      // акцентного цвета, чтобы сразу было видно куда идти
+      const liftWallMat = new THREE.MeshStandardMaterial({
+        color: 0x3a4358, roughness: 0.6, metalness: 0.25,
       });
-      const lobbyCoreShape = polygonToShape(plan.core.polygon);
-      const lobbyCore = new THREE.Mesh(
-        new THREE.ExtrudeGeometry(lobbyCoreShape, { depth: FH, bevelEnabled: false }),
-        lobbyCoreMat,
+      const liftWall = new THREE.Mesh(
+        new THREE.BoxGeometry(lobbyW * 0.6, 0.15, FH * 0.95),
+        liftWallMat,
       );
-      lobbyCore.castShadow = true;
-      lobbyCore.receiveShadow = true;
-      lobbyGroup.add(lobbyCore);
+      liftWall.position.set(lobbyCx, lobbyMaxY - 0.075, (FH * 0.95) / 2);
+      liftWall.castShadow = true;
+      liftWall.receiveShadow = true;
+      lobbyGroup.add(liftWall);
 
-      // Имитация лифтовых дверей — тонкие панели на грани ядра, обращённой к лобби
+      // Двери лифта — две золотые панели по центру стенки
       const liftDoorMat = new THREE.MeshStandardMaterial({
-        color: 0xc8b87a, roughness: 0.35, metalness: 0.85,
-        emissive: 0x6a5a30, emissiveIntensity: 0.18,
+        color: 0xd4c386, roughness: 0.25, metalness: 0.9,
+        emissive: 0x4a3e1a, emissiveIntensity: 0.25,
       });
-      const lDoorH = FH * 0.78, lDoorW = 0.85, lDoorT = 0.05;
-      const liftDoorY = cbb.cy < cy ? cbb.maxY + lDoorT * 0.5 : cbb.minY - lDoorT * 0.5;
+      const lDoorH = FH * 0.78, lDoorW = 0.95, lDoorT = 0.06;
       for (let i = 0; i < 2; i++) {
         const door = new THREE.Mesh(
           new THREE.BoxGeometry(lDoorW, lDoorT, lDoorH),
           liftDoorMat,
         );
         door.position.set(
-          cbb.cx + (i === 0 ? -lDoorW * 0.6 : lDoorW * 0.6),
-          liftDoorY,
+          lobbyCx + (i === 0 ? -lDoorW * 0.6 : lDoorW * 0.6),
+          lobbyMaxY - 0.13,
           lDoorH / 2 + 0.05,
         );
         lobbyGroup.add(door);
       }
 
-      // Освещение лобби — тёплый потолочный + амбиент
-      const lobbyAmbient = new THREE.AmbientLight(0x404858, 0.45);
-      const lobbyCeilLight = new THREE.PointLight(0xffe8c0, 1.6, 60, 1.7);
-      lobbyCeilLight.position.set(cx, cy, FH - 0.4);
-      lobbyCeilLight.castShadow = true;
-      lobbyCeilLight.shadow.mapSize.set(1024, 1024);
-      const lobbyEntryLight = new THREE.PointLight(0xa8c8ff, 0.8, 25, 1.6);
-      lobbyEntryLight.position.set(cx, bb.minY + 0.6, FH - 0.6);
-      lobbyGroup.add(lobbyAmbient, lobbyCeilLight, lobbyEntryLight);
+      // Светящаяся надпись «ЛОББИ» над лифтами — CanvasTexture
+      const signCanvas = document.createElement("canvas");
+      signCanvas.width = 1024;
+      signCanvas.height = 256;
+      const ctx = signCanvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#1a1f2e";
+        ctx.fillRect(0, 0, 1024, 256);
+        ctx.fillStyle = "#ffd980";
+        ctx.font = "bold 140px -apple-system, system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("ЛОББИ", 512, 128);
+      }
+      const signTex = new THREE.CanvasTexture(signCanvas);
+      signTex.colorSpace = THREE.SRGBColorSpace;
+      const signMat = new THREE.MeshStandardMaterial({
+        map: signTex,
+        emissive: 0xffffff,
+        emissiveMap: signTex,
+        emissiveIntensity: 0.6,
+        roughness: 0.5,
+      });
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.65), signMat);
+      sign.position.set(lobbyCx, lobbyMaxY - 0.16, FH * 0.92);
+      // Ставим вертикально, нормаль направлена в -Y (на камеру у южного входа)
+      sign.rotation.x = Math.PI / 2;
+      lobbyGroup.add(sign);
+
+      // ── освещение лобби: яркое и тёплое ───────────────────────────────────
+      const lobbyAmbient = new THREE.AmbientLight(0xffffff, 0.55);
+      lobbyGroup.add(lobbyAmbient);
+
+      // Три точечных потолочных лайта вдоль глубины
+      const lampZ = FH - 0.35;
+      const lampPositions: Array<[number, number]> = [
+        [lobbyCx, lobbyMinY + LOBBY_D * 0.2],
+        [lobbyCx, lobbyMinY + LOBBY_D * 0.5],
+        [lobbyCx, lobbyMinY + LOBBY_D * 0.8],
+      ];
+      for (const [lx, ly] of lampPositions) {
+        const lamp = new THREE.PointLight(0xffe8c0, 1.8, 12, 1.4);
+        lamp.position.set(lx, ly, lampZ);
+        lobbyGroup.add(lamp);
+
+        // Видимый плафон — маленькая светящаяся плашка на потолке
+        const fixtureMat = new THREE.MeshStandardMaterial({
+          color: 0xfff0d0, emissive: 0xfff0d0, emissiveIntensity: 1.2,
+        });
+        const fixture = new THREE.Mesh(
+          new THREE.BoxGeometry(1.0, 1.0, 0.06),
+          fixtureMat,
+        );
+        fixture.position.set(lx, ly, FH - 0.04);
+        lobbyGroup.add(fixture);
+      }
+
+      // Холодноватый луч у входной двери (для контраста)
+      const lobbyEntryLight = new THREE.PointLight(0xb8d0ff, 0.7, 8, 1.5);
+      lobbyEntryLight.position.set(lobbyCx, lobbyMinY + 0.5, FH - 0.6);
+      lobbyGroup.add(lobbyEntryLight);
+
+      // Ресепшен у западной стены
+      const deskMat = new THREE.MeshStandardMaterial({
+        color: 0x2c3540, roughness: 0.55, metalness: 0.25,
+      });
+      const desk = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.85, 1.0), deskMat);
+      desk.position.set(lobbyMinX + 1.6, lobbyMinY + LOBBY_D * 0.5, 0.5);
+      desk.castShadow = true;
+      desk.receiveShadow = true;
+      lobbyGroup.add(desk);
+
+      // Столешница ресепшена — чуть светлее и шире
+      const deskTopMat = new THREE.MeshStandardMaterial({
+        color: 0xb8a87a, roughness: 0.3, metalness: 0.4,
+      });
+      const deskTop = new THREE.Mesh(
+        new THREE.BoxGeometry(2.8, 1.05, 0.05),
+        deskTopMat,
+      );
+      deskTop.position.set(lobbyMinX + 1.6, lobbyMinY + LOBBY_D * 0.5, 1.05);
+      deskTop.receiveShadow = true;
+      lobbyGroup.add(deskTop);
+
+      // Растение в горшке у входа справа
+      const potMat = new THREE.MeshStandardMaterial({
+        color: 0x6e5a3a, roughness: 0.85, metalness: 0.05,
+      });
+      const pot = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.28, 0.34, 0.55, 16),
+        potMat,
+      );
+      pot.rotation.x = Math.PI / 2;
+      pot.position.set(lobbyMaxX - 0.9, lobbyMinY + 0.7, 0.28);
+      pot.castShadow = true;
+      lobbyGroup.add(pot);
+
+      const plantMat = new THREE.MeshStandardMaterial({
+        color: 0x3e7a3e, roughness: 0.95,
+      });
+      const plant = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 10), plantMat);
+      plant.position.set(lobbyMaxX - 0.9, lobbyMinY + 0.7, 0.85);
+      plant.castShadow = true;
+      lobbyGroup.add(plant);
+
+      // Коврик у входа
+      const matMat = new THREE.MeshStandardMaterial({
+        color: 0x6e2a28, roughness: 0.95,
+      });
+      const entryMat = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.8, 1.2),
+        matMat,
+      );
+      entryMat.position.set(lobbyCx, lobbyMinY + 0.7, 0.07);
+      entryMat.receiveShadow = true;
+      lobbyGroup.add(entryMat);
 
       // ── срез этажей ────────────────────────────────────────────────────────
       // (применяется initialVisibleFloors ниже, после объявления applyVisibleFloors)
@@ -742,8 +853,12 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
       // Камера-якоря под каждый уровень
       const exteriorAnchorPos = new THREE.Vector3().copy(camera.position);
       const exteriorAnchorTarget = new THREE.Vector3().copy(controls.target);
-      const lobbyAnchorPos = new THREE.Vector3(cx, bb.minY + 1.6, FH * 0.55);
-      const lobbyAnchorTarget = new THREE.Vector3(cx, cy, FH * 0.5);
+      // Лобби: камера у входа смотрит вперёд на лифты
+      const lobbyAnchorPos = new THREE.Vector3(lobbyCx, lobbyMinY + 1.2, 1.7);
+      const lobbyAnchorTarget = new THREE.Vector3(lobbyCx, lobbyMinY + LOBBY_D * 0.75, 1.6);
+
+      // Сохраним оригинальный FOV экстерьера, чтобы восстановить
+      const exteriorFov = camera.fov;
 
       // Простой tween камеры (easeInOutQuad по позиции и таргету).
       let tweenActive = false;
@@ -776,10 +891,12 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           lobbyGroup.visible = false;
           // Восстанавливаем экстерьер-освещение в зависимости от режима
           applyMode(mode);
-          controls.autoRotate = false; // не включаем сам по себе после перехода
+          controls.autoRotate = false;
           controls.minDistance = 10;
           controls.maxDistance = 600;
           controls.maxPolarAngle = Math.PI / 2.06;
+          camera.fov = exteriorFov;
+          camera.updateProjectionMatrix();
           tweenCamera(exteriorAnchorPos, exteriorAnchorTarget);
         } else if (v === "lobby") {
           exteriorGroup.visible = false;
@@ -793,15 +910,18 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           groundGlow1.visible = false;
           groundGlow2.visible = false;
           floorLights.forEach((fl) => (fl.visible = false));
-          // Тёмный интерьерный фон без тумана
-          scene.background = new THREE.Color(0x06080c);
+          // Светлый интерьерный фон без тумана
+          scene.background = new THREE.Color(0x1a1f2a);
           scene.fog = null;
           renderer.toneMappingExposure = 1.0;
+          // Широкий FOV чтобы помещение читалось
+          camera.fov = 65;
+          camera.updateProjectionMatrix();
           controls.autoRotate = false;
-          controls.minDistance = 0.5;
-          // Orbit-радиус ≤ половины короткой стороны, чтобы камера осталась внутри стен.
-          controls.maxDistance = Math.min(bb.w, bb.d) * 0.45;
-          controls.maxPolarAngle = Math.PI - 0.05; // позволяем смотреть выше горизонта
+          controls.minDistance = 0.4;
+          // Orbit-радиус ≤ половины меньшей стороны лобби — камера не выйдет за стены
+          controls.maxDistance = Math.min(lobbyW, LOBBY_D) * 0.45;
+          controls.maxPolarAngle = Math.PI - 0.1;
           tweenCamera(lobbyAnchorPos, lobbyAnchorTarget);
         }
       };
