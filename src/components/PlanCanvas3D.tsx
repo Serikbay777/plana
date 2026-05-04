@@ -71,13 +71,21 @@ export type CameraPreset = "iso" | "top" | "front" | "side";
 export type ViewMode = "exterior" | "lobby";
 /** Предустановленная точка обзора. Юзер листает их стрелками. */
 export type SpotKey =
-  | "iso"        // изометрия снаружи
-  | "front"      // фасад
-  | "side"       // сбоку
-  | "top"        // сверху
-  | "entrance"   // главный вход (снаружи у двери)
-  | "lobby"      // внутри лобби
-  | "lift";      // крупно на лифты
+  | "iso"          // изометрия снаружи
+  | "front"        // фасад
+  | "back"         // сзади
+  | "side"         // сбоку
+  | "angle_ne"     // СВ угол с воздуха
+  | "angle_se"     // ЮВ угол с воздуха
+  | "top"          // сверху
+  | "drone_low"    // дрон снизу, смотрит вверх на фасад
+  | "rooftop"      // у крыши/антенны
+  | "balcony"      // балконы крупно
+  | "entrance"     // главный вход (снаружи у двери)
+  | "lobby"        // внутри лобби, у входа
+  | "reception"    // ресепшен крупно
+  | "lobby_back"   // взгляд от лифтов на вход
+  | "lift";        // крупно на лифты
 
 export type PlanCanvas3DHandle = {
   setMode: (mode: SceneMode) => void;
@@ -954,10 +962,28 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           target: new THREE.Vector3(cx, cy, TOTAL * 0.4),
           fov: exteriorFov,
         },
+        back: {
+          view: "exterior",
+          pos: new THREE.Vector3(cx, cy + D * 1.4, TOTAL * 0.55),
+          target: new THREE.Vector3(cx, cy, TOTAL * 0.4),
+          fov: exteriorFov,
+        },
         side: {
           view: "exterior",
           pos: new THREE.Vector3(cx + D * 1.4, cy, TOTAL * 0.55),
           target: new THREE.Vector3(cx, cy, TOTAL * 0.4),
+          fov: exteriorFov,
+        },
+        angle_ne: {
+          view: "exterior",
+          pos: new THREE.Vector3(cx + D * 0.85, cy + D * 0.85, TOTAL * 1.0),
+          target: new THREE.Vector3(cx, cy, TOTAL * 0.45),
+          fov: exteriorFov,
+        },
+        angle_se: {
+          view: "exterior",
+          pos: new THREE.Vector3(cx + D * 0.85, cy - D * 0.85, TOTAL * 1.0),
+          target: new THREE.Vector3(cx, cy, TOTAL * 0.45),
           fov: exteriorFov,
         },
         top: {
@@ -965,6 +991,27 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           pos: new THREE.Vector3(cx, cy + 0.001, TOTAL + diag * 1.6),
           target: new THREE.Vector3(cx, cy, TOTAL * 0.5),
           fov: exteriorFov,
+        },
+        drone_low: {
+          // Дрон у земли смотрит вверх вдоль фасада — драматичный ракурс
+          view: "exterior",
+          pos: new THREE.Vector3(cx, cy - D * 0.35, 2),
+          target: new THREE.Vector3(cx, cy - D * 0.1, TOTAL * 0.85),
+          fov: 55,
+        },
+        rooftop: {
+          // У крыши/антенны
+          view: "exterior",
+          pos: new THREE.Vector3(cx + bb.w * 0.45, cy - bb.d * 0.45, TOTAL + 8),
+          target: new THREE.Vector3(cx, cy, TOTAL + 2),
+          fov: exteriorFov,
+        },
+        balcony: {
+          // Крупно на балконы (на южном фасаде, средняя высота)
+          view: "exterior",
+          pos: new THREE.Vector3(cx, bb.minY - 5.5, TOTAL * 0.5),
+          target: new THREE.Vector3(cx, bb.minY, TOTAL * 0.5),
+          fov: 38,
         },
         entrance: {
           view: "exterior",
@@ -976,6 +1023,20 @@ export const PlanCanvas3D = forwardRef<PlanCanvas3DHandle, PlanCanvas3DProps>(
           view: "lobby",
           pos: lobbyAnchorPos.clone(),
           target: lobbyAnchorTarget.clone(),
+          fov: 65,
+        },
+        reception: {
+          // Ресепшен расположен у западной стены, отступ от lobbyMinX 1.6, по середине глубины
+          view: "lobby",
+          pos: new THREE.Vector3(lobbyCx + 0.2, lobbyMinY + LOBBY_D * 0.5 + 1.8, 1.65),
+          target: new THREE.Vector3(lobbyMinX + 1.6, lobbyMinY + LOBBY_D * 0.5, 1.0),
+          fov: 60,
+        },
+        lobby_back: {
+          // Взгляд от стенки с лифтами обратно ко входу
+          view: "lobby",
+          pos: new THREE.Vector3(lobbyCx, lobbyMaxY - 1.0, 1.7),
+          target: new THREE.Vector3(lobbyCx, lobbyMinY, 1.6),
           fov: 65,
         },
         lift: {

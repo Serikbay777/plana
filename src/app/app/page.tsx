@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight, Box,
   Sun, Moon, Camera, RotateCw, Pause, Building, Mountain, Compass,
-  DoorOpen, ChevronLeft, ChevronRight,
+  DoorOpen, ChevronLeft, ChevronRight, ArrowUp, ArrowDown,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { PlanCanvas } from "@/components/PlanCanvas";
@@ -1822,16 +1822,29 @@ type SpotMeta = {
   label: string;
   view: ViewMode;
   icon: React.ReactNode;
+  /** Группа для разделителей в навигаторе. */
+  group: "building" | "details" | "interior";
 };
 
 const SPOTS: SpotMeta[] = [
-  { key: "iso",      label: "Изометрия",     view: "exterior", icon: <Box size={13} /> },
-  { key: "front",    label: "Фасад",         view: "exterior", icon: <Building size={13} /> },
-  { key: "side",     label: "Сбоку",         view: "exterior", icon: <Compass size={13} /> },
-  { key: "top",      label: "Сверху",        view: "exterior", icon: <Mountain size={13} /> },
-  { key: "entrance", label: "Главный вход",  view: "exterior", icon: <DoorOpen size={13} /> },
-  { key: "lobby",    label: "Лобби",         view: "lobby",    icon: <Building2 size={13} /> },
-  { key: "lift",     label: "Лифты",         view: "lobby",    icon: <Layers size={13} /> },
+  // Здание целиком
+  { key: "iso",        label: "Изометрия",      view: "exterior", icon: <Box size={13} />,       group: "building" },
+  { key: "front",      label: "Фасад",          view: "exterior", icon: <Building size={13} />,  group: "building" },
+  { key: "back",       label: "Сзади",          view: "exterior", icon: <RefreshCw size={13} />, group: "building" },
+  { key: "side",       label: "Сбоку",          view: "exterior", icon: <Compass size={13} />,   group: "building" },
+  { key: "angle_ne",   label: "Угол СВ",        view: "exterior", icon: <Compass size={13} />,   group: "building" },
+  { key: "angle_se",   label: "Угол ЮВ",        view: "exterior", icon: <Compass size={13} />,   group: "building" },
+  { key: "top",        label: "Сверху",         view: "exterior", icon: <Mountain size={13} />,  group: "building" },
+  // Детали снаружи
+  { key: "drone_low",  label: "Дрон снизу",     view: "exterior", icon: <ArrowUp size={13} />,   group: "details"  },
+  { key: "rooftop",    label: "Крыша",          view: "exterior", icon: <Sparkles size={13} />,  group: "details"  },
+  { key: "balcony",    label: "Балкон",         view: "exterior", icon: <Layers size={13} />,    group: "details"  },
+  { key: "entrance",   label: "Главный вход",   view: "exterior", icon: <DoorOpen size={13} />,  group: "details"  },
+  // Внутри / лобби
+  { key: "lobby",      label: "Лобби",          view: "lobby",    icon: <Building2 size={13} />, group: "interior" },
+  { key: "reception",  label: "Ресепшен",       view: "lobby",    icon: <Eye size={13} />,       group: "interior" },
+  { key: "lobby_back", label: "Взгляд на вход", view: "lobby",    icon: <ArrowDown size={13} />, group: "interior" },
+  { key: "lift",       label: "Лифты",          view: "lobby",    icon: <DoorOpen size={13} />,  group: "interior" },
 ];
 
 function View3DTab({
@@ -2209,21 +2222,27 @@ function SpotNavigator({
         <ChevronRight size={16} />
       </button>
 
-      {/* Доты-индикаторы — клик переключает */}
+      {/* Доты-индикаторы — клик переключает; вертикальная чёрточка между группами */}
       <div className="ml-3 flex items-center gap-1.5 bg-black/35 backdrop-blur-md border border-white/10 rounded-full px-2.5 h-7">
-        {spots.map((s, i) => (
-          <button
-            key={s.key}
-            onClick={() => onSelect(i)}
-            className={[
-              "size-1.5 rounded-full transition",
-              i === spotIdx
-                ? "bg-violet-300 scale-125"
-                : "bg-white/30 hover:bg-white/60",
-            ].join(" ")}
-            title={s.label}
-          />
-        ))}
+        {spots.map((s, i) => {
+          const prev = spots[i - 1];
+          const showDivider = prev && prev.group !== s.group;
+          return (
+            <Fragment key={s.key}>
+              {showDivider && <span className="w-px h-3 bg-white/15 mx-0.5" />}
+              <button
+                onClick={() => onSelect(i)}
+                className={[
+                  "size-1.5 rounded-full transition flex-shrink-0",
+                  i === spotIdx
+                    ? "bg-violet-300 scale-125"
+                    : "bg-white/30 hover:bg-white/60",
+                ].join(" ")}
+                title={s.label}
+              />
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
