@@ -19,6 +19,11 @@ type Props = {
   showScale?: boolean;
   compact?: boolean;
   variantBadge?: string;
+  /** Режим редактирования: tiles кликабельны, выделенный — обводкой акцента. */
+  editable?: boolean;
+  /** apt_number выделенной квартиры (null — ничего). */
+  selectedApt?: number | null;
+  onSelectApt?: (apt: number | null) => void;
 };
 
 // ---- helpers --------------------------------------------------------------
@@ -79,6 +84,9 @@ export function PlanCanvas({
   showScale = true,
   compact = false,
   variantBadge,
+  editable = false,
+  selectedApt = null,
+  onSelectApt,
 }: Props) {
   const b = bbox(plan.floor_polygon);
   const pad = compact ? 1.5 : 3.5;
@@ -94,6 +102,12 @@ export function PlanCanvas({
         height="100%"
         preserveAspectRatio="xMidYMid meet"
         style={{ display: "block" }}
+        onClick={(e) => {
+          // клик в пустое место (по самому svg) — снимаем выделение
+          if (editable && onSelectApt && e.target === e.currentTarget) {
+            onSelectApt(null);
+          }
+        }}
       >
         <defs>
           {/* несущая (огнестойкая) внешняя стена — красная штриховка */}
@@ -169,6 +183,9 @@ export function PlanCanvas({
             showLabels={showLabels}
             showZones={showZones}
             showFixtures={showFixtures && !compact}
+            editable={editable}
+            selected={editable && selectedApt === t.apt_number}
+            onClick={editable && onSelectApt ? () => onSelectApt(t.apt_number) : undefined}
           />
         ))}
 
@@ -313,6 +330,9 @@ function Apartment({
   showLabels,
   showZones,
   showFixtures,
+  editable,
+  selected,
+  onClick,
 }: {
   tile: PlacedTile;
   color: string;
@@ -320,6 +340,9 @@ function Apartment({
   showLabels: boolean;
   showZones: boolean;
   showFixtures: boolean;
+  editable?: boolean;
+  selected?: boolean;
+  onClick?: () => void;
 }) {
   const tb = bbox(tile.polygon);
   // ориентация тайла: фасад снизу (y_world малый) или сверху?
@@ -331,15 +354,29 @@ function Apartment({
   const corridorY = facadeBelow ? tb.maxy : tb.miny;
 
   return (
-    <g>
+    <g
+      onClick={onClick ? (e) => { e.stopPropagation(); onClick(); } : undefined}
+      style={editable ? { cursor: "pointer" } : undefined}
+    >
       {/* заливка квартиры */}
       <path
         d={polyPath(tile.polygon)}
         fill={color}
-        fillOpacity={0.35}
-        stroke="rgba(0,0,0,0.55)"
-        strokeWidth={stroke * 1.6}
+        fillOpacity={selected ? 0.55 : 0.35}
+        stroke={selected ? "#f59e0b" : "rgba(0,0,0,0.55)"}
+        strokeWidth={selected ? stroke * 4 : stroke * 1.6}
       />
+      {/* edit-mode hover ring */}
+      {editable && !selected && (
+        <path
+          d={polyPath(tile.polygon)}
+          fill="transparent"
+          stroke="rgba(255,255,255,0.0)"
+          strokeWidth={stroke * 5}
+          className="hover:stroke-white/30 transition"
+          style={{ pointerEvents: "stroke" }}
+        />
+      )}
 
       {/* зоны: фон + внутренние перегородки */}
       {showZones &&

@@ -8,6 +8,7 @@ import {
   CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight, Box,
   Sun, Moon, Camera, RotateCw, Pause, Building, Mountain, Compass,
   DoorOpen, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, FileDown,
+  Edit2, Trash2, RotateCcw,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { PlanCanvas } from "@/components/PlanCanvas";
@@ -19,7 +20,6 @@ import {
   generateFromRect,
   generateFromDxf,
   importGpzu,
-  type GpzuExtraction,
   visualizeExterior,
   visualizeFloorplanFurniture,
   visualizeInterior,
@@ -31,15 +31,18 @@ import {
   packageDownloadUrl,
   APT_COLORS,
   APT_LABELS,
+  type GpzuExtraction,
   type GenerateResponse,
   type PresetKey,
   type Plan,
+  type PlacedTile,
   type AptType,
   type VisualizeFromInputsRequest,
   type VisualizeResult,
   type PlacementVariant,
   type InteriorGalleryItem,
 } from "@/lib/engine";
+import { applyOverrides, type PlanOverrides } from "@/lib/plan-edit";
 import { getSession, signOut, type Session } from "@/lib/auth";
 
 // ---------------------------------------------------------------------------
@@ -168,6 +171,9 @@ export default function AppPage() {
 
   // Tab 1
   const [floorBag, setFloorBag] = useState<FloorBag>(EMPTY_FLOOR_BAG);
+  // Локальные правки активного варианта (Phase 4.1) — смена типа квартиры
+  // и удаление tile. Сбрасываются при смене варианта или регенерации.
+  const [planOverrides, setPlanOverrides] = useState<PlanOverrides>({});
   // Опциональный DXF-контур этажа. Если задан, generateFloor идёт через
   // /generate/dxf и игнорирует rect-параметры (ширина/глубина/отступы).
   const [floorDxfFile, setFloorDxfFile] = useState<File | null>(null);
@@ -217,6 +223,22 @@ export default function AppPage() {
     setAiPlansBag(b => b.state === "ready" ? EMPTY_AI_PLANS : b);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
+
+  // ---- edit-mode overrides --------------------------------------------------
+  // Сбрасываем правки при смене варианта или regen.
+  useEffect(() => {
+    setPlanOverrides({});
+  }, [floorBag.response?.request_id, floorBag.selectedVariant]);
+
+  // floorBag с применёнными overrides на активном варианте — этот bag и
+  // отдаётся в FloorTab/View3DTab/AppMetrics, чтобы все слои рисовали правки.
+  const effectiveFloorBag = useMemo<FloorBag>(() => {
+    if (!floorBag.response) return floorBag;
+    const variants = floorBag.response.variants.map((v, i) =>
+      i === floorBag.selectedVariant ? applyOverrides(v, planOverrides) : v,
+    );
+    return { ...floorBag, response: { ...floorBag.response, variants } };
+  }, [floorBag, planOverrides]);
 
   // ---- ГПЗУ-импорт ---------------------------------------------------------
   const handleGpzuImport = async (file: File) => {
@@ -463,7 +485,7 @@ export default function AppPage() {
         <section className="surface-strong rounded-2xl relative overflow-hidden flex flex-col min-h-[660px]">
           {tab === "floor" && (
             <FloorTab
-              bag={floorBag}
+              bag={effectiveFloorBag}
               floors={form.floors}
               form={form}
               onGenerate={generateFloor}
@@ -477,11 +499,13 @@ export default function AppPage() {
               gpzuError={gpzuError}
               onGpzuImport={handleGpzuImport}
               onClearGpzu={() => { setGpzuLastResult(null); setGpzuError(null); }}
+              overrides={planOverrides}
+              onSetOverrides={setPlanOverrides}
             />
           )}
           {tab === "3d" && (
             <View3DTab
-              bag={floorBag}
+              bag={effectiveFloorBag}
               floors={form.floors}
               onGenerate={generateFloor}
               aiPlansBag={aiPlansBag}
@@ -618,6 +642,7 @@ function FloorTab({
   bag, floors, form, onGenerate, onSelectVariant, onToggleCompare, onGoToViz,
   dxfFile, onPickDxf,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
+  overrides, onSetOverrides,
 }: {
   bag: FloorBag;
   floors: number;
@@ -633,6 +658,10 @@ function FloorTab({
   gpzuError: string | null;
   onGpzuImport: (f: File) => void;
   onClearGpzu: () => void;
+  overrides: PlanOverrides;
+  onSetOverrides: (
+    fn: PlanOverrides | ((prev: PlanOverrides) => PlanOverrides),
+  ) => void;
 }) {
   const planDivRef = useRef<HTMLDivElement>(null);
   const dxfInputRef = useRef<HTMLInputElement>(null);
@@ -652,6 +681,35 @@ function FloorTab({
     if (f) onGpzuImport(f);
     if (gpzuInputRef.current) gpzuInputRef.current.value = "";
   };
+
+  // ── Edit mode ──────────────────────────────────────────────────────────────
+  const [editMode, setEditMode] = useState(false);
+  const [selectedApt, setSelectedApt] = useState<number | null>(null);
+  // selected tile в текущем плане (в bag.response.variants[selected])
+  const selectedTile = plan?.tiles.find((t) => t.apt_number === selectedApt) ?? null;
+  const editedCount = Object.keys(overrides).length;
+
+  // Сброс selection при выходе из edit mode или смене варианта
+  useEffect(() => {
+    if (!editMode) setSelectedApt(null);
+  }, [editMode]);
+  useEffect(() => { setSelectedApt(null); }, [bag.selectedVariant, bag.response?.request_id]);
+
+  const setAptType = (apt: number, type: AptType) => {
+    onSetOverrides((prev) => ({ ...prev, [apt]: { ...prev[apt], apt_type: type } }));
+  };
+  const deleteApt = (apt: number) => {
+    onSetOverrides((prev) => ({ ...prev, [apt]: { ...prev[apt], deleted: true } }));
+    setSelectedApt(null);
+  };
+  const restoreApt = (apt: number) => {
+    onSetOverrides((prev) => {
+      const { [apt]: _, ...rest } = prev;
+      void _;
+      return rest;
+    });
+  };
+  const resetAllOverrides = () => onSetOverrides({});
 
   return (
     <>
@@ -848,7 +906,30 @@ function FloorTab({
               )}
               {bag.state === "error" && <ErrorState message={bag.errorMessage} onRetry={onGenerate} />}
               {bag.state === "ready" && plan && (
-                <PlanCanvas plan={plan} showLabels showZones showFixtures showScale />
+                <PlanCanvas
+                  plan={plan}
+                  showLabels
+                  showZones
+                  showFixtures
+                  showScale
+                  editable={editMode}
+                  selectedApt={selectedApt}
+                  onSelectApt={setSelectedApt}
+                />
+              )}
+
+              {/* Edit panel: floating snadge снизу, появляется в edit mode */}
+              {editMode && bag.state === "ready" && plan && (
+                <EditPanel
+                  selectedTile={selectedTile}
+                  selectedApt={selectedApt}
+                  overrides={overrides}
+                  editedCount={editedCount}
+                  onChangeType={(t) => selectedApt != null && setAptType(selectedApt, t)}
+                  onDelete={() => selectedApt != null && deleteApt(selectedApt)}
+                  onRestore={() => selectedApt != null && restoreApt(selectedApt)}
+                  onResetAll={resetAllOverrides}
+                />
               )}
             </div>
 
@@ -900,6 +981,18 @@ function FloorTab({
                 <Package size={12} /> Пакет ZIP
               </a>
             )}
+            <button
+              onClick={() => setEditMode((v) => !v)}
+              className={[
+                "h-9 px-3.5 rounded-full text-[12px] flex items-center gap-1.5 transition border",
+                editMode
+                  ? "bg-amber-500/15 border-amber-400/30 text-amber-200"
+                  : "surface border-white/10 hover:bg-white/[0.08]",
+              ].join(" ")}
+              title="Включить ручную правку: смена типа квартиры и удаление"
+            >
+              <Edit2 size={12} /> {editMode ? `Готово${editedCount ? ` · ${editedCount}` : ""}` : "Редактировать"}
+            </button>
             <button
               onClick={onGenerate}
               className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition"
@@ -1494,6 +1587,106 @@ function ErrorState({ message, onRetry }: { message: string | null; onRetry: () 
           <RefreshCw size={13} /> Попробовать снова
         </button>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EditPanel — плашка ручной правки плана (Phase 4.1)
+// ---------------------------------------------------------------------------
+
+const APT_TYPES_FOR_EDIT: AptType[] = [
+  "studio", "k1", "euro1", "k2", "euro2", "k3", "euro3", "k4",
+];
+
+function EditPanel({
+  selectedTile, selectedApt, overrides, editedCount,
+  onChangeType, onDelete, onRestore, onResetAll,
+}: {
+  selectedTile: PlacedTile | null;
+  selectedApt: number | null;
+  overrides: PlanOverrides;
+  editedCount: number;
+  onChangeType: (t: AptType) => void;
+  onDelete: () => void;
+  onRestore: () => void;
+  onResetAll: () => void;
+}) {
+  const isDeleted = selectedApt != null && overrides[selectedApt]?.deleted;
+
+  return (
+    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[min(96%,720px)] bg-black/65 backdrop-blur-md border border-amber-400/25 rounded-2xl px-4 py-3 shadow-2xl pointer-events-auto">
+      {/* Заголовок: что выбрано + edited counter */}
+      <div className="flex items-center gap-3 mb-2.5">
+        <div className="size-6 rounded-md bg-amber-500/20 border border-amber-400/30 grid place-items-center flex-shrink-0">
+          <Edit2 size={11} className="text-amber-300" />
+        </div>
+        <div className="text-[12px] text-white/85 flex-1 min-w-0">
+          {selectedTile ? (
+            <>
+              <span className="font-medium">КВ №{selectedTile.apt_number}</span>
+              <span className="text-white/45"> · {selectedTile.label} · {selectedTile.area.toFixed(1)} м²</span>
+            </>
+          ) : (
+            <span className="text-white/45">Кликни по квартире, чтобы изменить</span>
+          )}
+        </div>
+        {editedCount > 0 && (
+          <button
+            onClick={onResetAll}
+            className="text-[11px] text-white/45 hover:text-white/85 flex items-center gap-1 flex-shrink-0"
+            title="Сбросить все правки"
+          >
+            <RotateCcw size={11} /> Сбросить ({editedCount})
+          </button>
+        )}
+      </div>
+
+      {/* Действия для выбранного tile */}
+      {selectedTile && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {isDeleted ? (
+            <>
+              <span className="text-[11px] text-rose-300/80">Квартира удалена</span>
+              <button
+                onClick={onRestore}
+                className="h-7 px-3 rounded-md text-[11px] bg-white/[0.08] hover:bg-white/[0.14] transition flex items-center gap-1"
+              >
+                <RotateCcw size={11} /> Восстановить
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-[10.5px] uppercase tracking-[0.12em] text-white/35 mr-0.5">Тип:</span>
+              {APT_TYPES_FOR_EDIT.map((t) => {
+                const active = selectedTile.apt_type === t;
+                return (
+                  <button
+                    key={t}
+                    onClick={() => onChangeType(t)}
+                    className={[
+                      "h-7 px-2.5 rounded-md text-[11px] transition border",
+                      active
+                        ? "bg-white/[0.16] border-white/25 text-white font-medium"
+                        : "border-white/10 text-white/65 hover:text-white hover:bg-white/[0.08]",
+                    ].join(" ")}
+                    style={active ? { borderColor: APT_COLORS[t], color: APT_COLORS[t] } : undefined}
+                  >
+                    {APT_LABELS[t]}
+                  </button>
+                );
+              })}
+              <div className="w-px h-4 bg-white/15 mx-1" />
+              <button
+                onClick={onDelete}
+                className="h-7 px-2.5 rounded-md text-[11px] bg-rose-500/15 border border-rose-400/25 text-rose-200 hover:bg-rose-500/25 transition flex items-center gap-1"
+              >
+                <Trash2 size={11} /> Удалить
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
