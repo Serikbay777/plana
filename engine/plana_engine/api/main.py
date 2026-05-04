@@ -1199,3 +1199,63 @@ async def generate_dxf(
     _cache_response(rid, gen_req, resp)
     return resp
 
+
+# ---------------------------------------------------------------------------
+# ГПЗУ-импорт через OpenAI Vision
+# ---------------------------------------------------------------------------
+
+
+class GpzuImportResponse(BaseModel):
+    """Ответ /import/gpzu — извлечённые поля из ГПЗУ-PDF."""
+    site_area_m2: float | None = None
+    site_width_m: float | None = None
+    site_depth_m: float | None = None
+    setback_front_m: float | None = None
+    setback_side_m: float | None = None
+    setback_rear_m: float | None = None
+    max_height_m: float | None = None
+    max_floors: int | None = None
+    max_coverage_pct: float | None = None
+    max_far: float | None = None
+    purpose_allowed: list[str] = []
+    notes: str = ""
+    confidence: str = "low"
+
+
+@app.post("/import/gpzu", response_model=GpzuImportResponse)
+async def import_gpzu(file: UploadFile = File(...)) -> GpzuImportResponse:
+    """Распознать ГПЗУ-PDF через OpenAI Vision и вернуть извлечённые поля.
+
+    Стримит первые 4 страницы PDF в gpt-4.1 со structured output.
+    Если поле не указано в документе — возвращает null.
+    """
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="only .pdf is supported")
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="empty PDF")
+
+    from ..importers.gpzu import GpzuParseError, extract_gpzu
+
+    try:
+        ext = extract_gpzu(pdf_bytes)
+    except GpzuParseError as e:
+        # 502 — внешняя интеграция (OpenAI / pymupdf) сломалась, не вина клиента
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return GpzuImportResponse(
+        site_area_m2=ext.site_area_m2,
+        site_width_m=ext.site_width_m,
+        site_depth_m=ext.site_depth_m,
+        setback_front_m=ext.setback_front_m,
+        setback_side_m=ext.setback_side_m,
+        setback_rear_m=ext.setback_rear_m,
+        max_height_m=ext.max_height_m,
+        max_floors=ext.max_floors,
+        max_coverage_pct=ext.max_coverage_pct,
+        max_far=ext.max_far,
+        purpose_allowed=ext.purpose_allowed,
+        notes=ext.notes,
+        confidence=ext.confidence,
+    )

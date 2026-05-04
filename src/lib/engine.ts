@@ -222,6 +222,50 @@ export async function generateFromDxf(
   return res.json() as Promise<GenerateResponse>;
 }
 
+// ---------------------------------------------------------------------------
+// ГПЗУ-импорт
+// ---------------------------------------------------------------------------
+
+export type GpzuExtraction = {
+  site_area_m2: number | null;
+  site_width_m: number | null;
+  site_depth_m: number | null;
+  setback_front_m: number | null;
+  setback_side_m: number | null;
+  setback_rear_m: number | null;
+  max_height_m: number | null;
+  max_floors: number | null;
+  max_coverage_pct: number | null;
+  max_far: number | null;
+  purpose_allowed: string[];
+  notes: string;
+  confidence: "high" | "medium" | "low";
+};
+
+/**
+ * Распарсить ГПЗУ-PDF через OpenAI Vision на бэке.
+ * Возвращает извлечённые поля; null означает «не указано в документе».
+ */
+export async function importGpzu(file: File): Promise<GpzuExtraction> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${ENGINE_URL}/import/gpzu`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? detail;
+    } catch {
+      /* ignore */
+    }
+    throw new EngineError(res.status, detail);
+  }
+  return res.json() as Promise<GpzuExtraction>;
+}
+
 /**
  * Скачать один DXF по `request_id` + preset key.
  * Возвращает blob, который можно положить в URL.createObjectURL.

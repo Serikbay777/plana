@@ -18,6 +18,8 @@ import { exportPlanPdf, exportAiPlansPdf } from "@/lib/pdf-export";
 import {
   generateFromRect,
   generateFromDxf,
+  importGpzu,
+  type GpzuExtraction,
   visualizeExterior,
   visualizeFloorplanFurniture,
   visualizeInterior,
@@ -169,6 +171,10 @@ export default function AppPage() {
   // Опциональный DXF-контур этажа. Если задан, generateFloor идёт через
   // /generate/dxf и игнорирует rect-параметры (ширина/глубина/отступы).
   const [floorDxfFile, setFloorDxfFile] = useState<File | null>(null);
+  // ГПЗУ-импорт: статус + последний результат для toast/баннера.
+  const [gpzuLoading, setGpzuLoading] = useState(false);
+  const [gpzuLastResult, setGpzuLastResult] = useState<GpzuExtraction | null>(null);
+  const [gpzuError, setGpzuError] = useState<string | null>(null);
   // Tab 2
   const [siteBag, setSiteBag] = useState<ImageBag>(EMPTY_IMAGE_BAG);
   // Tab 3 — три независимых стейта
@@ -211,6 +217,33 @@ export default function AppPage() {
     setAiPlansBag(b => b.state === "ready" ? EMPTY_AI_PLANS : b);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
+
+  // ---- ГПЗУ-импорт ---------------------------------------------------------
+  const handleGpzuImport = async (file: File) => {
+    setGpzuLoading(true);
+    setGpzuError(null);
+    setGpzuLastResult(null);
+    try {
+      const ext = await importGpzu(file);
+      // Применяем только непустые поля — пользовательский ввод не затираем
+      setForm((f) => ({
+        ...f,
+        site_width_m:    ext.site_width_m    ?? f.site_width_m,
+        site_depth_m:    ext.site_depth_m    ?? f.site_depth_m,
+        setback_front_m: ext.setback_front_m ?? f.setback_front_m,
+        setback_side_m:  ext.setback_side_m  ?? f.setback_side_m,
+        setback_rear_m:  ext.setback_rear_m  ?? f.setback_rear_m,
+        floors:          ext.max_floors      ?? f.floors,
+        max_height_m:    ext.max_height_m    ?? f.max_height_m,
+        max_coverage_pct: ext.max_coverage_pct ?? f.max_coverage_pct,
+      }));
+      setGpzuLastResult(ext);
+    } catch (e) {
+      setGpzuError((e as Error).message);
+    } finally {
+      setGpzuLoading(false);
+    }
+  };
 
   // ---- generators
   const generateFloor = async () => {
@@ -439,6 +472,11 @@ export default function AppPage() {
               onGoToViz={() => setTab("viz")}
               dxfFile={floorDxfFile}
               onPickDxf={setFloorDxfFile}
+              gpzuLoading={gpzuLoading}
+              gpzuLastResult={gpzuLastResult}
+              gpzuError={gpzuError}
+              onGpzuImport={handleGpzuImport}
+              onClearGpzu={() => { setGpzuLastResult(null); setGpzuError(null); }}
             />
           )}
           {tab === "3d" && (
@@ -579,6 +617,7 @@ function TabStrip({ tab, onChange }: { tab: TopTab; onChange: (t: TopTab) => voi
 function FloorTab({
   bag, floors, form, onGenerate, onSelectVariant, onToggleCompare, onGoToViz,
   dxfFile, onPickDxf,
+  gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
 }: {
   bag: FloorBag;
   floors: number;
@@ -589,9 +628,15 @@ function FloorTab({
   onGoToViz: () => void;
   dxfFile: File | null;
   onPickDxf: (f: File | null) => void;
+  gpzuLoading: boolean;
+  gpzuLastResult: GpzuExtraction | null;
+  gpzuError: string | null;
+  onGpzuImport: (f: File) => void;
+  onClearGpzu: () => void;
 }) {
   const planDivRef = useRef<HTMLDivElement>(null);
   const dxfInputRef = useRef<HTMLInputElement>(null);
+  const gpzuInputRef = useRef<HTMLInputElement>(null);
   const plan = bag.response?.variants[bag.selectedVariant] ?? null;
   const requestId = bag.response?.request_id ?? null;
   const plans = bag.response?.variants ?? [];
@@ -601,6 +646,11 @@ function FloorTab({
     if (f) onPickDxf(f);
     // Сбросим value чтобы можно было выбрать тот же файл повторно
     if (dxfInputRef.current) dxfInputRef.current.value = "";
+  };
+  const onGpzuChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) onGpzuImport(f);
+    if (gpzuInputRef.current) gpzuInputRef.current.value = "";
   };
 
   return (
@@ -708,30 +758,46 @@ function FloorTab({
                       Заполни параметры слева, нажми «Сгенерировать» — движок выдаст 5 вариантов за 1–3 сек.
                     </div>
 
-                    {/* DXF-импорт: альтернативный путь к генерации */}
+                    {/* DXF-импорт + ГПЗУ-импорт — альтернативные пути ввода */}
                     <div className="text-[11px] uppercase tracking-[0.14em] text-white/30 mb-2">
-                      или загрузите контур этажа
+                      или загрузите файлы
                     </div>
-                    {dxfFile ? (
-                      <div className="inline-flex items-center gap-2 bg-violet-500/[0.08] border border-violet-400/25 rounded-lg px-3 h-9 text-[12px] text-violet-200">
-                        <FileDown size={13} />
-                        <span className="max-w-[220px] truncate">{dxfFile.name}</span>
+                    <div className="flex items-center justify-center gap-2 flex-wrap">
+                      {dxfFile ? (
+                        <div className="inline-flex items-center gap-2 bg-violet-500/[0.08] border border-violet-400/25 rounded-lg px-3 h-9 text-[12px] text-violet-200">
+                          <FileDown size={13} />
+                          <span className="max-w-[180px] truncate">{dxfFile.name}</span>
+                          <button onClick={() => onPickDxf(null)} className="text-white/45 hover:text-white" title="Убрать DXF">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
                         <button
-                          onClick={() => onPickDxf(null)}
-                          className="text-white/45 hover:text-white"
-                          title="Убрать DXF"
+                          onClick={() => dxfInputRef.current?.click()}
+                          className="inline-flex items-center gap-2 h-9 px-3.5 rounded-lg surface text-[12px] hover:bg-white/[0.08] transition"
+                          title="Контур этажа из CAD"
                         >
-                          <X size={12} />
+                          <Upload size={13} /> Контур (DXF)
                         </button>
-                      </div>
-                    ) : (
+                      )}
+
                       <button
-                        onClick={() => dxfInputRef.current?.click()}
-                        className="inline-flex items-center gap-2 h-9 px-3.5 rounded-lg surface text-[12px] hover:bg-white/[0.08] transition"
+                        onClick={() => gpzuInputRef.current?.click()}
+                        disabled={gpzuLoading}
+                        className="inline-flex items-center gap-2 h-9 px-3.5 rounded-lg surface text-[12px] hover:bg-white/[0.08] transition disabled:opacity-60"
+                        title="Распарсить ГПЗУ через AI и заполнить форму"
                       >
-                        <Upload size={13} /> Загрузить DXF
+                        {gpzuLoading ? (
+                          <>
+                            <span className="inline-block size-3 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+                            Парсим ГПЗУ…
+                          </>
+                        ) : (
+                          <><Upload size={13} /> ГПЗУ (PDF)</>
+                        )}
                       </button>
-                    )}
+                    </div>
+
                     <input
                       ref={dxfInputRef}
                       type="file"
@@ -739,6 +805,39 @@ function FloorTab({
                       onChange={onDxfChange}
                       className="hidden"
                     />
+                    <input
+                      ref={gpzuInputRef}
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      onChange={onGpzuChange}
+                      className="hidden"
+                    />
+
+                    {/* Результат ГПЗУ-импорта: что заполнилось + notes */}
+                    {gpzuLastResult && (
+                      <div className="mt-5 mx-auto max-w-md text-left bg-emerald-500/[0.06] border border-emerald-400/20 rounded-xl p-3.5">
+                        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-emerald-300/85 font-medium mb-2">
+                          <CheckCircle2 size={11} /> ГПЗУ распознан · {gpzuLastResult.confidence}
+                        </div>
+                        <GpzuSummary ext={gpzuLastResult} />
+                        {gpzuLastResult.notes && (
+                          <div className="text-[11px] text-white/50 leading-relaxed mt-2 border-t border-white/[0.06] pt-2">
+                            {gpzuLastResult.notes}
+                          </div>
+                        )}
+                        <button
+                          onClick={onClearGpzu}
+                          className="mt-2 text-[10.5px] text-white/40 hover:text-white/70 transition"
+                        >
+                          Скрыть
+                        </button>
+                      </div>
+                    )}
+                    {gpzuError && (
+                      <div className="mt-5 mx-auto max-w-md text-left bg-rose-500/[0.06] border border-rose-400/20 rounded-xl p-3.5 text-[12px] text-rose-200">
+                        ГПЗУ не распознался: {gpzuError}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1395,6 +1494,37 @@ function ErrorState({ message, onRetry }: { message: string | null; onRetry: () 
           <RefreshCw size={13} /> Попробовать снова
         </button>
       </div>
+    </div>
+  );
+}
+
+function GpzuSummary({ ext }: { ext: GpzuExtraction }) {
+  const rows: Array<{ label: string; value: string | null }> = [
+    { label: "Габариты", value: ext.site_width_m && ext.site_depth_m
+        ? `${ext.site_width_m} × ${ext.site_depth_m} м`
+        : null },
+    { label: "Площадь",  value: ext.site_area_m2 ? `${ext.site_area_m2.toFixed(0)} м²` : null },
+    { label: "Отступы",  value: (ext.setback_front_m != null || ext.setback_side_m != null || ext.setback_rear_m != null)
+        ? `пер. ${ext.setback_front_m ?? "—"} · бок ${ext.setback_side_m ?? "—"} · зад ${ext.setback_rear_m ?? "—"} м`
+        : null },
+    { label: "Этажность",        value: ext.max_floors != null ? `до ${ext.max_floors}` : null },
+    { label: "Высота",           value: ext.max_height_m != null ? `до ${ext.max_height_m} м` : null },
+    { label: "% застройки",      value: ext.max_coverage_pct != null ? `${ext.max_coverage_pct}%` : null },
+    { label: "КИТ",              value: ext.max_far != null ? ext.max_far.toFixed(2) : null },
+    { label: "Назначение",       value: ext.purpose_allowed.length ? ext.purpose_allowed.join(", ") : null },
+  ];
+  const present = rows.filter(r => r.value);
+  if (!present.length) {
+    return <div className="text-[11.5px] text-white/55">Параметры не извлечены — проверь PDF.</div>;
+  }
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11.5px]">
+      {present.map((r) => (
+        <div key={r.label} className="flex items-baseline gap-1.5">
+          <span className="text-white/45">{r.label}:</span>
+          <span className="text-white/85 tabular">{r.value}</span>
+        </div>
+      ))}
     </div>
   );
 }
