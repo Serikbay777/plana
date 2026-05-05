@@ -5,14 +5,11 @@ import { useRouter } from "next/navigation";
 import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
-  CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight, Box,
-  Sun, Moon, Camera, RotateCw, Pause, Building, Mountain, Compass,
-  DoorOpen, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, FileDown,
-  Edit2, Trash2, RotateCcw,
+  CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight,
+  FileDown, Edit2, Trash2, RotateCcw,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { PlanCanvas } from "@/components/PlanCanvas";
-import { PlanCanvas3D, type PlanCanvas3DHandle, type SceneMode, type ViewMode, type SpotKey } from "@/components/PlanCanvas3D";
 import { AppMetrics } from "@/components/AppMetrics";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { exportPlanPdf, exportAiPlansPdf } from "@/lib/pdf-export";
@@ -50,7 +47,7 @@ import { getSession, signOut, type Session } from "@/lib/auth";
 // ---------------------------------------------------------------------------
 
 type GenState = "idle" | "loading" | "ready" | "error";
-type TopTab = "floor" | "site" | "viz" | "ai_plans" | "placement" | "3d";
+type TopTab = "floor" | "site" | "viz" | "ai_plans" | "placement";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
 
 // Tab 1 — реальный план
@@ -231,7 +228,7 @@ export default function AppPage() {
   }, [floorBag.response?.request_id, floorBag.selectedVariant]);
 
   // floorBag с применёнными overrides на активном варианте — этот bag и
-  // отдаётся в FloorTab/View3DTab/AppMetrics, чтобы все слои рисовали правки.
+  // отдаётся в FloorTab/AppMetrics, чтобы все слои рисовали правки.
   const effectiveFloorBag = useMemo<FloorBag>(() => {
     if (!floorBag.response) return floorBag;
     const variants = floorBag.response.variants.map((v, i) =>
@@ -437,7 +434,7 @@ export default function AppPage() {
   };
 
   const onGenerate = useMemo(() => {
-    if (tab === "floor" || tab === "3d") return generateFloor;
+    if (tab === "floor") return generateFloor;
     if (tab === "site")                  return generateSite;
     if (tab === "ai_plans")              return generateAiPlans;
     if (tab === "placement")             return generatePlacement;
@@ -448,8 +445,8 @@ export default function AppPage() {
   // active state для индикатора loading в кнопке
   const vizAnyLoading = vizExtBag.state === "loading" || vizFloorBag.state === "loading" || vizIntBag.state === "loading" || vizIntGallery.state === "loading";
   const isLoading =
-    tab === "floor" || tab === "3d" ? floorBag.state === "loading"
-    : tab === "site"                 ? siteBag.state === "loading"
+    tab === "floor"      ? floorBag.state === "loading"
+    : tab === "site"     ? siteBag.state === "loading"
     : tab === "ai_plans"             ? aiPlansBag.state === "loading"
     : tab === "placement"            ? placementBag.state === "loading"
     : vizAnyLoading;
@@ -501,15 +498,6 @@ export default function AppPage() {
               onClearGpzu={() => { setGpzuLastResult(null); setGpzuError(null); }}
               overrides={planOverrides}
               onSetOverrides={setPlanOverrides}
-            />
-          )}
-          {tab === "3d" && (
-            <View3DTab
-              bag={effectiveFloorBag}
-              floors={form.floors}
-              onGenerate={generateFloor}
-              aiPlansBag={aiPlansBag}
-              intGallery={vizIntGallery}
             />
           )}
           {tab === "site" && (
@@ -606,7 +594,6 @@ function Header({ session, onSignOut }: { session: Session | null; onSignOut: ()
 function TabStrip({ tab, onChange }: { tab: TopTab; onChange: (t: TopTab) => void }) {
   const items: Array<{ key: TopTab; label: string; icon: React.ReactNode }> = [
     { key: "ai_plans",  label: "AI Чертежи",          icon: <Sparkles size={13} /> },
-    { key: "3d",        label: "3D Вид",               icon: <Box size={13} /> },
     { key: "viz",       label: "Визуализации",         icon: <ImageIcon size={13} /> },
     { key: "site",      label: "Посадка на участок",  icon: <MapIcon size={13} /> },
     { key: "placement", label: "Размещение ЖК",        icon: <Building2 size={13} /> },
@@ -2207,488 +2194,6 @@ function AiPlansTab({ bag, onGenerate, onGoToViz }: { bag: AiPlansBag; onGenerat
         </div>
       )}
     </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// 3D View Tab
-// ---------------------------------------------------------------------------
-
-type SpotMeta = {
-  key: SpotKey;
-  label: string;
-  view: ViewMode;
-  icon: React.ReactNode;
-  /** Группа для разделителей в навигаторе. */
-  group: "building" | "details" | "interior" | "apartment";
-};
-
-const SPOTS: SpotMeta[] = [
-  // Здание целиком
-  { key: "iso",        label: "Изометрия",      view: "exterior", icon: <Box size={13} />,       group: "building" },
-  { key: "front",      label: "Фасад",          view: "exterior", icon: <Building size={13} />,  group: "building" },
-  { key: "back",       label: "Сзади",          view: "exterior", icon: <RefreshCw size={13} />, group: "building" },
-  { key: "side",       label: "Сбоку",          view: "exterior", icon: <Compass size={13} />,   group: "building" },
-  { key: "angle_ne",   label: "Угол СВ",        view: "exterior", icon: <Compass size={13} />,   group: "building" },
-  { key: "angle_se",   label: "Угол ЮВ",        view: "exterior", icon: <Compass size={13} />,   group: "building" },
-  { key: "top",        label: "Сверху",         view: "exterior", icon: <Mountain size={13} />,  group: "building" },
-  // Детали снаружи
-  { key: "drone_low",  label: "Дрон снизу",     view: "exterior", icon: <ArrowUp size={13} />,   group: "details"  },
-  { key: "rooftop",    label: "Крыша",          view: "exterior", icon: <Sparkles size={13} />,  group: "details"  },
-  { key: "balcony",    label: "Балкон",         view: "exterior", icon: <Layers size={13} />,    group: "details"  },
-  { key: "entrance",   label: "Главный вход",   view: "exterior", icon: <DoorOpen size={13} />,  group: "details"  },
-  // Внутри / лобби
-  { key: "lobby",      label: "Лобби",          view: "lobby",    icon: <Building2 size={13} />, group: "interior" },
-  { key: "reception",  label: "Ресепшен",       view: "lobby",    icon: <Eye size={13} />,       group: "interior" },
-  { key: "lobby_back", label: "Взгляд на вход", view: "lobby",    icon: <ArrowDown size={13} />, group: "interior" },
-  { key: "lift",       label: "Лифты",          view: "lobby",    icon: <DoorOpen size={13} />,  group: "interior" },
-  // Внутри квартир — фильтруются по plan.tiles + наличию AI-интерьера
-  { key: "apt_studio", label: "Студия",         view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
-  { key: "apt_k1",     label: "1-комнатная",    view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
-  { key: "apt_euro1",  label: "Евро-1",         view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
-  { key: "apt_k2",     label: "2-комнатная",    view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
-  { key: "apt_euro2",  label: "Евро-2",         view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
-  { key: "apt_k3",     label: "3-комнатная",    view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
-  { key: "apt_euro3",  label: "Евро-3",         view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
-  { key: "apt_k4",     label: "4-комнатная",    view: "apartment", icon: <Sofa size={13} />,     group: "apartment" },
-];
-
-function View3DTab({
-  bag, floors, onGenerate, aiPlansBag, intGallery,
-}: {
-  bag: FloorBag;
-  floors: number;
-  onGenerate: () => void;
-  aiPlansBag: AiPlansBag;
-  intGallery: InteriorGalleryBag;
-}) {
-  const plan = bag.response?.variants[bag.selectedVariant] ?? null;
-  const plans = bag.response?.variants ?? [];
-  const [selectedAiIdx, setSelectedAiIdx] = useState<number>(0);
-
-  const aiVariants = aiPlansBag.variants;
-  const aiImageUrl = aiVariants[selectedAiIdx]?.imageUrl ?? undefined;
-
-  // Map apt_type → dataURL для интерьеров. Стабильный reference через useMemo.
-  const interiorImagesByType = useMemo<Partial<Record<AptType, string>>>(() => {
-    const out: Partial<Record<AptType, string>> = {};
-    for (const item of intGallery.items) {
-      out[item.apt_type] = `data:image/png;base64,${item.image_b64}`;
-    }
-    return out;
-  }, [intGallery.items]);
-
-  // Какие apt-spots реально доступны (есть и tile в плане, и AI-картинка).
-  const availableAptTypes = useMemo<Set<AptType>>(() => {
-    if (!plan) return new Set();
-    const planTypes = new Set<AptType>(plan.tiles.map((t) => t.apt_type));
-    const out = new Set<AptType>();
-    for (const t of Object.keys(interiorImagesByType) as AptType[]) {
-      if (planTypes.has(t)) out.add(t);
-    }
-    return out;
-  }, [plan, interiorImagesByType]);
-
-  // Видимые spots = базовые + те apt-spots, для которых есть и tile, и картинка.
-  const visibleSpots = useMemo<SpotMeta[]>(() => {
-    return SPOTS.filter((s) => {
-      if (!s.key.startsWith("apt_")) return true;
-      const aptType = s.key.replace("apt_", "") as AptType;
-      return availableAptTypes.has(aptType);
-    });
-  }, [availableAptTypes]);
-
-  // ── 3D scene controls ─────────────────────────────────────────────────────
-  const canvasRef = useRef<PlanCanvas3DHandle>(null);
-  const [mode, setMode] = useState<SceneMode>("night");
-  const [autoRotate, setAutoRotate] = useState<boolean>(true);
-  const [visibleFloors, setVisibleFloors] = useState<number>(floors);
-  const [spotIdx, setSpotIdx] = useState<number>(0);
-  const view: ViewMode = visibleSpots[spotIdx]?.view ?? "exterior";
-
-  // Когда меняется количество этажей в форме — сбрасываем срез под новое значение.
-  useEffect(() => {
-    setVisibleFloors(floors);
-  }, [floors]);
-
-  // Sync slider → canvas. Это покрывает случай, когда сцена только что пересобралась
-  // (новый plan / aiImage) и нужно довыставить текущий срез.
-  useEffect(() => {
-    canvasRef.current?.setVisibleFloors(visibleFloors);
-  }, [visibleFloors, plan, aiImageUrl]);
-
-  // Если visibleSpots уменьшился (apt-spots ушли) — обрежем индекс.
-  useEffect(() => {
-    if (spotIdx >= visibleSpots.length) setSpotIdx(0);
-  }, [visibleSpots.length, spotIdx]);
-
-  // Sync активного spot'а с canvas (включая ребилд сцены).
-  useEffect(() => {
-    const spot = visibleSpots[spotIdx];
-    if (spot) canvasRef.current?.setSpot(spot.key);
-  }, [spotIdx, plan, aiImageUrl, visibleSpots, interiorImagesByType]);
-
-  const handleSetMode = (m: SceneMode) => {
-    setMode(m);
-    canvasRef.current?.setMode(m);
-  };
-  const handleSetAutoRotate = (on: boolean) => {
-    setAutoRotate(on);
-    canvasRef.current?.setAutoRotate(on);
-  };
-  const handleSetVisibleFloors = (n: number) => {
-    setVisibleFloors(n);
-    canvasRef.current?.setVisibleFloors(n);
-  };
-  const handleScreenshot = () => {
-    const url = canvasRef.current?.screenshot();
-    if (!url) return;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `plana-3d-${Date.now()}.png`;
-    a.click();
-  };
-
-  const handleSpotPrev = () => {
-    setSpotIdx((i) => (i - 1 + visibleSpots.length) % visibleSpots.length);
-    setAutoRotate(false);
-  };
-  const handleSpotNext = () => {
-    setSpotIdx((i) => (i + 1) % visibleSpots.length);
-    setAutoRotate(false);
-  };
-  const handleSpotSelect = (i: number) => {
-    setSpotIdx(i);
-    setAutoRotate(false);
-  };
-
-  // Стрелки клавиатуры тоже листают spots.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (bag.state !== "ready") return;
-      // не перехватываем когда пользователь в инпуте
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key === "ArrowLeft")  { e.preventDefault(); handleSpotPrev(); }
-      if (e.key === "ArrowRight") { e.preventDefault(); handleSpotNext(); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [bag.state]);
-
-  return (
-    <>
-      {/* Top bar: plan variant + AI plan selector */}
-      {bag.state === "ready" && (
-        <div className="px-5 pt-3.5 pb-3 border-b border-white/[0.04] flex items-center gap-2 overflow-x-auto flex-shrink-0">
-          {/* Floor plan variants */}
-          {plans.length > 1 && plans.map((v, i) => (
-            <button
-              key={v.preset}
-              className={[
-                "h-7 px-3 rounded-lg text-[11.5px] transition border flex-shrink-0",
-                bag.selectedVariant === i
-                  ? "bg-white/[0.08] border-white/15 text-white font-medium"
-                  : "border-transparent text-white/50 hover:text-white/80 hover:bg-white/[0.03]",
-              ].join(" ")}
-            >
-              {PRESET_LABELS[v.preset]}
-            </button>
-          ))}
-
-          {/* Divider + AI plan texture selector */}
-          {aiVariants.length > 0 && (
-            <>
-              {plans.length > 1 && <div className="w-px h-4 bg-white/10 flex-shrink-0" />}
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <span className="text-[10.5px] text-white/30 mr-0.5">Чертёж:</span>
-                {aiVariants.map((v, i) => (
-                  <button
-                    key={v.key}
-                    onClick={() => setSelectedAiIdx(i)}
-                    className={[
-                      "h-7 px-2.5 rounded-lg text-[11px] transition border flex-shrink-0",
-                      selectedAiIdx === i
-                        ? "bg-violet-500/20 border-violet-400/30 text-violet-200 font-medium"
-                        : "border-transparent text-white/40 hover:text-white/70 hover:bg-white/[0.03]",
-                    ].join(" ")}
-                  >
-                    {v.label}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          {aiVariants.length === 0 && (
-            <div className="text-[10.5px] text-white/25 flex items-center gap-1 flex-shrink-0 ml-1">
-              <Sparkles size={10} className="text-violet-400/40" />
-              Сгенерируй «AI Чертежи» для текстуры крыши
-            </div>
-          )}
-
-          <div className="ml-auto text-[11px] text-white/30 flex-shrink-0 flex items-center gap-1">
-            <Box size={11} className="text-violet-400/60" />
-            Интерактивная 3D-модель · крути мышкой
-          </div>
-        </div>
-      )}
-
-      {/* Основная область */}
-      <div className="flex-1 relative min-h-0">
-        {bag.state === "idle" && (
-          <div className="absolute inset-0 grid place-items-center">
-            <div className="text-center max-w-md px-8">
-              <div className="size-16 rounded-full bg-gradient-to-br from-violet-500/20 to-blue-400/20 border border-white/10 grid place-items-center mx-auto mb-5">
-                <Box size={26} className="text-violet-200" />
-              </div>
-              <div className="text-[21px] font-semibold tracking-display mb-3">3D Вид здания</div>
-              <div className="text-[13px] text-white/50 leading-relaxed mb-6">
-                Заполни параметры слева и нажми «Сгенерировать» — получишь изометрическую 3D-модель
-                с этажами, квартирами и ядром лифта.
-              </div>
-              <button
-                onClick={onGenerate}
-                className="btn-apple h-11 px-6 text-[14px] flex items-center gap-2 mx-auto"
-              >
-                <Box size={15} /> Сгенерировать 3D
-              </button>
-            </div>
-          </div>
-        )}
-
-        {bag.state === "loading" && (
-          <div className="absolute inset-0 grid place-items-center">
-            <Spinner text="Строим 3D-модель · 1–3 сек" />
-          </div>
-        )}
-
-        {bag.state === "error" && (
-          <ErrorState message={bag.errorMessage} onRetry={onGenerate} />
-        )}
-
-        {bag.state === "ready" && plan && (
-          <>
-            <PlanCanvas3D
-              ref={canvasRef}
-              plan={plan}
-              floors={floors}
-              aiPlanImageUrl={aiImageUrl}
-              initialMode={mode}
-              initialAutoRotate={autoRotate}
-              initialVisibleFloors={visibleFloors}
-              interiorImagesByType={interiorImagesByType}
-            />
-
-            {/* ── Top controls overlay (день/ночь, авто, этажи, png) ── */}
-            <SceneControls
-              view={view}
-              mode={mode}
-              autoRotate={autoRotate}
-              floors={floors}
-              visibleFloors={visibleFloors}
-              onSetMode={handleSetMode}
-              onToggleAutoRotate={() => handleSetAutoRotate(!autoRotate)}
-              onSetVisibleFloors={handleSetVisibleFloors}
-              onScreenshot={handleScreenshot}
-            />
-
-            {/* ── Spot navigator снизу — стрелки + название точки + доты ── */}
-            <SpotNavigator
-              spots={visibleSpots}
-              spotIdx={spotIdx}
-              onPrev={handleSpotPrev}
-              onNext={handleSpotNext}
-              onSelect={handleSpotSelect}
-            />
-          </>
-        )}
-      </div>
-
-      {/* Bottom bar */}
-      {bag.state === "ready" && plan && (
-        <div className="border-t border-white/[0.05] px-5 py-3 flex items-center justify-between flex-shrink-0">
-          <div className="text-[11px] text-white/35 flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <Box size={11} className="text-violet-400/60" />
-              {plan.metrics.apt_count} квартир · {floors} эт. · {(plan.metrics.floor_area * floors).toFixed(0)} м²
-            </span>
-            <span className="text-white/20">·</span>
-            <span>ЛКМ — вращать · колесо — зум · ПКМ — пан</span>
-            {aiImageUrl && (
-              <>
-                <span className="text-white/20">·</span>
-                <span className="flex items-center gap-1 text-violet-300/50">
-                  <Sparkles size={10} /> AI чертёж на крыше
-                </span>
-              </>
-            )}
-          </div>
-          <button
-            onClick={onGenerate}
-            className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition"
-          >
-            <RefreshCw size={12} /> Перегенерировать
-          </button>
-        </div>
-      )}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SceneControls — плавающая панель с переключателями для 3D
-// ---------------------------------------------------------------------------
-
-function SceneControls({
-  view, mode, autoRotate, floors, visibleFloors,
-  onSetMode, onToggleAutoRotate, onSetVisibleFloors, onScreenshot,
-}: {
-  view: ViewMode;
-  mode: SceneMode;
-  autoRotate: boolean;
-  floors: number;
-  visibleFloors: number;
-  onSetMode: (m: SceneMode) => void;
-  onToggleAutoRotate: () => void;
-  onSetVisibleFloors: (n: number) => void;
-  onScreenshot: () => void;
-}) {
-  const segBtn = (active: boolean) => [
-    "h-7 px-2.5 rounded-md text-[11px] flex items-center gap-1 transition",
-    active
-      ? "bg-white/[0.12] text-white"
-      : "text-white/55 hover:text-white hover:bg-white/[0.05]",
-  ].join(" ");
-
-  const inLobby = view === "lobby";
-
-  return (
-    <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-3 pointer-events-none">
-      <div className="flex items-center gap-2 pointer-events-auto">
-        <div className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-lg p-0.5">
-          <button onClick={() => onSetMode("day")} className={segBtn(mode === "day")} title="Дневной режим">
-            <Sun size={13} /> День
-          </button>
-          <button onClick={() => onSetMode("night")} className={segBtn(mode === "night")} title="Ночной режим">
-            <Moon size={13} /> Ночь
-          </button>
-        </div>
-
-        {!inLobby && (
-          <button
-            onClick={onToggleAutoRotate}
-            className={[
-              "h-8 px-2.5 rounded-lg text-[11px] flex items-center gap-1 border backdrop-blur-md transition",
-              autoRotate
-                ? "bg-violet-500/20 border-violet-400/30 text-violet-100"
-                : "bg-black/40 border-white/10 text-white/65 hover:text-white",
-            ].join(" ")}
-            title={autoRotate ? "Остановить вращение" : "Включить автоповорот"}
-          >
-            {autoRotate ? <Pause size={12} /> : <RotateCw size={12} />}
-            {autoRotate ? "Стоп" : "Авто"}
-          </button>
-        )}
-      </div>
-
-      <div className="flex items-center gap-2 pointer-events-auto">
-        {!inLobby && (
-          <div className="flex items-center gap-2.5 bg-black/40 backdrop-blur-md border border-white/10 rounded-lg px-3 h-8">
-            <Layers size={12} className="text-white/55 flex-shrink-0" />
-            <span className="text-[11px] text-white/55 whitespace-nowrap">Этажи</span>
-            <input
-              type="range"
-              min={1}
-              max={floors}
-              value={visibleFloors}
-              onChange={(e) => onSetVisibleFloors(Number(e.target.value))}
-              className="w-28 accent-violet-400 cursor-pointer"
-            />
-            <span className="text-[11px] tabular text-white/85 min-w-[28px] text-right">
-              {visibleFloors}/{floors}
-            </span>
-          </div>
-        )}
-
-        <button
-          onClick={onScreenshot}
-          className="h-8 px-2.5 rounded-lg text-[11px] flex items-center gap-1 bg-black/40 backdrop-blur-md border border-white/10 text-white/65 hover:text-white hover:bg-black/55 transition"
-          title="Сохранить кадр в PNG"
-        >
-          <Camera size={12} /> PNG
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SpotNavigator — нижняя панель с предустановленными точками обзора
-// ---------------------------------------------------------------------------
-
-function SpotNavigator({
-  spots, spotIdx, onPrev, onNext, onSelect,
-}: {
-  spots: SpotMeta[];
-  spotIdx: number;
-  onPrev: () => void;
-  onNext: () => void;
-  onSelect: (i: number) => void;
-}) {
-  const current = spots[spotIdx];
-  if (!current) return null;
-
-  return (
-    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 pointer-events-auto">
-      <button
-        onClick={onPrev}
-        className="size-9 grid place-items-center rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white/80 hover:text-white hover:bg-black/75 transition"
-        title="Предыдущая точка (←)"
-      >
-        <ChevronLeft size={16} />
-      </button>
-
-      <div className="flex items-center gap-2 bg-black/55 backdrop-blur-md border border-white/15 rounded-full px-4 h-9">
-        <span className="text-violet-300/80 flex-shrink-0">{current.icon}</span>
-        <span className="text-[12.5px] font-medium text-white whitespace-nowrap">{current.label}</span>
-        <span className="text-[10.5px] text-white/40 tabular ml-1">
-          {spotIdx + 1}/{spots.length}
-        </span>
-      </div>
-
-      <button
-        onClick={onNext}
-        className="size-9 grid place-items-center rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white/80 hover:text-white hover:bg-black/75 transition"
-        title="Следующая точка (→)"
-      >
-        <ChevronRight size={16} />
-      </button>
-
-      {/* Доты-индикаторы — клик переключает; вертикальная чёрточка между группами */}
-      <div className="ml-3 flex items-center gap-1.5 bg-black/35 backdrop-blur-md border border-white/10 rounded-full px-2.5 h-7">
-        {spots.map((s, i) => {
-          const prev = spots[i - 1];
-          const showDivider = prev && prev.group !== s.group;
-          return (
-            <Fragment key={s.key}>
-              {showDivider && <span className="w-px h-3 bg-white/15 mx-0.5" />}
-              <button
-                onClick={() => onSelect(i)}
-                className={[
-                  "size-1.5 rounded-full transition flex-shrink-0",
-                  i === spotIdx
-                    ? "bg-violet-300 scale-125"
-                    : "bg-white/30 hover:bg-white/60",
-                ].join(" ")}
-                title={s.label}
-              />
-            </Fragment>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
