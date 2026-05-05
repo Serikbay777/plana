@@ -9,7 +9,7 @@ import {
   Trees, Flame, DoorOpen, Network,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
-import { exportAiPlansPdf } from "@/lib/pdf-export";
+import { exportAiPlansPdf, exportFullReportPdf } from "@/lib/pdf-export";
 import {
   importGpzu,
   analyzeContour,
@@ -371,6 +371,21 @@ export default function AppPage() {
     }
   };
 
+  // Экспорт полного отчёта (Этап 5 ТЗ): обложка + ГПЗУ + анализ контура +
+  // 5 чертежей + 3 посадки + экстерьер + интерьеры → один PDF.
+  const handleExportFullReport = async () => {
+    await exportFullReportPdf({
+      form,
+      gpzu: gpzuLastResult,
+      contour: contourResult,
+      aiPlans: aiPlansBag.state === "ready" ? aiPlansBag.variants : [],
+      placement: placementBag.state === "ready" ? placementBag.variants : [],
+      exteriorUrl: vizExtBag.state === "ready" ? vizExtBag.imageUrl : null,
+      floorplanFurnitureUrl: vizFloorBag.state === "ready" ? vizFloorBag.imageUrl : null,
+      interiors: vizIntGallery.state === "ready" ? vizIntGallery.items : [],
+    });
+  };
+
   const onGenerate =
     tab === "site"      ? generateSite
     : tab === "ai_plans"  ? generateAiPlans
@@ -461,6 +476,13 @@ export default function AppPage() {
               contourError={contourError}
               onContourAnalyze={handleContourAnalyze}
               onClearContour={() => { setContourResult(null); setContourError(null); }}
+              onExportFullReport={handleExportFullReport}
+              hasExtraSections={
+                placementBag.state === "ready" ||
+                vizExtBag.state === "ready" ||
+                vizFloorBag.state === "ready" ||
+                vizIntGallery.state === "ready"
+              }
             />
           )}
           {tab === "placement" && (
@@ -1520,6 +1542,7 @@ function AiPlansTab({
   bag, onGenerate, onGoToViz,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
+  onExportFullReport, hasExtraSections,
 }: {
   bag: AiPlansBag;
   onGenerate: () => void;
@@ -1534,6 +1557,8 @@ function AiPlansTab({
   contourError: string | null;
   onContourAnalyze: (f: File) => void;
   onClearContour: () => void;
+  onExportFullReport: () => Promise<void>;
+  hasExtraSections: boolean;
 }) {
   const [lightbox, setLightbox] = useState<AiPlanVariant | null>(null);
   // Интерактивная корректировка (Этап 4 ТЗ): юзер пишет инструкцию,
@@ -1998,14 +2023,24 @@ function AiPlansTab({
             <button
               onClick={() => exportAiPlansPdf(bag.variants)}
               className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/70 hover:text-white"
+              title="Только AI-чертежи (5 страниц)"
             >
-              <Download size={12} /> Скачать PDF
+              <Download size={12} /> Только чертежи
+            </button>
+            <button
+              onClick={onExportFullReport}
+              className="h-9 px-4 rounded-full btn-apple text-[12px] flex items-center gap-1.5"
+              title={hasExtraSections
+                ? "Полный отчёт: обложка + ГПЗУ + контур + чертежи + посадка + экстерьер + интерьеры"
+                : "Сейчас в отчёт попадут только AI-чертежи. Сгенерируй визуализации/посадку для полного отчёта."}
+            >
+              <Download size={12} /> Полный отчёт PDF
             </button>
             <button
               onClick={onGoToViz}
-              className="h-9 px-4 rounded-full btn-apple text-[12px] flex items-center gap-1.5"
+              className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/70 hover:text-white"
             >
-              Визуализировать <ArrowRight size={12} />
+              Визуализации <ArrowRight size={12} />
             </button>
           </div>
         </div>
