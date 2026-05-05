@@ -818,6 +818,64 @@ def visualize_interior_gallery(req: InteriorGalleryRequest) -> InteriorGalleryRe
 
 
 # ---------------------------------------------------------------------------
+# Vision-анализ контура / участка (Этап 2 ТЗ — «AI-анализ пространства»)
+# ---------------------------------------------------------------------------
+
+
+class ContourRecommendation(BaseModel):
+    title: str
+    detail: str
+    priority: str       # high | medium | low
+    tag: str            # geometry | insolation | access | fire | landscape | context
+
+
+class ContourAnalysisResponse(BaseModel):
+    """Ответ /analyze/contour — структурированный анализ изображения участка/контура."""
+    shape_summary: str
+    estimated_width_m: float | None = None
+    estimated_depth_m: float | None = None
+    estimated_orientation_deg: float | None = None
+    context_features: list[str] = []
+    suggested_purpose: str | None = None
+    recommendations: list[ContourRecommendation] = []
+    notes: str = ""
+    confidence: str = "low"
+
+
+@app.post("/analyze/contour", response_model=ContourAnalysisResponse)
+async def analyze_contour_endpoint(file: UploadFile = File(...)) -> ContourAnalysisResponse:
+    """Vision-анализ загруженного изображения участка / контура / эскиза.
+
+    Принимает JPG / PNG / PDF, возвращает структурированный архитектурный
+    разбор: форма, габариты, контекст, ранжированные рекомендации.
+    """
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="empty file")
+
+    from ..importers.contour import ContourAnalysisError, analyze_contour
+
+    try:
+        a = analyze_contour(image_bytes, mime=file.content_type)
+    except ContourAnalysisError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return ContourAnalysisResponse(
+        shape_summary=             a.shape_summary,
+        estimated_width_m=         a.estimated_width_m,
+        estimated_depth_m=         a.estimated_depth_m,
+        estimated_orientation_deg= a.estimated_orientation_deg,
+        context_features=          a.context_features,
+        suggested_purpose=         a.suggested_purpose,
+        recommendations=           [
+            ContourRecommendation(**r.to_dict()) for r in a.recommendations
+        ],
+        notes=                     a.notes,
+        confidence=                a.confidence,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Интерактивная корректировка чертежа: фото + текстовая инструкция
 # (Этап 4 ТЗ — «Интерактивная корректировка проекта»)
 # ---------------------------------------------------------------------------

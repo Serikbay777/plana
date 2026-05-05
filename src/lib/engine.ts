@@ -74,6 +74,48 @@ export type GpzuExtraction = {
   confidence: "high" | "medium" | "low";
 };
 
+// ---------------------------------------------------------------------------
+// Vision-анализ контура (этап 2 ТЗ)
+// ---------------------------------------------------------------------------
+
+export type ContourRecommendation = {
+  title: string;
+  detail: string;
+  priority: "high" | "medium" | "low";
+  tag: "geometry" | "insolation" | "access" | "fire" | "landscape" | "context";
+};
+
+export type ContourAnalysis = {
+  shape_summary: string;
+  estimated_width_m: number | null;
+  estimated_depth_m: number | null;
+  estimated_orientation_deg: number | null;
+  context_features: string[];
+  suggested_purpose: "residential" | "commercial" | "mixed_use" | "hotel" | null;
+  recommendations: ContourRecommendation[];
+  notes: string;
+  confidence: "high" | "medium" | "low";
+};
+
+/**
+ * Прогнать изображение участка / контура / эскиза через gpt-4.1-vision.
+ * Принимает JPG/PNG/PDF, возвращает структурированный анализ.
+ */
+export async function analyzeContour(file: File): Promise<ContourAnalysis> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${ENGINE_URL}/analyze/contour`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  return res.json() as Promise<ContourAnalysis>;
+}
+
 export async function importGpzu(file: File): Promise<GpzuExtraction> {
   const fd = new FormData();
   fd.append("file", file);

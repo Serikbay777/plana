@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
-  CheckCircle2, ArrowRight, Wand2, Loader2,
+  CheckCircle2, ArrowRight, Wand2, Loader2, ScanSearch, Compass, Ruler,
+  Trees, Flame, DoorOpen, Network,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { exportAiPlansPdf } from "@/lib/pdf-export";
 import {
   importGpzu,
+  analyzeContour,
   visualizeExterior,
   visualizeFloorplanFurniture,
   visualizeSitePlacement,
@@ -19,6 +21,8 @@ import {
   visualizeInteriorGallery,
   editAiPlan,
   type GpzuExtraction,
+  type ContourAnalysis,
+  type ContourRecommendation,
   type VisualizeFromInputsRequest,
   type VisualizeResult,
   type PlacementVariant,
@@ -133,6 +137,10 @@ export default function AppPage() {
   const [gpzuLoading, setGpzuLoading] = useState(false);
   const [gpzuLastResult, setGpzuLastResult] = useState<GpzuExtraction | null>(null);
   const [gpzuError, setGpzuError] = useState<string | null>(null);
+  // Vision-анализ контура / участка (Этап 2 ТЗ)
+  const [contourLoading, setContourLoading] = useState(false);
+  const [contourResult, setContourResult] = useState<ContourAnalysis | null>(null);
+  const [contourError, setContourError] = useState<string | null>(null);
   // Tab 2
   const [siteBag, setSiteBag] = useState<ImageBag>(EMPTY_IMAGE_BAG);
   // Tab 3 — три независимых стейта
@@ -199,6 +207,28 @@ export default function AppPage() {
       setGpzuError((e as Error).message);
     } finally {
       setGpzuLoading(false);
+    }
+  };
+
+  // ---- Vision-анализ контура (Этап 2 ТЗ) -----------------------------------
+  const handleContourAnalyze = async (file: File) => {
+    setContourLoading(true);
+    setContourError(null);
+    setContourResult(null);
+    try {
+      const a = await analyzeContour(file);
+      setContourResult(a);
+      // Автозаполняем габариты и назначение, если модель уверена и поле пустое
+      setForm((f) => ({
+        ...f,
+        site_width_m: a.estimated_width_m ?? f.site_width_m,
+        site_depth_m: a.estimated_depth_m ?? f.site_depth_m,
+        purpose:      a.suggested_purpose ?? f.purpose,
+      }));
+    } catch (e) {
+      setContourError((e as Error).message);
+    } finally {
+      setContourLoading(false);
     }
   };
 
@@ -426,6 +456,11 @@ export default function AppPage() {
               gpzuError={gpzuError}
               onGpzuImport={handleGpzuImport}
               onClearGpzu={() => { setGpzuLastResult(null); setGpzuError(null); }}
+              contourLoading={contourLoading}
+              contourResult={contourResult}
+              contourError={contourError}
+              onContourAnalyze={handleContourAnalyze}
+              onClearContour={() => { setContourResult(null); setContourError(null); }}
             />
           )}
           {tab === "placement" && (
@@ -1122,6 +1157,112 @@ function GpzuSummary({ ext }: { ext: GpzuExtraction }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// ContourSummary — карточка с результатами Vision-анализа контура (Этап 2 ТЗ)
+// ---------------------------------------------------------------------------
+
+const REC_TAG_ICON: Record<ContourRecommendation["tag"], React.ReactNode> = {
+  geometry:    <Ruler size={11} />,
+  insolation:  <Sparkles size={11} />,
+  access:      <DoorOpen size={11} />,
+  fire:        <Flame size={11} />,
+  landscape:   <Trees size={11} />,
+  context:     <Network size={11} />,
+};
+
+const REC_TAG_LABEL: Record<ContourRecommendation["tag"], string> = {
+  geometry:   "форма",
+  insolation: "инсоляция",
+  access:     "входы",
+  fire:       "пожарка",
+  landscape:  "благоустр.",
+  context:    "контекст",
+};
+
+const REC_PRIORITY_STYLES: Record<ContourRecommendation["priority"], string> = {
+  high:   "bg-rose-500/15 border-rose-400/30 text-rose-200",
+  medium: "bg-amber-500/15 border-amber-400/30 text-amber-200",
+  low:    "bg-white/[0.05] border-white/10 text-white/60",
+};
+
+function ContourSummary({ analysis }: { analysis: ContourAnalysis }) {
+  const a = analysis;
+  const orientation = a.estimated_orientation_deg != null
+    ? `${a.estimated_orientation_deg.toFixed(0)}° от севера`
+    : null;
+  const dims = a.estimated_width_m && a.estimated_depth_m
+    ? `${a.estimated_width_m.toFixed(0)} × ${a.estimated_depth_m.toFixed(0)} м`
+    : null;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <ScanSearch size={12} className="text-violet-300" />
+        <span className="text-[11.5px] text-white/70">
+          Анализ контура · уверенность {a.confidence === "high" ? "высокая" : a.confidence === "medium" ? "средняя" : "низкая"}
+        </span>
+        {dims && (
+          <span className="text-[10.5px] tabular px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.07] text-white/65">
+            {dims}
+          </span>
+        )}
+        {orientation && (
+          <span className="text-[10.5px] tabular px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.07] text-white/65 flex items-center gap-1">
+            <Compass size={10} /> {orientation}
+          </span>
+        )}
+      </div>
+      <div className="text-[12.5px] text-white/85 mb-2.5">{a.shape_summary}</div>
+
+      {a.context_features.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {a.context_features.map((f, i) => (
+            <span
+              key={i}
+              className="text-[10.5px] px-2 py-0.5 rounded-full bg-white/[0.03] border border-white/[0.06] text-white/55"
+            >
+              {f}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {a.recommendations.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <div className="text-[10.5px] uppercase tracking-[0.12em] text-white/40 font-medium mb-0.5">
+            Рекомендации
+          </div>
+          {a.recommendations.map((r, i) => (
+            <div
+              key={i}
+              className={`rounded-lg border px-3 py-2 ${REC_PRIORITY_STYLES[r.priority]}`}
+            >
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="opacity-80">{REC_TAG_ICON[r.tag]}</span>
+                <span className="text-[10px] uppercase tracking-[0.1em] opacity-70">
+                  {REC_TAG_LABEL[r.tag]}
+                </span>
+                <span className="text-[12.5px] font-medium ml-1 text-white">
+                  {r.title}
+                </span>
+              </div>
+              <div className="text-[11.5px] text-white/75 leading-snug">
+                {r.detail}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {a.notes && (
+        <div className="mt-3 text-[11px] text-white/45 italic border-l border-white/15 pl-2.5">
+          {a.notes}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Spinner({ text }: { text: string }) {
   return (
     <div className="flex flex-col items-center gap-3">
@@ -1378,6 +1519,7 @@ function PlacementTab({
 function AiPlansTab({
   bag, onGenerate, onGoToViz,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
+  contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
 }: {
   bag: AiPlansBag;
   onGenerate: () => void;
@@ -1387,6 +1529,11 @@ function AiPlansTab({
   gpzuError: string | null;
   onGpzuImport: (f: File) => void;
   onClearGpzu: () => void;
+  contourLoading: boolean;
+  contourResult: ContourAnalysis | null;
+  contourError: string | null;
+  onContourAnalyze: (f: File) => void;
+  onClearContour: () => void;
 }) {
   const [lightbox, setLightbox] = useState<AiPlanVariant | null>(null);
   // Интерактивная корректировка (Этап 4 ТЗ): юзер пишет инструкцию,
@@ -1433,6 +1580,12 @@ function AiPlansTab({
     const f = e.target.files?.[0];
     if (f) onGpzuImport(f);
     if (gpzuInputRef.current) gpzuInputRef.current.value = "";
+  };
+  const contourInputRef = useRef<HTMLInputElement>(null);
+  const onContourChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) onContourAnalyze(f);
+    if (contourInputRef.current) contourInputRef.current.value = "";
   };
 
   // Что показываем сейчас в lightbox — оригинал или результат правки
@@ -1603,6 +1756,23 @@ function AiPlansTab({
 
         <div className="ml-auto flex items-center gap-2">
           <input
+            ref={contourInputRef}
+            type="file"
+            accept="image/*,application/pdf"
+            className="hidden"
+            onChange={onContourChange}
+          />
+          <button
+            onClick={() => contourInputRef.current?.click()}
+            disabled={contourLoading}
+            className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
+            title="Загрузить фото / PDF / эскиз участка — Vision проанализирует и предложит рекомендации"
+          >
+            {contourLoading ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />}
+            {contourLoading ? "Анализируем…" : "Анализ контура"}
+          </button>
+
+          <input
             ref={gpzuInputRef}
             type="file"
             accept="application/pdf"
@@ -1648,6 +1818,29 @@ function AiPlansTab({
           ) : null}
           <button
             onClick={onClearGpzu}
+            className="text-white/30 hover:text-white/70 transition flex-shrink-0"
+            title="Скрыть"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
+      {/* Contour analysis banner */}
+      {(contourResult || contourError) && (
+        <div className="px-5 py-3 border-b border-white/[0.04] flex items-start gap-3 flex-shrink-0">
+          {contourError ? (
+            <div className="flex items-center gap-2 text-[12px] text-rose-300">
+              <AlertCircle size={13} />
+              Анализ не удался: {contourError}
+            </div>
+          ) : contourResult ? (
+            <div className="flex-1 min-w-0">
+              <ContourSummary analysis={contourResult} />
+            </div>
+          ) : null}
+          <button
+            onClick={onClearContour}
             className="text-white/30 hover:text-white/70 transition flex-shrink-0"
             title="Скрыть"
           >
