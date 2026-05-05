@@ -1,45 +1,28 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
-  CheckCircle2, Package, AlertTriangle, BarChart3, ArrowRight,
-  FileDown, Edit2, Trash2, RotateCcw,
+  CheckCircle2, ArrowRight,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
-import { PlanCanvas } from "@/components/PlanCanvas";
-import { AppMetrics } from "@/components/AppMetrics";
-import { ComparisonTable } from "@/components/ComparisonTable";
-import { exportPlanPdf, exportAiPlansPdf } from "@/lib/pdf-export";
+import { exportAiPlansPdf } from "@/lib/pdf-export";
 import {
-  generateFromRect,
-  generateFromDxf,
   importGpzu,
   visualizeExterior,
   visualizeFloorplanFurniture,
-  visualizeInterior,
   visualizeSitePlacement,
   visualizeFloorVariants,
   visualizeSitePlacementVariants,
   visualizeInteriorGallery,
-  extractAptTypes,
-  packageDownloadUrl,
-  APT_COLORS,
-  APT_LABELS,
   type GpzuExtraction,
-  type GenerateResponse,
-  type PresetKey,
-  type Plan,
-  type PlacedTile,
-  type AptType,
   type VisualizeFromInputsRequest,
   type VisualizeResult,
   type PlacementVariant,
   type InteriorGalleryItem,
 } from "@/lib/engine";
-import { applyOverrides, type PlanOverrides } from "@/lib/plan-edit";
 import { getSession, signOut, type Session } from "@/lib/auth";
 
 // ---------------------------------------------------------------------------
@@ -47,20 +30,8 @@ import { getSession, signOut, type Session } from "@/lib/auth";
 // ---------------------------------------------------------------------------
 
 type GenState = "idle" | "loading" | "ready" | "error";
-type TopTab = "floor" | "site" | "viz" | "ai_plans" | "placement";
+type TopTab = "site" | "viz" | "ai_plans" | "placement";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
-
-// Tab 1 — реальный план
-type FloorBag = {
-  state: GenState;
-  response: GenerateResponse | null;
-  selectedVariant: number;
-  showCompare: boolean;
-  errorMessage: string | null;
-};
-const EMPTY_FLOOR_BAG: FloorBag = {
-  state: "idle", response: null, selectedVariant: 0, showCompare: false, errorMessage: null,
-};
 
 // Tab 2/3 — AI картинки
 type ImageBag = {
@@ -83,15 +54,6 @@ type InteriorGalleryBag = {
 };
 const EMPTY_INT_GALLERY: InteriorGalleryBag = {
   state: "idle", items: [], elapsedMs: null, errorMessage: null,
-};
-
-// Preset labels
-const PRESET_LABELS: Record<PresetKey, string> = {
-  max_useful_area:  "Макс. жилая S",
-  max_apt_count:    "Макс. квартир",
-  max_avg_area:     "Крупные квартиры",
-  balanced_mix:     "Баланс",
-  max_insolation:   "Инсоляция",
 };
 
 // Tab 4 — AI чертежи (5 PNG вариантов)
@@ -166,15 +128,7 @@ export default function AppPage() {
   const [form, setForm] = useState<PromptFormState>(DEFAULT_PROMPT_FORM);
   const [tab, setTab] = useState<TopTab>("ai_plans");
 
-  // Tab 1
-  const [floorBag, setFloorBag] = useState<FloorBag>(EMPTY_FLOOR_BAG);
-  // Локальные правки активного варианта (Phase 4.1) — смена типа квартиры
-  // и удаление tile. Сбрасываются при смене варианта или регенерации.
-  const [planOverrides, setPlanOverrides] = useState<PlanOverrides>({});
-  // Опциональный DXF-контур этажа. Если задан, generateFloor идёт через
-  // /generate/dxf и игнорирует rect-параметры (ширина/глубина/отступы).
-  const [floorDxfFile, setFloorDxfFile] = useState<File | null>(null);
-  // ГПЗУ-импорт: статус + последний результат для toast/баннера.
+  // ГПЗУ-импорт PDF → автозаполнение формы (Vision)
   const [gpzuLoading, setGpzuLoading] = useState(false);
   const [gpzuLastResult, setGpzuLastResult] = useState<GpzuExtraction | null>(null);
   const [gpzuError, setGpzuError] = useState<string | null>(null);
@@ -211,7 +165,6 @@ export default function AppPage() {
 
   // сбрасываем результаты при изменении формы
   useEffect(() => {
-    setFloorBag(b => b.state !== "idle" ? EMPTY_FLOOR_BAG : b);
     setSiteBag(b => b.state === "ready" ? { ...b, state: "idle" } : b);
     setVizExtBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
     setVizFloorBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
@@ -220,22 +173,6 @@ export default function AppPage() {
     setAiPlansBag(b => b.state === "ready" ? EMPTY_AI_PLANS : b);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
-
-  // ---- edit-mode overrides --------------------------------------------------
-  // Сбрасываем правки при смене варианта или regen.
-  useEffect(() => {
-    setPlanOverrides({});
-  }, [floorBag.response?.request_id, floorBag.selectedVariant]);
-
-  // floorBag с применёнными overrides на активном варианте — этот bag и
-  // отдаётся в FloorTab/AppMetrics, чтобы все слои рисовали правки.
-  const effectiveFloorBag = useMemo<FloorBag>(() => {
-    if (!floorBag.response) return floorBag;
-    const variants = floorBag.response.variants.map((v, i) =>
-      i === floorBag.selectedVariant ? applyOverrides(v, planOverrides) : v,
-    );
-    return { ...floorBag, response: { ...floorBag.response, variants } };
-  }, [floorBag, planOverrides]);
 
   // ---- ГПЗУ-импорт ---------------------------------------------------------
   const handleGpzuImport = async (file: File) => {
@@ -265,32 +202,6 @@ export default function AppPage() {
   };
 
   // ---- generators
-  const generateFloor = async () => {
-    setFloorBag({ ...EMPTY_FLOOR_BAG, state: "loading" });
-    try {
-      const res = floorDxfFile
-        ? await generateFromDxf(floorDxfFile, { floors: form.floors })
-        : await generateFromRect({
-            site_width_m: form.site_width_m,
-            site_depth_m: form.site_depth_m,
-            setback_front_m: form.setback_front_m,
-            setback_side_m: form.setback_side_m,
-            setback_rear_m: form.setback_rear_m,
-            floors: form.floors,
-            purpose: form.purpose,
-            target_mix: {
-              studio: form.studio_pct / 100,
-              k1: form.k1_pct / 100,
-              k2: form.k2_pct / 100,
-              k3: form.k3_pct / 100,
-            },
-          });
-      setFloorBag({ state: "ready", response: res, selectedVariant: 0, showCompare: false, errorMessage: null });
-    } catch (e) {
-      setFloorBag({ state: "error", response: null, selectedVariant: 0, showCompare: false, errorMessage: (e as Error).message });
-    }
-  };
-
   const wrapImageGen = async (
     setter: React.Dispatch<React.SetStateAction<ImageBag>>,
     fn: () => Promise<VisualizeResult>,
@@ -322,34 +233,30 @@ export default function AppPage() {
     return wrapImageGen(setSiteBag, () => visualizeSitePlacement(siteFile, buildVisReq(form), siteBldFile));
   };
 
-  // Генератор интерьер-галереи — по уникальным типам из плана (или fallback)
+  // Генератор интерьер-галереи — по типам из процентов формы
   const generateInteriorGallery = async () => {
     setVizIntGallery({ ...EMPTY_INT_GALLERY, state: "loading" });
     try {
-      const plan = floorBag.response?.variants[floorBag.selectedVariant] ?? null;
-      const aptTypes = plan
-        ? extractAptTypes(plan)
-        : // fallback: синтетические типы из процентов формы
-          (["studio", "k1", "k2", "k3"] as const)
-            .filter((t) => {
-              if (t === "studio") return form.studio_pct > 0;
-              if (t === "k1")    return form.k1_pct > 0;
-              if (t === "k2")    return form.k2_pct > 0;
-              if (t === "k3")    return form.k3_pct > 0;
-              return false;
-            })
-            .map((t) => ({
-              apt_type: t,
-              area: t === "studio" ? 30 : t === "k1" ? 45 : t === "k2" ? 65 : 88,
-              width: t === "studio" ? 5.5 : t === "k1" ? 6.5 : t === "k2" ? 7.8 : 9.2,
-              depth: t === "studio" ? 5.5 : t === "k1" ? 7.0 : t === "k2" ? 8.2 : 9.6,
-              zone_kinds:
-                t === "studio" ? ["living", "kitchen", "bathroom", "hall"]
-                : t === "k1"   ? ["living", "bedroom", "kitchen", "bathroom", "hall"]
-                : t === "k2"   ? ["living", "bedroom", "bedroom", "kitchen", "bathroom", "hall"]
-                                : ["living", "bedroom", "bedroom", "bedroom", "kitchen", "bathroom", "bathroom", "hall"],
-              count: 1,
-            }));
+      const aptTypes = (["studio", "k1", "k2", "k3"] as const)
+        .filter((t) => {
+          if (t === "studio") return form.studio_pct > 0;
+          if (t === "k1")    return form.k1_pct > 0;
+          if (t === "k2")    return form.k2_pct > 0;
+          if (t === "k3")    return form.k3_pct > 0;
+          return false;
+        })
+        .map((t) => ({
+          apt_type: t,
+          area: t === "studio" ? 30 : t === "k1" ? 45 : t === "k2" ? 65 : 88,
+          width: t === "studio" ? 5.5 : t === "k1" ? 6.5 : t === "k2" ? 7.8 : 9.2,
+          depth: t === "studio" ? 5.5 : t === "k1" ? 7.0 : t === "k2" ? 8.2 : 9.6,
+          zone_kinds:
+            t === "studio" ? ["living", "kitchen", "bathroom", "hall"]
+            : t === "k1"   ? ["living", "bedroom", "kitchen", "bathroom", "hall"]
+            : t === "k2"   ? ["living", "bedroom", "bedroom", "kitchen", "bathroom", "hall"]
+                            : ["living", "bedroom", "bedroom", "bedroom", "kitchen", "bathroom", "bathroom", "hall"],
+          count: 1,
+        }));
 
       if (aptTypes.length === 0) aptTypes.push({
         apt_type: "k2", area: 65, width: 7.8, depth: 8.2,
@@ -433,22 +340,18 @@ export default function AppPage() {
     }
   };
 
-  const onGenerate = useMemo(() => {
-    if (tab === "floor") return generateFloor;
-    if (tab === "site")                  return generateSite;
-    if (tab === "ai_plans")              return generateAiPlans;
-    if (tab === "placement")             return generatePlacement;
-    return generateViz;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, vizMode, siteFile, placementSiteFile, placementBldFile, form]);
+  const onGenerate =
+    tab === "site"      ? generateSite
+    : tab === "ai_plans"  ? generateAiPlans
+    : tab === "placement" ? generatePlacement
+    : generateViz;
 
   // active state для индикатора loading в кнопке
   const vizAnyLoading = vizExtBag.state === "loading" || vizFloorBag.state === "loading" || vizIntBag.state === "loading" || vizIntGallery.state === "loading";
   const isLoading =
-    tab === "floor"      ? floorBag.state === "loading"
-    : tab === "site"     ? siteBag.state === "loading"
-    : tab === "ai_plans"             ? aiPlansBag.state === "loading"
-    : tab === "placement"            ? placementBag.state === "loading"
+    tab === "site"        ? siteBag.state === "loading"
+    : tab === "ai_plans"  ? aiPlansBag.state === "loading"
+    : tab === "placement" ? placementBag.state === "loading"
     : vizAnyLoading;
 
   if (!authChecked) {
@@ -480,26 +383,6 @@ export default function AppPage() {
 
         {/* RIGHT — зависит от таба */}
         <section className="surface-strong rounded-2xl relative overflow-hidden flex flex-col min-h-[660px]">
-          {tab === "floor" && (
-            <FloorTab
-              bag={effectiveFloorBag}
-              floors={form.floors}
-              form={form}
-              onGenerate={generateFloor}
-              onSelectVariant={(i) => setFloorBag(b => ({ ...b, selectedVariant: i }))}
-              onToggleCompare={() => setFloorBag(b => ({ ...b, showCompare: !b.showCompare }))}
-              onGoToViz={() => setTab("viz")}
-              dxfFile={floorDxfFile}
-              onPickDxf={setFloorDxfFile}
-              gpzuLoading={gpzuLoading}
-              gpzuLastResult={gpzuLastResult}
-              gpzuError={gpzuError}
-              onGpzuImport={handleGpzuImport}
-              onClearGpzu={() => { setGpzuLastResult(null); setGpzuError(null); }}
-              overrides={planOverrides}
-              onSetOverrides={setPlanOverrides}
-            />
-          )}
           {tab === "site" && (
             <SiteTab
               bag={siteBag}
@@ -537,6 +420,11 @@ export default function AppPage() {
               bag={aiPlansBag}
               onGenerate={generateAiPlans}
               onGoToViz={goToVizAndGenerateAll}
+              gpzuLoading={gpzuLoading}
+              gpzuLastResult={gpzuLastResult}
+              gpzuError={gpzuError}
+              onGpzuImport={handleGpzuImport}
+              onClearGpzu={() => { setGpzuLastResult(null); setGpzuError(null); }}
             />
           )}
           {tab === "placement" && (
@@ -621,383 +509,6 @@ function TabStrip({ tab, onChange }: { tab: TopTab; onChange: (t: TopTab) => voi
   );
 }
 
-// ---------------------------------------------------------------------------
-// Tab 1 — Реальный поэтажный план
-// ---------------------------------------------------------------------------
-
-function FloorTab({
-  bag, floors, form, onGenerate, onSelectVariant, onToggleCompare, onGoToViz,
-  dxfFile, onPickDxf,
-  gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
-  overrides, onSetOverrides,
-}: {
-  bag: FloorBag;
-  floors: number;
-  form: PromptFormState;
-  onGenerate: () => void;
-  onSelectVariant: (i: number) => void;
-  onToggleCompare: () => void;
-  onGoToViz: () => void;
-  dxfFile: File | null;
-  onPickDxf: (f: File | null) => void;
-  gpzuLoading: boolean;
-  gpzuLastResult: GpzuExtraction | null;
-  gpzuError: string | null;
-  onGpzuImport: (f: File) => void;
-  onClearGpzu: () => void;
-  overrides: PlanOverrides;
-  onSetOverrides: (
-    fn: PlanOverrides | ((prev: PlanOverrides) => PlanOverrides),
-  ) => void;
-}) {
-  const planDivRef = useRef<HTMLDivElement>(null);
-  const dxfInputRef = useRef<HTMLInputElement>(null);
-  const gpzuInputRef = useRef<HTMLInputElement>(null);
-  const plan = bag.response?.variants[bag.selectedVariant] ?? null;
-  const requestId = bag.response?.request_id ?? null;
-  const plans = bag.response?.variants ?? [];
-
-  const onDxfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) onPickDxf(f);
-    // Сбросим value чтобы можно было выбрать тот же файл повторно
-    if (dxfInputRef.current) dxfInputRef.current.value = "";
-  };
-  const onGpzuChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) onGpzuImport(f);
-    if (gpzuInputRef.current) gpzuInputRef.current.value = "";
-  };
-
-  // ── Edit mode ──────────────────────────────────────────────────────────────
-  const [editMode, setEditMode] = useState(false);
-  const [selectedApt, setSelectedApt] = useState<number | null>(null);
-  // selected tile в текущем плане (в bag.response.variants[selected])
-  const selectedTile = plan?.tiles.find((t) => t.apt_number === selectedApt) ?? null;
-  const editedCount = Object.keys(overrides).length;
-
-  // Сброс selection при выходе из edit mode или смене варианта
-  useEffect(() => {
-    if (!editMode) setSelectedApt(null);
-  }, [editMode]);
-  useEffect(() => { setSelectedApt(null); }, [bag.selectedVariant, bag.response?.request_id]);
-
-  const setAptType = (apt: number, type: AptType) => {
-    onSetOverrides((prev) => ({ ...prev, [apt]: { ...prev[apt], apt_type: type } }));
-  };
-  const deleteApt = (apt: number) => {
-    onSetOverrides((prev) => ({ ...prev, [apt]: { ...prev[apt], deleted: true } }));
-    setSelectedApt(null);
-  };
-  const restoreApt = (apt: number) => {
-    onSetOverrides((prev) => {
-      const { [apt]: _, ...rest } = prev;
-      void _;
-      return rest;
-    });
-  };
-  const resetAllOverrides = () => onSetOverrides({});
-
-  return (
-    <>
-      {/* Variant tabs + Compare toggle */}
-      {bag.state === "ready" && bag.response && (
-        <div className="px-5 pt-3.5 pb-3 border-b border-white/[0.04] flex items-center gap-1.5 overflow-x-auto flex-shrink-0">
-          {plans.map((v, i) => {
-            const errCount = v.norms.violations.filter(vl => vl.severity === "error").length;
-            const warnCount = v.norms.violations.filter(vl => vl.severity === "warning").length;
-            const hasIssues = errCount + warnCount > 0;
-            return (
-              <button
-                key={v.preset}
-                onClick={() => { onSelectVariant(i); if (bag.showCompare) onToggleCompare(); }}
-                className={[
-                  "h-8 px-3 rounded-lg text-[12px] flex items-center gap-1.5 transition whitespace-nowrap border flex-shrink-0",
-                  !bag.showCompare && bag.selectedVariant === i
-                    ? "bg-white/[0.08] border-white/15 text-white font-medium"
-                    : "border-transparent text-white/55 hover:text-white/85 hover:bg-white/[0.03]",
-                ].join(" ")}
-              >
-                {PRESET_LABELS[v.preset]}
-                {hasIssues && (
-                  <span className="flex items-center gap-0.5 text-[10px] text-amber-400/80">
-                    <AlertTriangle size={10} />
-                    {errCount + warnCount}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-
-          <div className="h-4 w-px bg-white/[0.07] mx-1 flex-shrink-0" />
-
-          {/* Compare toggle */}
-          <button
-            onClick={onToggleCompare}
-            className={[
-              "h-8 px-3 rounded-lg text-[12px] flex items-center gap-1.5 transition border flex-shrink-0",
-              bag.showCompare
-                ? "bg-white/[0.08] border-white/15 text-white font-medium"
-                : "border-transparent text-white/55 hover:text-white/85 hover:bg-white/[0.03]",
-            ].join(" ")}
-          >
-            <BarChart3 size={12} />
-            Сравнение
-          </button>
-
-          <div className="ml-auto pl-3 text-[11px] text-white/35 tabular flex-shrink-0 flex items-center gap-2.5">
-            {/* Источник контура: rect / DXF */}
-            {dxfFile ? (
-              <span
-                className="flex items-center gap-1 text-violet-300/80 bg-violet-500/[0.08] border border-violet-400/20 rounded-md px-2 py-0.5"
-                title="Контур этажа загружен из DXF"
-              >
-                <FileDown size={10} />
-                <span className="max-w-[160px] truncate">{dxfFile.name}</span>
-                <button
-                  onClick={() => onPickDxf(null)}
-                  className="text-white/40 hover:text-white ml-0.5"
-                  title="Сбросить и вернуться к прямоугольному вводу"
-                >
-                  <X size={10} />
-                </button>
-              </span>
-            ) : (
-              <span className="text-white/30">
-                Контур: {form.site_width_m}×{form.site_depth_m} м
-              </span>
-            )}
-            <span className="flex items-center gap-1">
-              <CheckCircle2 size={11} className="text-emerald-400/60" />
-              {bag.response.elapsed_ms} мс
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Main — сравнительная таблица ИЛИ план + метрики */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        {bag.state === "ready" && bag.showCompare && plans.length > 0 ? (
-          /* ── Сравнительная таблица ── */
-          <div className="flex-1 p-5 overflow-y-auto">
-            <ComparisonTable
-              plans={plans}
-              selectedId={bag.selectedVariant}
-              presetLabels={PRESET_LABELS}
-              onSelect={(idx) => { onSelectVariant(idx); onToggleCompare(); }}
-              floors={floors}
-            />
-          </div>
-        ) : (
-          /* ── Канвас плана ── */
-          <>
-            <div ref={planDivRef} className="flex-1 relative p-3 min-h-[520px]">
-              {bag.state === "idle" && (
-                <div className="absolute inset-0 grid place-items-center">
-                  <div className="text-center max-w-md px-8">
-                    <div className="size-14 rounded-full bg-gradient-to-br from-violet-500/20 to-cyan-400/20 border border-white/10 grid place-items-center mx-auto mb-5">
-                      <Sparkles size={22} className="text-white/85" />
-                    </div>
-                    <div className="text-[20px] font-semibold tracking-display mb-2.5">Поэтажная планировка</div>
-                    <div className="text-[13px] text-white/55 leading-relaxed mb-5">
-                      Заполни параметры слева, нажми «Сгенерировать» — движок выдаст 5 вариантов за 1–3 сек.
-                    </div>
-
-                    {/* DXF-импорт + ГПЗУ-импорт — альтернативные пути ввода */}
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-white/30 mb-2">
-                      или загрузите файлы
-                    </div>
-                    <div className="flex items-center justify-center gap-2 flex-wrap">
-                      {dxfFile ? (
-                        <div className="inline-flex items-center gap-2 bg-violet-500/[0.08] border border-violet-400/25 rounded-lg px-3 h-9 text-[12px] text-violet-200">
-                          <FileDown size={13} />
-                          <span className="max-w-[180px] truncate">{dxfFile.name}</span>
-                          <button onClick={() => onPickDxf(null)} className="text-white/45 hover:text-white" title="Убрать DXF">
-                            <X size={12} />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => dxfInputRef.current?.click()}
-                          className="inline-flex items-center gap-2 h-9 px-3.5 rounded-lg surface text-[12px] hover:bg-white/[0.08] transition"
-                          title="Контур этажа из CAD"
-                        >
-                          <Upload size={13} /> Контур (DXF)
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => gpzuInputRef.current?.click()}
-                        disabled={gpzuLoading}
-                        className="inline-flex items-center gap-2 h-9 px-3.5 rounded-lg surface text-[12px] hover:bg-white/[0.08] transition disabled:opacity-60"
-                        title="Распарсить ГПЗУ через AI и заполнить форму"
-                      >
-                        {gpzuLoading ? (
-                          <>
-                            <span className="inline-block size-3 rounded-full border-2 border-white/20 border-t-white animate-spin" />
-                            Парсим ГПЗУ…
-                          </>
-                        ) : (
-                          <><Upload size={13} /> ГПЗУ (PDF)</>
-                        )}
-                      </button>
-                    </div>
-
-                    <input
-                      ref={dxfInputRef}
-                      type="file"
-                      accept=".dxf"
-                      onChange={onDxfChange}
-                      className="hidden"
-                    />
-                    <input
-                      ref={gpzuInputRef}
-                      type="file"
-                      accept=".pdf,application/pdf"
-                      onChange={onGpzuChange}
-                      className="hidden"
-                    />
-
-                    {/* Результат ГПЗУ-импорта: что заполнилось + notes */}
-                    {gpzuLastResult && (
-                      <div className="mt-5 mx-auto max-w-md text-left bg-emerald-500/[0.06] border border-emerald-400/20 rounded-xl p-3.5">
-                        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-emerald-300/85 font-medium mb-2">
-                          <CheckCircle2 size={11} /> ГПЗУ распознан · {gpzuLastResult.confidence}
-                        </div>
-                        <GpzuSummary ext={gpzuLastResult} />
-                        {gpzuLastResult.notes && (
-                          <div className="text-[11px] text-white/50 leading-relaxed mt-2 border-t border-white/[0.06] pt-2">
-                            {gpzuLastResult.notes}
-                          </div>
-                        )}
-                        <button
-                          onClick={onClearGpzu}
-                          className="mt-2 text-[10.5px] text-white/40 hover:text-white/70 transition"
-                        >
-                          Скрыть
-                        </button>
-                      </div>
-                    )}
-                    {gpzuError && (
-                      <div className="mt-5 mx-auto max-w-md text-left bg-rose-500/[0.06] border border-rose-400/20 rounded-xl p-3.5 text-[12px] text-rose-200">
-                        ГПЗУ не распознался: {gpzuError}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {bag.state === "loading" && (
-                <div className="absolute inset-0 grid place-items-center">
-                  <Spinner text="Генерируем планировки · 1–3 сек" />
-                </div>
-              )}
-              {bag.state === "error" && <ErrorState message={bag.errorMessage} onRetry={onGenerate} />}
-              {bag.state === "ready" && plan && (
-                <PlanCanvas
-                  plan={plan}
-                  showLabels
-                  showZones
-                  showFixtures
-                  showScale
-                  editable={editMode}
-                  selectedApt={selectedApt}
-                  onSelectApt={setSelectedApt}
-                />
-              )}
-
-              {/* Edit panel: floating snadge снизу, появляется в edit mode */}
-              {editMode && bag.state === "ready" && plan && (
-                <EditPanel
-                  selectedTile={selectedTile}
-                  selectedApt={selectedApt}
-                  overrides={overrides}
-                  editedCount={editedCount}
-                  onChangeType={(t) => selectedApt != null && setAptType(selectedApt, t)}
-                  onDelete={() => selectedApt != null && deleteApt(selectedApt)}
-                  onRestore={() => selectedApt != null && restoreApt(selectedApt)}
-                  onResetAll={resetAllOverrides}
-                />
-              )}
-            </div>
-
-            {/* Sidebar метрик */}
-            {bag.state === "ready" && plan && (
-              <aside className="w-52 border-l border-white/[0.05] p-3 overflow-y-auto flex-shrink-0 flex flex-col gap-4">
-                <AppMetrics
-                  plan={plan}
-                  floors={floors}
-                  requestId={requestId}
-                  onExportPdf={() =>
-                    exportPlanPdf({
-                      plan,
-                      floors,
-                      form,
-                      presetLabel: PRESET_LABELS[plan.preset],
-                      planContainerEl: planDivRef.current,
-                    })
-                  }
-                />
-                <AptMixBar plan={plan} />
-              </aside>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Bottom bar */}
-      {bag.state === "ready" && bag.response && (
-        <div className="border-t border-white/[0.05] px-5 py-3 flex items-center justify-between flex-shrink-0">
-          {bag.showCompare ? (
-            <div className="text-[11px] text-white/40">
-              Нажмите на строку — выберете вариант и вернётесь к плану
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-[11px] text-white/40">
-              <span>{plans.length} вариантов</span>
-              <span className="text-white/20">·</span>
-              <span>{plan?.tiles.length ?? 0} квартир на этаже</span>
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            {requestId && (
-              <a
-                href={packageDownloadUrl(requestId)}
-                download
-                className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition"
-              >
-                <Package size={12} /> Пакет ZIP
-              </a>
-            )}
-            <button
-              onClick={() => setEditMode((v) => !v)}
-              className={[
-                "h-9 px-3.5 rounded-full text-[12px] flex items-center gap-1.5 transition border",
-                editMode
-                  ? "bg-amber-500/15 border-amber-400/30 text-amber-200"
-                  : "surface border-white/10 hover:bg-white/[0.08]",
-              ].join(" ")}
-              title="Включить ручную правку: смена типа квартиры и удаление"
-            >
-              <Edit2 size={12} /> {editMode ? `Готово${editedCount ? ` · ${editedCount}` : ""}` : "Редактировать"}
-            </button>
-            <button
-              onClick={onGenerate}
-              className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition"
-            >
-              <RefreshCw size={12} /> Перегенерировать
-            </button>
-            <button
-              onClick={onGoToViz}
-              className="h-9 px-4 rounded-full btn-apple text-[12px] flex items-center gap-1.5"
-            >
-              Визуализировать <ArrowRight size={12} />
-            </button>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Tab 2 — Посадка на участок (image-to-image)
@@ -1578,105 +1089,6 @@ function ErrorState({ message, onRetry }: { message: string | null; onRetry: () 
   );
 }
 
-// ---------------------------------------------------------------------------
-// EditPanel — плашка ручной правки плана (Phase 4.1)
-// ---------------------------------------------------------------------------
-
-const APT_TYPES_FOR_EDIT: AptType[] = [
-  "studio", "k1", "euro1", "k2", "euro2", "k3", "euro3", "k4",
-];
-
-function EditPanel({
-  selectedTile, selectedApt, overrides, editedCount,
-  onChangeType, onDelete, onRestore, onResetAll,
-}: {
-  selectedTile: PlacedTile | null;
-  selectedApt: number | null;
-  overrides: PlanOverrides;
-  editedCount: number;
-  onChangeType: (t: AptType) => void;
-  onDelete: () => void;
-  onRestore: () => void;
-  onResetAll: () => void;
-}) {
-  const isDeleted = selectedApt != null && overrides[selectedApt]?.deleted;
-
-  return (
-    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[min(96%,720px)] bg-black/65 backdrop-blur-md border border-amber-400/25 rounded-2xl px-4 py-3 shadow-2xl pointer-events-auto">
-      {/* Заголовок: что выбрано + edited counter */}
-      <div className="flex items-center gap-3 mb-2.5">
-        <div className="size-6 rounded-md bg-amber-500/20 border border-amber-400/30 grid place-items-center flex-shrink-0">
-          <Edit2 size={11} className="text-amber-300" />
-        </div>
-        <div className="text-[12px] text-white/85 flex-1 min-w-0">
-          {selectedTile ? (
-            <>
-              <span className="font-medium">КВ №{selectedTile.apt_number}</span>
-              <span className="text-white/45"> · {selectedTile.label} · {selectedTile.area.toFixed(1)} м²</span>
-            </>
-          ) : (
-            <span className="text-white/45">Кликни по квартире, чтобы изменить</span>
-          )}
-        </div>
-        {editedCount > 0 && (
-          <button
-            onClick={onResetAll}
-            className="text-[11px] text-white/45 hover:text-white/85 flex items-center gap-1 flex-shrink-0"
-            title="Сбросить все правки"
-          >
-            <RotateCcw size={11} /> Сбросить ({editedCount})
-          </button>
-        )}
-      </div>
-
-      {/* Действия для выбранного tile */}
-      {selectedTile && (
-        <div className="flex items-center gap-2 flex-wrap">
-          {isDeleted ? (
-            <>
-              <span className="text-[11px] text-rose-300/80">Квартира удалена</span>
-              <button
-                onClick={onRestore}
-                className="h-7 px-3 rounded-md text-[11px] bg-white/[0.08] hover:bg-white/[0.14] transition flex items-center gap-1"
-              >
-                <RotateCcw size={11} /> Восстановить
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="text-[10.5px] uppercase tracking-[0.12em] text-white/35 mr-0.5">Тип:</span>
-              {APT_TYPES_FOR_EDIT.map((t) => {
-                const active = selectedTile.apt_type === t;
-                return (
-                  <button
-                    key={t}
-                    onClick={() => onChangeType(t)}
-                    className={[
-                      "h-7 px-2.5 rounded-md text-[11px] transition border",
-                      active
-                        ? "bg-white/[0.16] border-white/25 text-white font-medium"
-                        : "border-white/10 text-white/65 hover:text-white hover:bg-white/[0.08]",
-                    ].join(" ")}
-                    style={active ? { borderColor: APT_COLORS[t], color: APT_COLORS[t] } : undefined}
-                  >
-                    {APT_LABELS[t]}
-                  </button>
-                );
-              })}
-              <div className="w-px h-4 bg-white/15 mx-1" />
-              <button
-                onClick={onDelete}
-                className="h-7 px-2.5 rounded-md text-[11px] bg-rose-500/15 border border-rose-400/25 text-rose-200 hover:bg-rose-500/25 transition flex items-center gap-1"
-              >
-                <Trash2 size={11} /> Удалить
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function GpzuSummary({ ext }: { ext: GpzuExtraction }) {
   const rows: Array<{ label: string; value: string | null }> = [
@@ -1962,8 +1374,26 @@ function PlacementTab({
 // Tab 4 — AI Чертежи (5 PNG вариантов планировки через gpt-image)
 // ---------------------------------------------------------------------------
 
-function AiPlansTab({ bag, onGenerate, onGoToViz }: { bag: AiPlansBag; onGenerate: () => void; onGoToViz: () => void }) {
+function AiPlansTab({
+  bag, onGenerate, onGoToViz,
+  gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
+}: {
+  bag: AiPlansBag;
+  onGenerate: () => void;
+  onGoToViz: () => void;
+  gpzuLoading: boolean;
+  gpzuLastResult: GpzuExtraction | null;
+  gpzuError: string | null;
+  onGpzuImport: (f: File) => void;
+  onClearGpzu: () => void;
+}) {
   const [lightbox, setLightbox] = useState<AiPlanVariant | null>(null);
+  const gpzuInputRef = useRef<HTMLInputElement>(null);
+  const onGpzuChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) onGpzuImport(f);
+    if (gpzuInputRef.current) gpzuInputRef.current.value = "";
+  };
 
   return (
     <>
@@ -2024,13 +1454,61 @@ function AiPlansTab({ bag, onGenerate, onGoToViz }: { bag: AiPlansBag; onGenerat
         <span className="text-[11.5px] text-white/40">
           Параметры → Gemma 4 → gpt-image × 5 вариантов параллельно
         </span>
-        {bag.state === "ready" && bag.elapsedMs && (
-          <div className="ml-auto flex items-center gap-1 text-[11px] text-white/35">
-            <CheckCircle2 size={11} className="text-emerald-400/60" />
-            {(bag.elapsedMs / 1000).toFixed(1)} сек
-          </div>
-        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          <input
+            ref={gpzuInputRef}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={onGpzuChange}
+          />
+          <button
+            onClick={() => gpzuInputRef.current?.click()}
+            disabled={gpzuLoading}
+            className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
+            title="Загрузить ГПЗУ-PDF — поля формы заполнятся автоматически"
+          >
+            <Upload size={12} />
+            {gpzuLoading ? "Распознаём…" : "ГПЗУ → форма"}
+          </button>
+          {bag.state === "ready" && bag.elapsedMs && (
+            <div className="flex items-center gap-1 text-[11px] text-white/35">
+              <CheckCircle2 size={11} className="text-emerald-400/60" />
+              {(bag.elapsedMs / 1000).toFixed(1)} сек
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* GPZU result/error banner */}
+      {(gpzuLastResult || gpzuError) && (
+        <div className="px-5 py-2.5 border-b border-white/[0.04] flex items-start gap-3 flex-shrink-0">
+          {gpzuError ? (
+            <div className="flex items-center gap-2 text-[12px] text-rose-300">
+              <AlertCircle size={13} />
+              ГПЗУ не распознан: {gpzuError}
+            </div>
+          ) : gpzuLastResult ? (
+            <>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <CheckCircle2 size={12} className="text-emerald-300" />
+                  <span className="text-[11.5px] text-white/70">ГПЗУ распознан · поля формы обновлены</span>
+                </div>
+                <GpzuSummary ext={gpzuLastResult} />
+              </div>
+            </>
+          ) : null}
+          <button
+            onClick={onClearGpzu}
+            className="text-white/30 hover:text-white/70 transition flex-shrink-0"
+            title="Скрыть"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       {/* Content area */}
       <div className="flex-1 min-h-0 overflow-y-auto relative">
@@ -2197,52 +1675,3 @@ function AiPlansTab({ bag, onGenerate, onGoToViz }: { bag: AiPlansBag; onGenerat
   );
 }
 
-// ---------------------------------------------------------------------------
-// AptMixBar — разбивка квартир по типу в боковой панели
-// ---------------------------------------------------------------------------
-
-function AptMixBar({ plan }: { plan: Plan }) {
-  const byType = plan.metrics.apt_by_type;
-  const entries = (Object.entries(byType) as [AptType, number][]).filter(([, n]) => n > 0);
-  const total = entries.reduce((s, [, n]) => s + n, 0) || 1;
-
-  if (entries.length === 0) return null;
-
-  return (
-    <div className="border-t border-white/[0.05] pt-3">
-      <div className="text-[10px] uppercase tracking-[0.14em] text-white/40 font-medium mb-2.5">
-        Структура квартир
-      </div>
-      {/* Цветная полоска */}
-      <div className="h-1.5 rounded-full overflow-hidden flex mb-3 bg-white/[0.05]">
-        {entries.map(([type, count]) => (
-          <div
-            key={type}
-            style={{
-              width: `${(count / total) * 100}%`,
-              background: APT_COLORS[type],
-            }}
-          />
-        ))}
-      </div>
-      {/* Строки */}
-      <div className="flex flex-col gap-1.5">
-        {entries.map(([type, count]) => (
-          <div key={type} className="flex items-center justify-between text-[11px]">
-            <div className="flex items-center gap-1.5">
-              <span
-                className="size-2 rounded-full flex-shrink-0"
-                style={{ background: APT_COLORS[type] }}
-              />
-              <span className="text-white/60">{APT_LABELS[type]}</span>
-            </div>
-            <div className="flex items-center gap-1.5 tabular">
-              <span className="text-white/85">{count}</span>
-              <span className="text-white/35">({((count / total) * 100).toFixed(0)}%)</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}

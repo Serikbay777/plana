@@ -1,18 +1,17 @@
 [project]
 name = "plana-engine"
-version = "0.1.0"
-description = "Plana — алгоритмическое ядро для генерации планировок этажей"
+version = "0.2.0"
+description = "Plana — prompt-driven визуализатор планировок (params → prompt → gpt-image)"
 requires-python = ">=3.11"
 dependencies = [
-    "shapely>=2.0",
     "pydantic>=2.6",
-    "pyyaml>=6.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "python-multipart>=0.0.9",
-    "ezdxf>=1.2",
     "pymupdf>=1.24",
     "openai>=1.40",
+    "pillow>=10.0",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -21,9 +20,6 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
 ]
-
-[project.scripts]
-plana-engine = "plana_engine.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

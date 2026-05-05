@@ -6,10 +6,6 @@ services:
     restart: unless-stopped
     ports:
       - "8001:8001"
-    volumes:
-      # норматив-конфиг и каталог тайлов мапим как том,
-      # чтобы заказчик мог править .yaml без пересборки контейнера
-      - ./engine/data:/app/data:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
       interval: 15s

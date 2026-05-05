@@ -1,21 +1,21 @@
 # Plana Engine
 
-Алгоритмическое ядро генерации поэтажных планировок. Реализация ТЗ §4–§7.
+Prompt-driven визуализатор планировок. Параметры формы → промпт → `gpt-image-1`.
+Никакой алгоритмической геометрии — все картинки выдаёт OpenAI.
 
 ## Архитектура
 
 ```
 plana_engine/
-├── types.py          — доменные типы (Polygon, TileSpec, Plan, NormsReport, ...)
-├── norms.py          — загрузчик norms.yaml (СП РК)
-├── catalog.py        — загрузчик catalog.yaml (12 параметрических тайлов)
-├── parser/           — DXF, PDF, rect → Polygon
-├── geometry/         — Shapely-обёртки, классификация рёбер, нарезка слотов
-├── algo/             — 6-шаговый пайплайн ядро→коридор→слоты→тайлы
-├── presets.py        — 5 целевых функций (ТЗ §2.3)
-├── validator.py      — нормоконтроль
-├── api/              — FastAPI-сервис
-└── cli.py            — CLI для отладки
+├── types.py            — BuildingPurpose enum (residential / commercial / mixed_use / hotel)
+├── visualizer/
+│   ├── marketing_prompt.py — base prompt builder из MarketingInputs
+│   ├── extra_prompts.py    — exterior / floorplan-furniture / interior / site-placement
+│   ├── enhancer.py         — опциональный enhancer через Gemma 4 (LLM_API_KEY)
+│   └── openai_client.py    — generate_image / generate_image_edit + кэш
+├── importers/
+│   └── gpzu.py         — ГПЗУ-PDF → JSON-параметры через OpenAI Vision
+└── api/main.py         — FastAPI: /visualize/*, /import/gpzu, /health
 ```
 
 ## Установка
@@ -27,95 +27,27 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-## CLI
+## ENV
 
-```bash
-plana-engine generate --width 60 --depth 40 --floors 9 --mix 0.25,0.35,0.30,0.10
-plana-engine catalog
-plana-engine norms
-plana-engine generate --dxf path/to/floor.dxf --floors 12
+```
+OPENAI_API_KEY=sk-...      # для gpt-image-1 + Vision (ГПЗУ)
+LLM_API_KEY=...            # опционально, для Gemma 4 enhancer
 ```
 
 ## API
 
+- `GET  /health` — статус
+- `POST /visualize/exterior` — экстерьер ЖК
+- `POST /visualize/floorplan-furniture` — план с мебелью
+- `POST /visualize/interior` — интерьер одной комнаты
+- `POST /visualize/site-placement` — посадка на участок (image-edit)
+- `POST /visualize/site-placement-variants` — 3 стратегии посадки
+- `POST /visualize/floor-variants` — 5 AI-чертежей параллельно
+- `POST /visualize/interior-gallery` — интерьер по типам квартир
+- `POST /import/gpzu` — ГПЗУ-PDF → JSON
+
+## Запуск
+
 ```bash
 uvicorn plana_engine.api.main:app --reload --port 8001
 ```
-
-Эндпоинты:
-
-| Метод | Путь                  | Описание                                    |
-|-------|-----------------------|---------------------------------------------|
-| GET   | `/health`             | Статус, версия движка/норм                  |
-| GET   | `/presets`            | Список 5 целевых функций                    |
-| GET   | `/catalog`            | Каталог тайлов                              |
-| POST  | `/generate`           | Генерация по полному `GenerateRequest`      |
-| POST  | `/generate/rect`      | Удобный вход для UI (W×D + отступы)         |
-| POST  | `/generate/dxf`       | Загрузка DXF и генерация                    |
-| POST  | `/admin/reload-norms` | Перечитать `norms.yaml` без рестарта        |
-
-## Конфигурация
-
-### `data/norms.yaml`
-
-Все нормативные значения. Изменения **не требуют изменения кода** (ТЗ §7.2).
-Перед приёмкой каждого тестового контура — ревью архитектора-консультанта
-(см. ТЗ §7.4 и §12 — высокий риск).
-
-### `data/catalog.yaml`
-
-12 параметрических тайлов (S-25, S-32, 1K-38…4K-110). Допуск ±10% по
-ширине и глубине. Внутреннее зонирование (кухня, санузел, спальни) задаётся
-относительно левого нижнего угла тайла.
-
-## 5 пресетов целевых функций
-
-| Ключ                  | Цель                                  |
-|-----------------------|---------------------------------------|
-| `max_useful_area`     | Максимум жилой площади / общей этажа  |
-| `max_apt_count`       | Максимум числа квартир                |
-| `max_avg_area`        | Максимум средней площади (премиум)    |
-| `balanced_mix`        | Близко к `target_mix` запроса         |
-| `max_insolation`      | Большие квартиры на южном фасаде      |
-
-## Алгоритм генерации (ТЗ §5.1)
-
-1. **Парсинг контура** (`parser/`) — DXF / PDF / rect → `Polygon`
-2. **Размещение ядра** (`algo/core.py`) — лифт + лестница + шахта по нормам
-3. **Прокладка коридоров** (`algo/corridor.py`) — линейный или центральный
-4. **Нарезка фасадов на слоты** (`geometry/slots.py`)
-5. **Укладка тайлов** (`algo/tile.py` + `presets.py`) — выбор по целевой функции
-6. **Нормоконтроль** (`validator.py`) — отчёт `NormsReport`
-
-## Что НЕ входит в MVP (ТЗ §9)
-
-- BIM-экспорт (IFC, RVT) — отложено
-- Интерактивное редактирование планировок
-- OCR-парсинг сканов PDF
-- Автоматический парсинг АПЗ из PDF
-- Многопользовательский режим, коллаборация
-- Полноценная 3D-генерация массинга
-- Посадка здания на участок (только планировки этажа)
-- Mixed-use, hotel — только жилые
-
-## Ограничения текущей реализации
-
-Реализован **happy path** — прямоугольный контур, двусторонний линейный
-коридор, без атриумов и сложной геометрии. Это достаточно для приёмки
-этапа 1 ТЗ. Этапы 2–5 (полный каталог регрессионных тестов, DEAP-оптимизатор,
-DXF-экспорт, 2.5D-просмотр через Three.js, краевые случаи) — следующий цикл.
-
-## Тесты приёмки (ТЗ §11)
-
-```bash
-plana-engine generate --width 60 --depth 40 --floors 9       # базовый контур
-plana-engine generate --width 80 --depth 24 --floors 12      # вытянутый
-plana-engine generate --width 36 --depth 36 --floors 24      # башня
-plana-engine generate --dxf data/test_contours/contour_01.dxf
-```
-
-Каждый из 5 пресетов должен пройти как минимум базовые правила в `norms.yaml`.
-
-## Лицензия
-
-Проприетарное ПО. Plana, 2026.

@@ -3,15 +3,6 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight, Layers, Zap, BarChart3, FileDown, Sparkles, ChevronRight } from "lucide-react";
-import { FloorPlan } from "@/components/FloorPlan";
-import { generatePlans } from "@/lib/generator";
-
-const HERO_PLAN = generatePlans({
-  siteW: 60, siteH: 40,
-  setbackFront: 5, setbackSide: 4, setbackRear: 5,
-  floors: 9,
-  mix: { studio: 25, k1: 35, k2: 30, k3: 10 },
-})[0];
 
 const FEATURES = [
   {
@@ -232,9 +223,19 @@ function ProductShot() {
             <span className="size-3 rounded-full bg-neutral-300" />
             <span className="ml-3 text-[12px] text-neutral-500">plana.app/studio</span>
           </div>
-          <div data-theme="dark" className="bg-[#0a0a0c] aspect-[16/9] grid place-items-center p-8">
-            <div className="w-full h-full">
-              <FloorPlan plan={HERO_PLAN} />
+          <div data-theme="dark" className="bg-[#0a0a0c] aspect-[16/9] grid place-items-center p-8 relative overflow-hidden">
+            {/* Декоративный плейсхолдер вместо живого SVG-плана */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(168,85,247,0.18),transparent_55%),radial-gradient(circle_at_75%_70%,rgba(59,130,246,0.18),transparent_55%)]" />
+            <div className="relative z-10 text-center">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.06] border border-white/10 text-[11px] text-white/70 mb-4">
+                <Sparkles size={12} className="text-violet-300" /> 5 AI-чертежей · 30–90 сек
+              </div>
+              <div className="text-[28px] font-semibold tracking-display text-white">
+                Plana Studio
+              </div>
+              <div className="text-[13px] text-white/50 mt-1">
+                Параметры → промпт → gpt-image
+              </div>
             </div>
           </div>
         </motion.div>
