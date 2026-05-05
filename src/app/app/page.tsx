@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
-  CheckCircle2, ArrowRight,
+  CheckCircle2, ArrowRight, Wand2, Loader2,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { exportAiPlansPdf } from "@/lib/pdf-export";
@@ -17,6 +17,7 @@ import {
   visualizeFloorVariants,
   visualizeSitePlacementVariants,
   visualizeInteriorGallery,
+  editAiPlan,
   type GpzuExtraction,
   type VisualizeFromInputsRequest,
   type VisualizeResult,
@@ -1388,6 +1389,45 @@ function AiPlansTab({
   onClearGpzu: () => void;
 }) {
   const [lightbox, setLightbox] = useState<AiPlanVariant | null>(null);
+  // Интерактивная корректировка (Этап 4 ТЗ): юзер пишет инструкцию,
+  // gpt-image-edit перерисовывает чертёж, результат показываем поверх оригинала.
+  const [editInstruction, setEditInstruction] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editedUrl, setEditedUrl] = useState<string | null>(null);
+  const [editedModel, setEditedModel] = useState<string | null>(null);
+  const [showEdited, setShowEdited] = useState(false);
+
+  // Сброс edit-состояния при смене картинки в lightbox
+  useEffect(() => {
+    setEditInstruction("");
+    setEditError(null);
+    setEditing(false);
+    if (editedUrl) URL.revokeObjectURL(editedUrl);
+    setEditedUrl(null);
+    setEditedModel(null);
+    setShowEdited(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lightbox?.key]);
+
+  const handleApplyEdit = async () => {
+    if (!lightbox || !editInstruction.trim() || editing) return;
+    setEditing(true);
+    setEditError(null);
+    try {
+      const res = await editAiPlan(lightbox.imageUrl, editInstruction.trim(), "medium");
+      const url = URL.createObjectURL(res.blob);
+      if (editedUrl) URL.revokeObjectURL(editedUrl);
+      setEditedUrl(url);
+      setEditedModel(res.modelUsed);
+      setShowEdited(true);
+    } catch (e) {
+      setEditError((e as Error).message);
+    } finally {
+      setEditing(false);
+    }
+  };
+
   const gpzuInputRef = useRef<HTMLInputElement>(null);
   const onGpzuChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -1395,40 +1435,97 @@ function AiPlansTab({
     if (gpzuInputRef.current) gpzuInputRef.current.value = "";
   };
 
+  // Что показываем сейчас в lightbox — оригинал или результат правки
+  const currentUrl = showEdited && editedUrl ? editedUrl : lightbox?.imageUrl;
+
+  // Подсказки-примеры инструкций
+  const EDIT_EXAMPLES = [
+    "Сделай гостиную больше",
+    "Перенеси кухню на южный фасад",
+    "Добавь балконы у каждой квартиры",
+    "Объедини две маленькие квартиры в одну большую",
+  ];
+
   return (
     <>
       {/* Lightbox */}
       {lightbox && (
         <div
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-6"
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-6 overflow-y-auto"
           onClick={() => setLightbox(null)}
         >
-          <div className="relative max-w-5xl w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="relative max-w-5xl w-full my-auto" onClick={(e) => e.stopPropagation()}>
             <button
               className="absolute -top-10 right-0 text-white/60 hover:text-white text-[13px] flex items-center gap-1.5"
               onClick={() => setLightbox(null)}
             >
               <X size={16} /> Закрыть
             </button>
-            <img src={lightbox.imageUrl} alt={lightbox.label} className="w-full rounded-2xl shadow-2xl" />
+
+            {/* Toggle оригинал / правка (показывается только когда есть результат) */}
+            {editedUrl && (
+              <div className="absolute -top-10 left-0 inline-flex bg-white/[0.06] border border-white/[0.1] rounded-lg p-0.5">
+                <button
+                  onClick={() => setShowEdited(false)}
+                  className={[
+                    "h-7 px-3 rounded-md text-[11.5px] transition",
+                    !showEdited ? "bg-white/15 text-white font-medium" : "text-white/55 hover:text-white",
+                  ].join(" ")}
+                >
+                  Оригинал
+                </button>
+                <button
+                  onClick={() => setShowEdited(true)}
+                  className={[
+                    "h-7 px-3 rounded-md text-[11.5px] transition flex items-center gap-1.5",
+                    showEdited ? "bg-violet-500/30 text-violet-100 font-medium" : "text-white/55 hover:text-white",
+                  ].join(" ")}
+                >
+                  <Wand2 size={11} /> После правки
+                </button>
+              </div>
+            )}
+
+            {/* Картинка */}
+            <div className="relative">
+              <img src={currentUrl} alt={lightbox.label} className="w-full rounded-2xl shadow-2xl" />
+              {editing && (
+                <div className="absolute inset-0 rounded-2xl bg-black/55 backdrop-blur-sm flex items-center justify-center">
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 size={28} className="text-violet-300 animate-spin" />
+                    <div className="text-[12.5px] text-white/85">Применяем правку…</div>
+                    <div className="text-[10.5px] text-white/45">gpt-image-edit · ~30–60 сек</div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Метаданные + кнопки скачивания */}
             <div className="flex items-center justify-between mt-4">
               <div>
                 <div className="text-[15px] font-semibold text-white">{lightbox.label}</div>
                 <div className="flex items-center gap-2 mt-1">
-                  {lightbox.enhancerUsed && lightbox.enhancerUsed !== "fallback" && (
+                  {showEdited && editedModel && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-500/30 border border-violet-400/40 text-violet-100 flex items-center gap-1">
+                      <Wand2 size={10} /> Изменено · {editedModel}
+                    </span>
+                  )}
+                  {!showEdited && lightbox.enhancerUsed && lightbox.enhancerUsed !== "fallback" && (
                     <span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-500/20 border border-violet-400/30 text-violet-200">
                       ✨ {lightbox.enhancerUsed}
                     </span>
                   )}
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/60">
-                    {lightbox.modelUsed}
-                  </span>
+                  {!showEdited && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/60">
+                      {lightbox.modelUsed}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <a
-                  href={lightbox.imageUrl}
-                  download={`plana-ai-${lightbox.key}-${Date.now()}.png`}
+                  href={currentUrl}
+                  download={`plana-ai-${lightbox.key}${showEdited ? "-edit" : ""}-${Date.now()}.png`}
                   className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/70 hover:text-white"
                 >
                   <Download size={12} /> PNG
@@ -1440,6 +1537,55 @@ function AiPlansTab({
                   <Download size={12} /> PDF
                 </button>
               </div>
+            </div>
+
+            {/* Edit-панель */}
+            <div className="mt-4 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">
+              <div className="flex items-center gap-2 mb-2.5">
+                <Wand2 size={13} className="text-violet-300" />
+                <span className="text-[12.5px] font-medium text-white/85">Корректировка чертежа</span>
+                <span className="text-[10.5px] text-white/35">
+                  Опиши что изменить — gpt-image отредактирует план
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={editInstruction}
+                  onChange={(e) => setEditInstruction(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleApplyEdit(); }}
+                  placeholder="«сделай гостиную больше», «перенеси кухню на южный фасад», …"
+                  disabled={editing}
+                  className="flex-1 h-10 px-3.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[13px] text-white placeholder:text-white/30 focus:outline-none focus:border-violet-400/40 focus:bg-white/[0.06] transition disabled:opacity-50"
+                />
+                <button
+                  onClick={handleApplyEdit}
+                  disabled={editing || !editInstruction.trim()}
+                  className="btn-apple h-10 px-4 text-[12.5px] flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {editing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
+                  {editing ? "Применяем…" : "Применить"}
+                </button>
+              </div>
+              {/* Подсказки */}
+              <div className="flex flex-wrap gap-1.5 mt-2.5">
+                {EDIT_EXAMPLES.map((ex) => (
+                  <button
+                    key={ex}
+                    onClick={() => !editing && setEditInstruction(ex)}
+                    disabled={editing}
+                    className="h-6 px-2 rounded-full bg-white/[0.04] border border-white/[0.06] text-[11px] text-white/55 hover:text-white hover:bg-white/[0.07] transition disabled:opacity-40"
+                  >
+                    {ex}
+                  </button>
+                ))}
+              </div>
+              {editError && (
+                <div className="mt-2.5 flex items-center gap-1.5 text-[11.5px] text-rose-300">
+                  <AlertCircle size={12} />
+                  {editError}
+                </div>
+              )}
             </div>
           </div>
         </div>

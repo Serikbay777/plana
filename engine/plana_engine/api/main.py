@@ -818,6 +818,89 @@ def visualize_interior_gallery(req: InteriorGalleryRequest) -> InteriorGalleryRe
 
 
 # ---------------------------------------------------------------------------
+# Интерактивная корректировка чертежа: фото + текстовая инструкция
+# (Этап 4 ТЗ — «Интерактивная корректировка проекта»)
+# ---------------------------------------------------------------------------
+
+
+def _wrap_edit_instruction(instruction: str) -> str:
+    """Обернуть пользовательскую инструкцию в строгий архитектурный контекст,
+    чтобы сохранить стиль исходного чертежа (CAD, без 3D и фотореализма).
+
+    Юзер вводит «сделай гостиную больше» — мы добавляем границы:
+    стиль, линии, кириллица, no photoreal, etc.
+    """
+    return f"""STRICT AutoCAD architectural floor plan, technical engineering drawing on white paper.
+Pure CAD-grade vector line work: thin black ink lines on white, scale 1:100, top-down orthographic view ONLY.
+
+PRESERVE everything about the input drawing — architectural style, line weights, hatching patterns,
+color palette (very light pastel unit fills, dark grey hatching for bearing walls), typography,
+dimension chains, axis grid, room labels, title block, north arrow.
+
+ONLY APPLY THE FOLLOWING CHANGE (translate the user's intent into the drawing):
+
+USER REQUEST: «{instruction.strip()}»
+
+CONSTRAINTS:
+• Output is the SAME architectural drawing with the requested change applied
+• Walls, dimensions, room labels, and CAD aesthetics remain consistent with the original
+• All Russian/Cyrillic labels stay Cyrillic — do not translate to English
+• NO photorealistic textures, NO 3D, NO isometric, NO marketing aesthetics
+• NO gradients, NO shadows, NO perspective, NO fish-eye
+• Keep the same sheet format and orientation as the input
+
+Produce a clean engineering drawing as if a chief architect updated one detail by hand.
+"""
+
+
+@app.post("/visualize/edit-instruction")
+async def visualize_edit_instruction(
+    image: UploadFile = File(...),
+    instruction: str = Form(...),
+    quality: str = Form("medium"),
+) -> Response:
+    """Image-edit с текстовой инструкцией пользователя.
+
+    Вход: исходный AI-чертёж (PNG) + русская инструкция «сделай гостиную больше».
+    Выход: новый PNG с применённой правкой.
+    """
+    _validate_quality(quality)
+
+    if not instruction or not instruction.strip():
+        raise HTTPException(status_code=400, detail="instruction is required")
+    if len(instruction) > 1000:
+        raise HTTPException(status_code=400, detail="instruction is too long (≤ 1000 chars)")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="empty image")
+
+    prompt = _wrap_edit_instruction(instruction)
+
+    try:
+        result = generate_image_edit_with_meta(
+            prompt,
+            image_bytes,
+            GenerationOptions(quality=quality),  # type: ignore[arg-type]
+        )
+    except MissingAPIKey as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except OpenAIError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return Response(
+        content=result.png,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Model-Used": result.model_used,
+            "X-Edit-Instruction": instruction[:120],
+            "Access-Control-Expose-Headers": "X-Model-Used, X-Edit-Instruction",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # ГПЗУ-импорт через OpenAI Vision
 # ---------------------------------------------------------------------------
 

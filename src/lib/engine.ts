@@ -346,5 +346,45 @@ export async function visualizeInteriorGallery(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Интерактивная корректировка: исходный чертёж + русская инструкция → новый PNG
+// ---------------------------------------------------------------------------
+
+/**
+ * Применить текстовую правку к существующему AI-чертежу.
+ *
+ * @param imageDataUrl  — `data:image/png;base64,...` или обычный URL/blob
+ * @param instruction   — «сделай гостиную больше», «перенеси кухню на юг», …
+ * @param quality       — low|medium|high (стоимость edit'а ~$0.04–0.17)
+ *
+ * Возвращает PNG-блоб + имя модели, которая выполнила правку.
+ */
+export async function editAiPlan(
+  imageDataUrl: string,
+  instruction: string,
+  quality: "low" | "medium" | "high" = "medium",
+): Promise<VisualizeResult> {
+  const blob = await fetch(imageDataUrl).then((r) => r.blob());
+  const fd = new FormData();
+  fd.append("image", blob, "source.png");
+  fd.append("instruction", instruction);
+  fd.append("quality", quality);
+
+  const res = await fetch(`${ENGINE_URL}/visualize/edit-instruction`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  return {
+    blob: await res.blob(),
+    modelUsed: res.headers.get("X-Model-Used"),
+    enhancerUsed: null,
+  };
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;
