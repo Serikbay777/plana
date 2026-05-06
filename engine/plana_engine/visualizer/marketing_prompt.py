@@ -37,6 +37,9 @@ class MarketingInputs:
     k2_pct: float = 0.0
     k3_pct: float = 0.0
 
+    # Подъездность — количество секций на этаже (1=точечный, 2-4=линейный)
+    sections: int = 1
+
     parking_spaces_per_apt: float = 1.0
     parking_underground_levels: int = 1
 
@@ -91,7 +94,9 @@ def _approx_unit_count(inputs: MarketingInputs) -> int:
 def _common_header() -> str:
     return """STRICT AutoCAD architectural floor plan, technical engineering drawing on white paper.
 NOT a marketing brochure. NOT a Pinterest illustration. NOT watercolor.
-Pure CAD-grade vector line work: thin black ink lines on white, like a real .dwg printout from a Russian architectural firm. Sheet format A1, scale 1:100. Top-down orthographic view ONLY.
+Pure CAD-grade vector line work: thin black ink lines on white, like a real .dwg printout from a Russian/Kazakh architectural firm. Sheet format A1, scale 1:100. Top-down orthographic view ONLY.
+
+⚠️ CRITICAL — DRAWING ASPECT RATIO: The plan MUST be drawn at the EXACT building footprint ratio specified below. If footprint is 60×40, the drawing rectangle must be 1.5:1 (wide). DO NOT draw a narrow vertical strip when a wide rectangle is requested. Use the FULL sheet area. Match the requested floor dimensions precisely.
 
 ═══════════════════════════════════════════════════════════════════
 LINE WEIGHTS (CRITICAL — like real CAD)
@@ -124,6 +129,10 @@ ABSOLUTE NEGATIVES (must NOT appear)
 × NO shadows, gradients, soft lighting effects
 × NO Latin/English labels — все надписи на русском кириллицей
 × NO marketing brochure aesthetic
+× NO narrow vertical strip layout when wide footprint is requested
+× NO single-corridor layout when multi-section is required
+× NO unrealistically small rooms (kitchen 5 m², bedroom 4 m² — these violate СНиП РК)
+× NO missing elevator/staircase core in the center of the section
 
 ═══════════════════════════════════════════════════════════════════
 REFERENCE
@@ -139,38 +148,110 @@ Ratio 16:10, ultra-high resolution, every line crisp, every dimension legible. P
 
 
 def _residential_blocks(inputs: MarketingInputs, n_units: int, inner_w: float, inner_h: float) -> str:
-    """Квартиры — что внутри жилого этажа."""
+    """Квартиры — что внутри жилого этажа.
+
+    Учитывает секционность: если sections > 1, рисуется N подъездов
+    разделённых противопожарными стенами, каждый со своим лифтовым узлом.
+    """
     mix_parts = []
     if inputs.studio_pct > 0.01:
-        mix_parts.append(f"{int(inputs.studio_pct*100)}% studios (~30 м²)")
+        mix_parts.append(f"{int(inputs.studio_pct*100)}% studios (28-32 м²)")
     if inputs.k1_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k1_pct*100)}% 1-bedroom (~45 м²)")
+        mix_parts.append(f"{int(inputs.k1_pct*100)}% 1-bedroom (40-50 м²)")
     if inputs.k2_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k2_pct*100)}% 2-bedroom (~65 м²)")
+        mix_parts.append(f"{int(inputs.k2_pct*100)}% 2-bedroom (55-70 м²)")
     if inputs.k3_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k3_pct*100)}% 3-bedroom (~90 м²)")
+        mix_parts.append(f"{int(inputs.k3_pct*100)}% 3-bedroom (80-95 м²)")
     mix = ", ".join(mix_parts) if mix_parts else "balanced typology"
+
+    # ── секционная декомпозиция ────────────────────────────────────────────
+    n_sections = max(1, inputs.sections)
+    apts_per_section = n_units // n_sections
+    section_width_m = inner_w / n_sections
+
+    if n_sections > 1:
+        # многосекционный дом — рисуем явно
+        section_breakdown = (
+            f"\n\n⚠️ CRITICAL — SECTIONAL LAYOUT (важнейшее требование):\n"
+            f"This is a {n_sections}-SECTION residential building "
+            f"(многосекционный жилой дом, {n_sections} подъезда). "
+            f"The {inner_w:.0f}×{inner_h:.0f} м floor plate is divided "
+            f"horizontally into {n_sections} EQUAL sections, each "
+            f"approximately {section_width_m:.1f} × {inner_h:.0f} м.\n\n"
+            f"SECTION BOUNDARIES: between sections — THICK FIRE-RATED WALLS "
+            f"(REI 60), drawn as DOUBLE PARALLEL LINES (≥ 0.7 mm thick) "
+            f"with diagonal hatching, NO doorways or corridors crossing "
+            f"these walls. Sections are completely independent.\n\n"
+            f"EACH SECTION CONTAINS:\n"
+            f"  • Central core in the middle of the section: "
+            f"{inputs.lifts_passenger} passenger elevator(s) + "
+            f"{inputs.lifts_freight} freight elevator + 1 staircase Л-1 "
+            f"(U-shape, parallel tread lines), all inside a reinforced-concrete shaft\n"
+            f"  • A short central corridor (≤ 12 м tupik / dead-end) "
+            f"connecting the core with apartments\n"
+            f"  • {apts_per_section} apartments arranged AROUND the core "
+            f"(2-4 per side, total {apts_per_section}/section)\n"
+            f"  • Section number visibly marked: «СЕКЦИЯ 1», «СЕКЦИЯ 2»"
+            f"{'…«СЕКЦИЯ ' + str(n_sections) + '»' if n_sections > 2 else ''}\n\n"
+            f"APARTMENT NUMBERING (per section):\n"
+        )
+        # Поэтажный номер: 1.1, 1.2... для секции 1; 2.1, 2.2... для секции 2
+        for s in range(1, n_sections + 1):
+            section_breakdown += (
+                f"  • Section {s}: «Кв. {s}-1», «Кв. {s}-2»…"
+                f"«Кв. {s}-{apts_per_section}»\n"
+            )
+        sectional_intro = (
+            f" Building consists of {n_sections} sections side-by-side, "
+            f"~{apts_per_section} apartments per section "
+            f"(total ~{n_units} apartments per floor)."
+        )
+    else:
+        # односекционный (точечный)
+        section_breakdown = (
+            "\n\nPOINT-TOWER LAYOUT (1 section): central reinforced-concrete "
+            f"core with {inputs.lifts_passenger} passenger + "
+            f"{inputs.lifts_freight} freight elevator + Л-1 staircase. "
+            f"All {n_units} apartments arranged AROUND the central core."
+        )
+        sectional_intro = (
+            f" Single-section point tower with {n_units} apartments per floor."
+        )
 
     return f"""═══════════════════════════════════════════════════════════════════
 SUBJECT — RESIDENTIAL FLOOR
 ═══════════════════════════════════════════════════════════════════
-Title block (Cyrillic): «ПЛАН ЭТАЖА · Жилое здание · М 1:100». Footprint {inner_w:.0f} × {inner_h:.0f} м (after setbacks). One typical floor of a {inputs.floors}-storey residential building. Approximately {n_units} apartments per floor (~{n_units * inputs.floors} apartments total).
+Title block (Cyrillic): «ПЛАН ТИПОВОГО ЭТАЖА · Жилое здание · М 1:100».
+Building footprint EXACTLY {inner_w:.0f} × {inner_h:.0f} м — DRAW THE PLAN AT THIS EXACT ASPECT RATIO.
+One typical floor of a {inputs.floors}-storey residential building.
+~{n_units} apartments per floor (~{n_units * inputs.floors} total).{sectional_intro}{section_breakdown}
 
 UNITS: apartments, mix — {mix}.
 
-FURNITURE inside each apartment (simple top-down block icons):
+⚠️ MINIMUM ROOM SIZES (СНиП РК 3.02-43-2007 — STRICT):
+  • Living room (гостиная): ≥ 16 м² for 2-3-room apts, ≥ 15 м² for 1-room
+  • Master bedroom (спальня на 2 человека): ≥ 10 м²
+  • Single bedroom: ≥ 8 м²
+  • Kitchen: ≥ 9 м² for 2+ room apts (≥ 6 м² only for studios as kitchen-niche)
+  • Bathroom (ванная): width ≥ 1.5 м
+  • Combined WC (с/у совмещённый): ≥ 1.7 м wide
+  • Hallway (прихожая): width ≥ 1.4 м
+  • Internal corridor: ≥ 1.0 м
+
+FURNITURE inside each apartment (simple top-down block icons, NOT photoreal):
   • Bedrooms: rectangle bed with «X» for pillow, bedside table, wardrobe long thin rectangle
-  • Living rooms: L-shape sofa, round table, armchair circle
+  • Living rooms: L-shape sofa, round table, armchair circle, TV thin rectangle on wall
   • Kitchens: counter L along wall with sink + stove (square with 4 burner circles), fridge rectangle
   • Bathrooms: oval tub OR shower square, oval toilet, vanity rectangle
   • Hallways: built-in wardrobe rectangle, shoe storage
-  • Loggias: small rectangles outside facade wall
+  • Loggias: small rectangles outside facade wall, labeled «Лоджия», 3-6 м²
 
 ANNOTATIONS inside the plan:
-  • «Кв. №1», «Кв. №2»…«Кв. №{n_units}» — apartment numbers
+  • Apartment numbers (per section if sectional, else sequential)
   • «S общ. = 45.20 м²», «S жил. = 32.10 м²» — areas under each apartment number
-  • Room labels above each room: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая»
-  • Room areas inside each room: «18.4 м²», «12.6 м²», «7.2 м²»"""
+  • Room labels above each room: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Лоджия»
+  • Room areas inside each room: «18.4 м²», «12.6 м²», «7.2 м²» — REALISTIC values, not too small
+  • Section labels «СЕКЦИЯ 1», «СЕКЦИЯ 2»… in BOLD if multi-section"""
 
 
 def _commercial_blocks(inputs: MarketingInputs, n_units: int, inner_w: float, inner_h: float) -> str:
@@ -226,36 +307,65 @@ def _mixed_use_blocks(inputs: MarketingInputs, n_units: int, inner_w: float, inn
     """МФК — типовой этаж (как жилой, с пометкой про подиум)."""
     mix_parts = []
     if inputs.studio_pct > 0.01:
-        mix_parts.append(f"{int(inputs.studio_pct*100)}% studios")
+        mix_parts.append(f"{int(inputs.studio_pct*100)}% studios (28-32 м²)")
     if inputs.k1_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k1_pct*100)}% 1-bedroom")
+        mix_parts.append(f"{int(inputs.k1_pct*100)}% 1-bedroom (40-50 м²)")
     if inputs.k2_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k2_pct*100)}% 2-bedroom")
+        mix_parts.append(f"{int(inputs.k2_pct*100)}% 2-bedroom (55-70 м²)")
     if inputs.k3_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k3_pct*100)}% 3-bedroom")
+        mix_parts.append(f"{int(inputs.k3_pct*100)}% 3-bedroom (80-95 м²)")
     mix = ", ".join(mix_parts) if mix_parts else "balanced typology"
+
+    n_sections = max(1, inputs.sections)
+    apts_per_section = n_units // n_sections
+    section_width_m = inner_w / n_sections
+
+    if n_sections > 1:
+        section_block = (
+            f"\n\n⚠️ SECTIONAL LAYOUT: {n_sections} sections side-by-side, each "
+            f"~{section_width_m:.1f} × {inner_h:.0f} м with own central core "
+            f"({inputs.lifts_passenger} pass + {inputs.lifts_freight} freight elevator "
+            f"+ Л-1 staircase). Sections separated by FIRE-RATED WALLS "
+            f"(thick double parallel lines with diagonal hatching). "
+            f"~{apts_per_section} apartments per section."
+        )
+    else:
+        section_block = (
+            "\n\nPOINT-TOWER LAYOUT (1 section): central core with elevators+staircase, "
+            f"{n_units} apartments around it."
+        )
 
     return f"""═══════════════════════════════════════════════════════════════════
 SUBJECT — MIXED-USE FLOOR (TYPICAL)
 ═══════════════════════════════════════════════════════════════════
-Title block (Cyrillic): «ПЛАН ЭТАЖА · МФК · М 1:100 · Типовой жилой этаж». Footprint {inner_w:.0f} × {inner_h:.0f} м. One typical RESIDENTIAL floor of a {inputs.floors}-storey mixed-use building (ground floor is retail/F&B, podium is parking, this is the typical residential level above podium).
+Title block (Cyrillic): «ПЛАН ЭТАЖА · МФК · М 1:100 · Типовой жилой этаж».
+Building footprint EXACTLY {inner_w:.0f} × {inner_h:.0f} м — DRAW AT THIS EXACT ASPECT RATIO.
+One typical RESIDENTIAL floor of a {inputs.floors}-storey mixed-use building (ground floor is retail/F&B, podium is parking, this is the typical residential level above podium).{section_block}
 
 UNITS: apartments, mix — {mix}.
 
+⚠️ MINIMUM ROOM SIZES (СНиП РК 3.02-43-2007 — STRICT):
+  • Living room: ≥ 16 м² for 2-3-room, ≥ 15 м² for 1-room
+  • Bedroom: ≥ 8 м² (single), ≥ 10 м² (double)
+  • Kitchen: ≥ 9 м² for 2+ room apts
+  • Bathroom width: ≥ 1.5 м, combined WC: ≥ 1.7 м wide
+  • Hallway: ≥ 1.4 м wide
+
 FURNITURE inside each apartment (simple top-down block icons):
   • Bedrooms: rectangle bed with «X», bedside tables, wardrobe long thin rectangle
-  • Living rooms: L-shape sofa, round/rectangular table, armchair
+  • Living rooms: L-shape sofa, round/rectangular table, armchair, TV
   • Kitchens: counter with sink + stove + fridge
   • Bathrooms: tub or shower, toilet, vanity
   • Hallways: built-in wardrobe, shoe storage
-  • Loggias: small rectangles outside facade
+  • Loggias: small rectangles outside facade, labeled «Лоджия»
 
 ANNOTATIONS:
-  • «Кв. №1»…«Кв. №{n_units}» — apartment numbers
+  • Apartment numbers (per section: «Кв. 1-1»…«Кв. {n_sections}-{apts_per_section}» if sectional)
   • «S общ. = 45.20 м²», «S жил. = 32.10 м²»
-  • Room labels: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая»
-  • Room areas inside each room: «18.4 м²», «12.6 м²»
-  • Note in the corner: «На 1 этаже — коммерция (магазины, кафе, F&B). Подземный паркинг.»"""
+  • Room labels: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Лоджия»
+  • Realistic room areas — NOT too small (kitchen ≥ 9 m², not 5 m²)
+  • Section labels «СЕКЦИЯ 1»…«СЕКЦИЯ {n_sections}» if multi-section
+  • Note in the corner: «На 1 этаже — коммерция. Подземный паркинг.»"""
 
 
 # ---------------------------------------------------------------------------
@@ -268,12 +378,38 @@ def _engineering_block(inputs: MarketingInputs) -> str:
     purpose_unit = "apartment" if inputs.purpose in ("residential", "mixed_use") else (
         "hotel room" if inputs.purpose == "hotel" else "office block"
     )
+
+    # Секционность (важно для жилых)
+    is_sectional = inputs.purpose in ("residential", "mixed_use") and inputs.sections > 1
+    if is_sectional:
+        section_block = (
+            f"\n\nSECTIONAL LAYOUT: building consists of {inputs.sections} SECTIONS "
+            f"(подъезды) divided by FIRE-RATED PARTITIONS (REI 60 walls, drawn as "
+            f"thick double lines with diagonal hatching). Each section has its OWN "
+            f"central lift-stair core: {inputs.lifts_passenger} passenger elevator(s) + "
+            f"{inputs.lifts_freight} freight elevator + a U-shaped staircase (Л-1). "
+            f"Section borders are clearly marked on the plan with section numbers «Секция 1», "
+            f"«Секция 2»…«Секция {inputs.sections}». No through-corridor between sections."
+        )
+        total_pass = inputs.lifts_passenger * inputs.sections
+        total_freight = inputs.lifts_freight * inputs.sections
+        lift_summary = (
+            f"{inputs.lifts_passenger} passenger + {inputs.lifts_freight} freight "
+            f"PER SECTION (total in building: {total_pass} passenger + {total_freight} freight)"
+        )
+    else:
+        section_block = ""
+        lift_summary = (
+            f"{inputs.lifts_passenger} passenger elevators + "
+            f"{inputs.lifts_freight} freight elevator"
+        )
+
     return f"""═══════════════════════════════════════════════════════════════════
 ENGINEERING & SAFETY (visible on the plan)
 ═══════════════════════════════════════════════════════════════════
-LIFT GROUP: {inputs.lifts_passenger} passenger elevators (rectangles with diagonal cross «×», labeled «ЛИФТ») + {inputs.lifts_freight} freight elevator + U-shaped staircase (parallel tread lines 300 mm apart, upward arrow «↑», labeled «Л-1»). Concentrated in a central reinforced-concrete core.
+LIFT GROUP: {lift_summary} (rectangles with diagonal cross «×», labeled «ЛИФТ») + U-shaped staircase (parallel tread lines 300 mm apart, upward arrow «↑», labeled «Л-1»). Concentrated in central reinforced-concrete core(s).{section_block}
 
-FIRE SAFETY: maximum evacuation distance from any {purpose_unit} door to staircase ≤ {inputs.fire_evacuation_max_m:.0f} м. {inputs.fire_evacuation_exits_per_section} evacuation exits per section. Dead-end corridor segments ≤ {inputs.fire_dead_end_corridor_max_m:.0f} м. Show evacuation arrows from each unit toward the staircase.
+FIRE SAFETY: maximum evacuation distance from any {purpose_unit} door to staircase ≤ {inputs.fire_evacuation_max_m:.0f} м (evacuation distance counted PER SECTION when sectional). {inputs.fire_evacuation_exits_per_section} evacuation exits per section. Dead-end corridor segments ≤ {inputs.fire_dead_end_corridor_max_m:.0f} м. Show evacuation arrows from each unit toward the staircase.
 
 INSOLATION: {"large units (suites, 2-3 bedroom apartments) face south or south-west, smaller units face north" if inputs.insolation_priority else f"all units receive at least {inputs.insolation_min_hours:.1f} h of direct sunlight at equinox, no preferential orientation"}.
 

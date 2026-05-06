@@ -106,6 +106,7 @@ function buildVisReq(form: PromptFormState): VisualizeFromInputsRequest {
     k1_pct: form.k1_pct / 100,
     k2_pct: form.k2_pct / 100,
     k3_pct: form.k3_pct / 100,
+    sections: form.sections,
     parking_spaces_per_apt: form.parking_spaces_per_apt,
     parking_underground_levels: form.parking_underground_levels,
     fire_evacuation_max_m: form.fire_evacuation_max_m,

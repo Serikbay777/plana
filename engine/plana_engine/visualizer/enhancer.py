@@ -25,7 +25,7 @@ import os
 
 
 _DEFAULT_BASE_URL = "https://llm.alem.ai/v1"
-_DEFAULT_MODEL = "gemma4"
+_DEFAULT_MODEL = "qwen3"
 
 
 _SYSTEM_PROMPT = """Ты — prompt enhancer для image generation модели gpt-image-2.
@@ -55,7 +55,7 @@ _SYSTEM_PROMPT = """Ты — prompt enhancer для image generation модел�
 
 
 def has_llm_key() -> bool:
-    return bool(os.environ.get("LLM_API_KEY"))
+    return bool(os.environ.get("ALEM_API_KEY") or os.environ.get("LLM_API_KEY"))
 
 
 def _cache_key(prompt: str, model: str) -> str:
@@ -80,12 +80,20 @@ def enhance_prompt(
     `source` = "gemma4" если реально вызвали API, "fallback" если ключа нет
     или вызов упал, "cache" если из кэша.
     """
-    api_key = os.environ.get("LLM_API_KEY")
+    api_key = os.environ.get("ALEM_API_KEY") or os.environ.get("LLM_API_KEY")
     if not api_key:
         return base_prompt, "fallback"
 
-    base_url = os.environ.get("LLM_BASE_URL", _DEFAULT_BASE_URL)
-    model = os.environ.get("LLM_MODEL", _DEFAULT_MODEL)
+    base_url = (
+        os.environ.get("ALEM_BASE_URL")
+        or os.environ.get("LLM_BASE_URL")
+        or _DEFAULT_BASE_URL
+    )
+    model = (
+        os.environ.get("ALEM_MODEL")
+        or os.environ.get("LLM_MODEL")
+        or _DEFAULT_MODEL
+    )
 
     key = _cache_key(base_prompt, model)
     if use_cache and key in _ENHANCED_CACHE:

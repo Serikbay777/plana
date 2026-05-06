@@ -26,7 +26,7 @@ from ..visualizer import (
     GenerationOptions, MarketingInputs, build_exterior_prompt,
     build_floorplan_furniture_prompt, build_interior_prompt,
     build_marketing_prompt, build_site_placement_prompt,
-    enhance_prompt, has_llm_key,
+    enhance_prompt, enhance_with_kz_norms, has_llm_key,
 )
 from ..visualizer.openai_client import (
     MissingAPIKey, OpenAIError, has_api_key,
@@ -91,6 +91,8 @@ class VisualizeFromInputsRequest(BaseModel):
     k1_pct: float = 0.0
     k2_pct: float = 0.0
     k3_pct: float = 0.0
+    # подъездность (количество секций — важно для жилых)
+    sections: int = 1
     # паркинг
     parking_spaces_per_apt: float = 1.0
     parking_underground_levels: int = 1
@@ -124,6 +126,7 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         k1_pct=req.k1_pct,
         k2_pct=req.k2_pct,
         k3_pct=req.k3_pct,
+        sections=req.sections,
         parking_spaces_per_apt=req.parking_spaces_per_apt,
         parking_underground_levels=req.parking_underground_levels,
         fire_evacuation_max_m=req.fire_evacuation_max_m,
@@ -138,8 +141,26 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
     )
 
 
-def _run_text_to_image(prompt: str, quality: str) -> Response:
-    enhanced, enhancer_source = enhance_prompt(prompt)
+def _run_text_to_image(
+    prompt: str, quality: str,
+    *, inputs: MarketingInputs | None = None,
+) -> Response:
+    """Генерация text-to-image с обогащением промпта.
+
+    Если передан `inputs` — используется агентный enhancer с базой норм РК
+    (двухстадийный: Architect Critic → Prompt Composer). Иначе — старый
+    атмосферный enhancer (Gemma 4 без знаний о нормах).
+    """
+    norms_used: list[str] = []
+    if inputs is not None:
+        result_enh = enhance_with_kz_norms(prompt, inputs)
+        enhanced = result_enh.enhanced_prompt
+        enhancer_source = f"agent-kz-norms:{result_enh.source}"
+        norms_used = result_enh.norms_used
+    else:
+        enhanced, src = enhance_prompt(prompt)
+        enhancer_source = src
+
     try:
         result = generate_image_with_meta(
             enhanced,
@@ -149,15 +170,21 @@ def _run_text_to_image(prompt: str, quality: str) -> Response:
         raise HTTPException(status_code=503, detail=str(e))
     except OpenAIError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+    headers = {
+        "Cache-Control": "public, max-age=86400",
+        "X-Model-Used": result.model_used,
+        "X-Enhancer-Used": enhancer_source,
+        "Access-Control-Expose-Headers":
+            "X-Model-Used, X-Enhancer-Used, X-Norms-Used",
+    }
+    if norms_used:
+        headers["X-Norms-Used"] = ",".join(norms_used)
+
     return Response(
         content=result.png,
         media_type="image/png",
-        headers={
-            "Cache-Control": "public, max-age=86400",
-            "X-Model-Used": result.model_used,
-            "X-Enhancer-Used": enhancer_source,
-            "Access-Control-Expose-Headers": "X-Model-Used, X-Enhancer-Used",
-        },
+        headers=headers,
     )
 
 
@@ -175,21 +202,30 @@ def _validate_quality(quality: str) -> None:
 def visualize_exterior(req: VisualizeFromInputsRequest) -> Response:
     """Внешний вид ЖК — 3/4 перспектива здания в окружении."""
     _validate_quality(req.quality)
-    return _run_text_to_image(build_exterior_prompt(_inputs_from_req(req)), req.quality)
+    inputs = _inputs_from_req(req)
+    return _run_text_to_image(
+        build_exterior_prompt(inputs), req.quality, inputs=inputs,
+    )
 
 
 @app.post("/visualize/floorplan-furniture")
 def visualize_floorplan_furniture(req: VisualizeFromInputsRequest) -> Response:
     """Pinterest-grade top-down планировка с мебелью (для брошюр)."""
     _validate_quality(req.quality)
-    return _run_text_to_image(build_floorplan_furniture_prompt(_inputs_from_req(req)), req.quality)
+    inputs = _inputs_from_req(req)
+    return _run_text_to_image(
+        build_floorplan_furniture_prompt(inputs), req.quality, inputs=inputs,
+    )
 
 
 @app.post("/visualize/interior")
 def visualize_interior(req: VisualizeFromInputsRequest) -> Response:
     """Интерьер одной комнаты — для самой крупной типологии."""
     _validate_quality(req.quality)
-    return _run_text_to_image(build_interior_prompt(_inputs_from_req(req)), req.quality)
+    inputs = _inputs_from_req(req)
+    return _run_text_to_image(
+        build_interior_prompt(inputs), req.quality, inputs=inputs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -535,9 +571,36 @@ class FloorVariantItem(BaseModel):
     image_b64: str
 
 
+class CritiqueNumericalConstraint(BaseModel):
+    parameter: str
+    value: str
+    source: str
+
+
+class CritiqueRecommendation(BaseModel):
+    title: str
+    detail: str
+    priority: str
+
+
+class CritiqueRisk(BaseModel):
+    description: str
+    severity: str
+
+
+class CritiquePayload(BaseModel):
+    """Архитектурная критика от Stage 1 агентного enhancer'а."""
+    summary: str = ""
+    numerical_constraints: list[CritiqueNumericalConstraint] = []
+    design_recommendations: list[CritiqueRecommendation] = []
+    risks: list[CritiqueRisk] = []
+    norms_used: list[str] = []
+
+
 class FloorVariantsResponse(BaseModel):
     variants: list[FloorVariantItem]
     elapsed_ms: float
+    critique: CritiquePayload | None = None
 
 
 @app.post("/visualize/floor-variants", response_model=FloorVariantsResponse)
@@ -551,7 +614,12 @@ def visualize_floor_variants(req: VisualizeFromInputsRequest) -> FloorVariantsRe
 
     inputs = _inputs_from_req(req)
     base_prompt = build_marketing_prompt(inputs)
-    enhanced_base, enhancer_source = enhance_prompt(base_prompt)
+
+    # Агентный enhancer — двухстадийный (Architect Critic + Prompt Composer)
+    # с базой казахстанских строительных норм (research/kz-norms/).
+    enh = enhance_with_kz_norms(base_prompt, inputs)
+    enhanced_base = enh.enhanced_prompt
+    enhancer_source = f"agent-kz-norms:{enh.source}"
 
     opts = GenerationOptions(quality=req.quality)  # type: ignore[arg-type]
 
@@ -594,9 +662,32 @@ def visualize_floor_variants(req: VisualizeFromInputsRequest) -> FloorVariantsRe
         detail = f"All variants failed: {last_exc}" if last_exc else "No variants generated"
         raise HTTPException(status_code=502, detail=detail)
 
+    # Упаковываем критику для фронта (если есть)
+    crit_payload: CritiquePayload | None = None
+    if enh.critique is not None:
+        crit_payload = CritiquePayload(
+            summary=enh.critique.summary,
+            numerical_constraints=[
+                CritiqueNumericalConstraint(
+                    parameter=n.parameter, value=n.value, source=n.source,
+                ) for n in enh.critique.numerical_constraints
+            ],
+            design_recommendations=[
+                CritiqueRecommendation(
+                    title=r.title, detail=r.detail, priority=r.priority,
+                ) for r in enh.critique.design_recommendations
+            ],
+            risks=[
+                CritiqueRisk(description=r.description, severity=r.severity)
+                for r in enh.critique.risks
+            ],
+            norms_used=enh.norms_used,
+        )
+
     return FloorVariantsResponse(
         variants=results,
         elapsed_ms=round((time.time() - t0) * 1000, 1),
+        critique=crit_payload,
     )
 
 

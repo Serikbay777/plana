@@ -152,6 +152,8 @@ export type VisualizeFromInputsRequest = {
   k1_pct: number;
   k2_pct: number;
   k3_pct: number;
+  // подъездность
+  sections?: number;
   // паркинг
   parking_spaces_per_apt?: number;
   parking_underground_levels?: number;
@@ -276,9 +278,36 @@ export type FloorVariantItem = {
   image_b64: string;
 };
 
+// Архитектурная критика из агентного enhancer'а (kz-norms)
+export type CritiqueNumericalConstraint = {
+  parameter: string;
+  value: string;
+  source: string;
+};
+
+export type CritiqueRecommendation = {
+  title: string;
+  detail: string;
+  priority: "high" | "medium" | "low";
+};
+
+export type CritiqueRisk = {
+  description: string;
+  severity: "blocker" | "warning" | "info";
+};
+
+export type CritiquePayload = {
+  summary: string;
+  numerical_constraints: CritiqueNumericalConstraint[];
+  design_recommendations: CritiqueRecommendation[];
+  risks: CritiqueRisk[];
+  norms_used: string[];
+};
+
 export type FloorVariantsResponse = {
   variants: FloorVariantItem[];
   elapsed_ms: number;
+  critique?: CritiquePayload | null;
 };
 
 export async function visualizeFloorVariants(
