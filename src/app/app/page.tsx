@@ -6,7 +6,7 @@ import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, ArrowRight, Wand2, Loader2, ScanSearch, Compass, Ruler,
-  Trees, Flame, DoorOpen, Network,
+  Trees, Flame, DoorOpen, Network, FileBox,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { exportAiPlansPdf, exportFullReportPdf } from "@/lib/pdf-export";
@@ -21,6 +21,8 @@ import {
   visualizeInteriorGallery,
   editAiPlan,
   exportFloorplanDxf,
+  generateApartmentPreplan,
+  DEFAULT_APARTMENT_SPEC,
   type GpzuExtraction,
   type ContourAnalysis,
   type ContourRecommendation,
@@ -28,6 +30,7 @@ import {
   type VisualizeResult,
   type PlacementVariant,
   type InteriorGalleryItem,
+  type ApartmentSpec,
 } from "@/lib/engine";
 import { getSession, signOut, type Session } from "@/lib/auth";
 
@@ -36,7 +39,7 @@ import { getSession, signOut, type Session } from "@/lib/auth";
 // ---------------------------------------------------------------------------
 
 type GenState = "idle" | "loading" | "ready" | "error";
-type TopTab = "site" | "viz" | "ai_plans" | "placement";
+type TopTab = "site" | "viz" | "ai_plans" | "placement" | "cad";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
 
 // Tab 2/3 — AI картинки
@@ -91,6 +94,16 @@ type PlacementBag = {
 };
 const EMPTY_PLACEMENT: PlacementBag = {
   state: "idle", variants: [], elapsedMs: null, errorMessage: null,
+};
+
+// Tab 6 — CAD пред-планировка квартиры (DXF)
+type CadBag = {
+  state: GenState;
+  errorMessage: string | null;
+  lastFilename: string | null;
+};
+const EMPTY_CAD: CadBag = {
+  state: "idle", errorMessage: null, lastFilename: null,
 };
 
 // Конструируем тело для visualize-эндпоинтов
@@ -159,6 +172,8 @@ export default function AppPage() {
   const [placementSitePreview,  setPlacementSitePreview]  = useState<string | null>(null);
   const [placementBldFile,      setPlacementBldFile]      = useState<File | null>(null);
   const [placementBldPreview,   setPlacementBldPreview]   = useState<string | null>(null);
+  // Tab 6 — CAD пред-планировка
+  const [cadBag, setCadBag] = useState<CadBag>(EMPTY_CAD);
 
   // Site upload (Tab 2)
   const [siteFile, setSiteFile] = useState<File | null>(null);
@@ -350,6 +365,29 @@ export default function AppPage() {
     }
   };
 
+  // Tab 6 — CAD пред-планировка квартиры (DXF). Phase 1: фиксированная
+  // 1-комн. 6×4, spec пока игнорируется на бэке. Просто скачивание файла.
+  const generateCad = async () => {
+    setCadBag({ ...EMPTY_CAD, state: "loading" });
+    try {
+      const spec: ApartmentSpec = DEFAULT_APARTMENT_SPEC;
+      const blob = await generateApartmentPreplan(spec);
+      const filename = "apartment-preplan.dwg";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // отдадим браузеру тик на старт скачивания, потом отзовём URL
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setCadBag({ state: "ready", errorMessage: null, lastFilename: filename });
+    } catch (e) {
+      setCadBag({ ...EMPTY_CAD, state: "error", errorMessage: (e as Error).message });
+    }
+  };
+
   const generatePlacement = async () => {
     if (!placementSiteFile || !placementBldFile) {
       setPlacementBag({ ...EMPTY_PLACEMENT, state: "error", errorMessage: "Загрузите оба изображения: аэрофото участка и фото ЖК" });
@@ -413,6 +451,7 @@ export default function AppPage() {
     tab === "site"      ? generateSite
     : tab === "ai_plans"  ? generateAiPlans
     : tab === "placement" ? generatePlacement
+    : tab === "cad"       ? generateCad
     : generateViz;
 
   // active state для индикатора loading в кнопке
@@ -421,6 +460,7 @@ export default function AppPage() {
     tab === "site"        ? siteBag.state === "loading"
     : tab === "ai_plans"  ? aiPlansBag.state === "loading"
     : tab === "placement" ? placementBag.state === "loading"
+    : tab === "cad"       ? cadBag.state === "loading"
     : vizAnyLoading;
 
   if (!authChecked) {
@@ -438,10 +478,10 @@ export default function AppPage() {
 
       <main
         className="flex-1 px-6 pb-6 pt-4 grid gap-4"
-        style={{ gridTemplateColumns: (tab === "placement" || tab === "site") ? "1fr" : "300px minmax(0, 1fr)" }}
+        style={{ gridTemplateColumns: (tab === "placement" || tab === "site" || tab === "cad") ? "1fr" : "300px minmax(0, 1fr)" }}
       >
-        {/* LEFT — форма (скрыта на фото-табах) */}
-        {tab !== "placement" && tab !== "site" && (
+        {/* LEFT — форма (скрыта на фото-табах и cad-табе фазы 1) */}
+        {tab !== "placement" && tab !== "site" && tab !== "cad" && (
           <PromptForm
             value={form}
             onChange={setForm}
@@ -521,6 +561,9 @@ export default function AppPage() {
               onGenerate={generatePlacement}
             />
           )}
+          {tab === "cad" && (
+            <CadTab bag={cadBag} onGenerate={generateCad} />
+          )}
         </section>
       </main>
     </div>
@@ -567,6 +610,7 @@ function TabStrip({ tab, onChange }: { tab: TopTab; onChange: (t: TopTab) => voi
     { key: "viz",       label: "Визуализации",         icon: <ImageIcon size={13} /> },
     { key: "site",      label: "Посадка на участок",  icon: <MapIcon size={13} /> },
     { key: "placement", label: "Размещение ЖК",        icon: <Building2 size={13} /> },
+    { key: "cad",       label: "Пред-планировка CAD", icon: <FileBox size={13} /> },
   ];
   return (
     <div className="px-6 pt-3 pb-1 border-b border-white/[0.04]">
@@ -2086,6 +2130,82 @@ function AiPlansTab({
         </div>
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CadTab — пред-планировка квартиры в DXF (Phase 1: фиксированная 1-комн.)
+// ---------------------------------------------------------------------------
+
+function CadTab({
+  bag,
+  onGenerate,
+}: {
+  bag: CadBag;
+  onGenerate: () => void;
+}) {
+  const isLoading = bag.state === "loading";
+  const isReady   = bag.state === "ready";
+  const isError   = bag.state === "error";
+
+  return (
+    <div className="flex-1 grid place-items-center p-10">
+      <div className="max-w-[560px] w-full text-center space-y-6">
+        <div className="size-14 rounded-2xl bg-white/[0.04] border border-white/[0.07] grid place-items-center mx-auto">
+          <FileBox size={22} className="text-white/80" />
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-[20px] font-semibold tracking-display text-white">
+            Пред-планировка для AutoCAD
+          </h2>
+          <p className="text-[13.5px] text-white/55 leading-relaxed">
+            Сгенерируем стартовый CAD-файл — стены, проёмы, подписи комнат,
+            слои по стандарту AIA, миллиметры. Это <b className="text-white/80">скелет
+            для доработки</b>, не финальный чертёж. Откройте в AutoCAD и доведите под себя.
+          </p>
+        </div>
+
+        <div className="text-[11.5px] text-white/35 px-4">
+          Phase 1: пока выдаём фиксированную 1-комн. квартиру 6×4 м для проверки
+          совместимости с AutoCAD. В следующих фазах подключим параметры,
+          типы квартир и валидатор.
+        </div>
+
+        <div className="flex flex-col items-center gap-3 pt-2">
+          <button
+            onClick={onGenerate}
+            disabled={isLoading}
+            className="h-11 px-6 btn-apple text-[13.5px] flex items-center gap-2 disabled:opacity-50"
+          >
+            {isLoading ? (
+              <>
+                <Loader2 size={14} className="animate-spin" />
+                Генерация…
+              </>
+            ) : (
+              <>
+                <Download size={14} />
+                Скачать .dwg
+              </>
+            )}
+          </button>
+
+          {isReady && bag.lastFilename && (
+            <div className="text-[12px] text-white/55 flex items-center gap-1.5">
+              <CheckCircle2 size={13} className="text-emerald-400" />
+              Скачано: {bag.lastFilename}
+            </div>
+          )}
+          {isError && bag.errorMessage && (
+            <div className="text-[12px] text-red-300/85 flex items-center gap-1.5 max-w-[460px]">
+              <AlertCircle size={13} />
+              {bag.errorMessage}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
