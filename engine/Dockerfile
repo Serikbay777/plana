@@ -11,7 +11,7 @@ COPY pyproject.toml ./
 RUN pip install --upgrade pip && \
     pip install pydantic fastapi "uvicorn[standard]" \
                 python-multipart "openai>=1.40" httpx pillow \
-                "pymupdf>=1.24"
+                "pymupdf>=1.24" "ezdxf>=1.3"
 
 COPY plana_engine ./plana_engine
 

@@ -94,52 +94,89 @@ def _approx_unit_count(inputs: MarketingInputs) -> int:
 def _common_header() -> str:
     return """STRICT AutoCAD architectural floor plan, technical engineering drawing on white paper.
 NOT a marketing brochure. NOT a Pinterest illustration. NOT watercolor.
-Pure CAD-grade vector line work: thin black ink lines on white, like a real .dwg printout from a Russian/Kazakh architectural firm. Sheet format A1, scale 1:100. Top-down orthographic view ONLY.
+Pure CAD-grade vector line work — IDENTICAL in style to drawings from leading Kazakh architectural design institutes. Sheet format A3 landscape, scale 1:100. Top-down orthographic view ONLY.
+
+⚠️ STYLE REFERENCE (very specific Kazakh CAD aesthetic):
+• Pure white paper background — NO color tints in rooms, NO pastel fills
+• Walls drawn with TWO line weights: thin black outline + RED-ORANGE DIAGONAL HATCHING inside the wall thickness (ANSI31 pattern, color #c14d3d-ish, 30-45° angle, dense 4-5 mm spacing)
+• Window openings rendered with PALE BLUE (#a8c5d4) parallel lines and light blue tinted glass area
+• Bathroom/WC fixtures with subtle PALE BLUE (#cee0e8) accent on tubs, toilets, sinks
+• All text in CAD-style Cyrillic font (ISOCPEUR / GOST / Arial Narrow), uppercase or capitalized, narrow letterforms
+• Narrow black arrows for cut-section markers «1-1», «2-2» pointing inward from sides
 
 ⚠️ CRITICAL — DRAWING ASPECT RATIO: The plan MUST be drawn at the EXACT building footprint ratio specified below. If footprint is 60×40, the drawing rectangle must be 1.5:1 (wide). DO NOT draw a narrow vertical strip when a wide rectangle is requested. Use the FULL sheet area. Match the requested floor dimensions precisely.
 
 ═══════════════════════════════════════════════════════════════════
-LINE WEIGHTS (CRITICAL — like real CAD)
+LINE WEIGHTS (CRITICAL — like real Kazakh CAD)
 ═══════════════════════════════════════════════════════════════════
-• EXTERIOR BEARING WALLS: 0.7 mm thick black lines, twin parallel = 400 mm wall, with diagonal hatching (ANSI31, СНиП «огнестойкая»)
-• INTERIOR PARTITIONS: 0.35 mm twin parallel lines, 120 mm thickness
-• DOORS: 0.18 mm — door leaf as 45° solid line + quarter-arc swing
-• WINDOWS: triple parallel lines on facade (frame–glass–frame), 1500 mm typical
-• FURNITURE & FIXTURES: 0.13 mm SIMPLE BLOCK SHAPES, no photorealism, no shading"""
+• EXTERIOR BEARING WALLS: thin black outline 0.5 mm, wall thickness ~400 mm, FILLED with red-orange diagonal hatching (ANSI31, 45°, dense). The hatching is the signature of bearing walls in Kazakh CAD-style drawings.
+• INTERIOR LOAD-BEARING PARTITIONS: same hatching but thinner wall (200 mm)
+• NON-LOAD-BEARING PARTITIONS: 0.25 mm twin parallel lines, no hatching, 120 mm thickness
+• DOORS: 0.18 mm thin lines — door leaf as 45° solid line + quarter-arc swing
+• WINDOWS: pale-blue triple parallel lines on facade (frame–glass–frame), 1200-1800 mm typical, glass area filled with very light blue #d8e7ef
+• FURNITURE & FIXTURES: 0.15 mm SIMPLE TOP-DOWN BLOCK ICONS like in real DWG — no photorealism, no shading
+• AXIS GRID LINES: dashed thin grey, ends in 600-mm circles with letter (А-Б-В) or number (1-2-3)
+• DIMENSION LINES: thin black 0.13 mm with arrowheads, numbers in mm (no decimals)"""
 
 
 def _common_footer() -> str:
     return """═══════════════════════════════════════════════════════════════════
-COLOR (very restrained — AutoCAD layers, NOT marketing)
+COLOR PALETTE (Kazakh CAD style — strict, NOT marketing)
 ═══════════════════════════════════════════════════════════════════
 • Background: pure white #ffffff (paper)
-• All lines: black #000000
-• Wall hatching: dark grey #555555 or dark sienna #8b4513 for bearing walls
-• Unit fills: VERY LIGHT pastel tints, ~10% opacity:
-  - Pale yellow, pale blue, pale green, pale pink — rotated per unit
-• NO wood floor textures. NO parquet. NO realistic furniture. NO gradients. NO shadows.
+• All structural lines: pure black #000000
+• Wall diagonal hatching: red-orange #c14d3d / terracotta — this is the signature Kazakh CAD style for bearing walls
+• Window glass: very pale blue #d8e7ef (wash effect, ~30% opacity)
+• Window frames: pale steel blue #6b95b3 thin lines
+• Bathroom fixtures (tub, toilet, sink): pale blue accent #b8d4e0 outlines
+• Bathroom floors: very subtle pale blue tile pattern hatching
+• Floor textures (kitchen, hallway): light grey #e8e8e8 simple square tile pattern (sparingly)
+• ROOM INTERIORS: pure white background — NO pastel fills, NO color rotation between rooms
+• NO wood grain, NO parquet, NO marble, NO photorealistic textures, NO gradients, NO shadows
+
+TYPOGRAPHY (critical — must look like authentic Kazakh CAD):
+• ALL labels in narrow CAD-style Cyrillic font: ISOCPEUR, GOST type A, or Arial Narrow as fallback
+• Room names: bold-ish, e.g. «Гостиная», «Кухня», «Спальня», «С/у», «Тамбур», «Холл»
+• Areas underneath room name: «32,7 м²», «80,1 м²» (comma as decimal separator, м² with superscript ²)
+• Apartment numbers: «Кв. №14», «S общ. = 65,10 м²», «S жил. = 30,70 м²»
+• Section labels: «СЕКЦИЯ 1», «СЕКЦИЯ 2» — bold, larger height
+• Cut markers: small black thick arrow + circle with «1» or «2», double label like «1-1», «2-2»
 
 ═══════════════════════════════════════════════════════════════════
 ABSOLUTE NEGATIVES (must NOT appear)
 ═══════════════════════════════════════════════════════════════════
 × NO watercolor, painted illustration, Pinterest interior overlay
 × NO photorealistic furniture (everything is line-drawing block diagrams)
-× NO wood grain, parquet, marble textures
+× NO wood grain, parquet, marble textures, ceramic tile patterns
 × NO 3D, isometric, perspective — strict 2D top-down only
-× NO shadows, gradients, soft lighting effects
+× NO shadows, gradients, soft lighting effects, glow effects
 × NO Latin/English labels — все надписи на русском кириллицей
-× NO marketing brochure aesthetic
+× NO marketing brochure aesthetic, NO Pinterest pastel colors
 × NO narrow vertical strip layout when wide footprint is requested
 × NO single-corridor layout when multi-section is required
 × NO unrealistically small rooms (kitchen 5 m², bedroom 4 m² — these violate СНиП РК)
 × NO missing elevator/staircase core in the center of the section
+× NO COLORED ROOM FILLS (pale yellow/green/pink/etc — these look amateur, real Kazakh CAD has white rooms)
+× NO sans-serif modern fonts like Roboto, Inter — only narrow CAD fonts (ISOCPEUR/GOST/Arial Narrow)
 
 ═══════════════════════════════════════════════════════════════════
-REFERENCE
+REFERENCE — exact visual style to match
 ═══════════════════════════════════════════════════════════════════
-Real architectural plans printed from AutoCAD by Russian / Kazakh design institutes (Моспроект, ГипроНИИ, КазГОР). Black ink on white paper, axis grid, dimension chains, hatching, technical Cyrillic font (Arial/Tehnix). The drawing should look like it could be stamped «УТВЕРЖДАЮ» by a chief architect tomorrow.
+Reference: real architectural floor plans from Kazakh design institutes (Almaty/Astana firms). Key visual cues:
 
-Ratio 16:10, ultra-high resolution, every line crisp, every dimension legible. Pure engineering, no artistic interpretation."""
+• White A3 sheet, landscape orientation
+• Axis numbering circles (600 mm dia) at perimeter: «1»…«10» horizontal bottom, «А»-«Б»-«В»-«Г»-«Д»-«Е»-«Ж»-«И» vertical left
+• External dimension chains (mm without units): «1500», «2100», «2700», «4500», «7200» — printed directly above the line
+• Bearing walls with red-orange diagonal hatching (signature feature)
+• Pale blue tinted glass in window openings
+• Pale blue accent in bathroom fixtures
+• Inside each room: room name + area beneath, e.g. «Гостиная / 80,1 м²», «Кухня / 32,7 м²»
+• Cut-section markers «1—1» and «2—2» as small thick arrows pointing inward
+• Standard Cyrillic title block bottom-right with EMPTY/BLANK fields (no real firm or person names): «Изм. / Кол.уч. / Лист / N.док. / Подпись / Дата | Стадия / Лист / Листов | Разработал / [пусто] / [пусто] / [пусто]» and «Строительство [пусто] / г.Астана / План [N]-го этажа / [пусто] / Лицензия [пусто]» — render the cells visually but leave content empty or with placeholder dashes «—»
+• Overall feeling: official, technical, ready to be stamped «УТВЕРЖДАЮ»
+
+The drawing should look indistinguishable from a real Kazakh DWG printout printed at A3.
+Ratio 16:10, ultra-high resolution, every line crisp, every dimension legible. Pure engineering aesthetic."""
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +256,16 @@ def _residential_blocks(inputs: MarketingInputs, n_units: int, inner_w: float, i
         )
 
     return f"""═══════════════════════════════════════════════════════════════════
-SUBJECT — RESIDENTIAL FLOOR
+SUBJECT — RESIDENTIAL FLOOR (типовой этаж жилого здания)
 ═══════════════════════════════════════════════════════════════════
-Title block (Cyrillic): «ПЛАН ТИПОВОГО ЭТАЖА · Жилое здание · М 1:100».
-Building footprint EXACTLY {inner_w:.0f} × {inner_h:.0f} м — DRAW THE PLAN AT THIS EXACT ASPECT RATIO.
+Standard Kazakh CAD title block in BOTTOM-RIGHT corner (small rectangular frame with subdivisions, ALL NAME/COMPANY CELLS EMPTY OR DASHED «—»):
+  Top row fields (header labels only, body empty): «Изм. | Кол.уч. | Лист | N.док. | Подпись | Дата»
+  Middle row: «Разработал | — | — | —»  (empty cells, NO real names)
+  Right side: «Стадия: ЭП | Лист: — | Листов: —»
+  Bottom rows: «Строительство [—]», «г.Астана», «План типового этажа», «[—]», «Лицензия [—]»
+  IMPORTANT: leave personal-name and company-name cells BLANK or with dash «—» placeholders — do NOT invent firm names, do NOT insert «ТОО ...», do NOT add signatures or specific person names. The block is for layout demonstration only.
+
+Building footprint EXACTLY {inner_w:.0f} × {inner_h:.0f} м — DRAW THE PLAN AT THIS EXACT ASPECT RATIO with the entire plan filling the sheet.
 One typical floor of a {inputs.floors}-storey residential building.
 ~{n_units} apartments per floor (~{n_units * inputs.floors} total).{sectional_intro}{section_breakdown}
 
@@ -421,20 +464,56 @@ TECH ZONES (mark on plan): «ВЕНТ» (vent shaft, 0.6×0.6 м, near core), «
 
 
 def _common_annotations() -> str:
-    """Универсальные аннотации, не зависят от назначения."""
+    """Универсальные аннотации в стиле Kazakh CAD.
+
+    Соответствует визуальному стилю эскизных проектов казахстанских
+    проектных фирм (Алматы/Астана). Все personal-name и company-name
+    поля штампа оставляются пустыми.
+    """
     return """═══════════════════════════════════════════════════════════════════
-UNIVERSAL ANNOTATIONS
+UNIVERSAL ANNOTATIONS (Kazakh CAD style)
 ═══════════════════════════════════════════════════════════════════
-• AXIS GRID: dashed lines with circles at the ends, labeled «А», «Б», «В»… (vertical) and «1», «2», «3»… (horizontal)
-• DIMENSION LINES: outer chain along south facade with extension lines, arrows, numbers in mm («6 850», «4 200»…). Total building length and width as final outer dimensions.
-• ELEVATION MARKS: triangle markers «±0.000» on the floor, «-0.150» at staircase or entrance
-• COMPASS «С» (north arrow) in top-right corner — small simple north arrow, not decorative
-• TITLE BLOCK in bottom-right (rectangular bordered box):
-   ┌─────────────────────────────────────┐
-   │ ПЛАН ТИПОВОГО ЭТАЖА                 │
-   │ Масштаб: 1:100                       │
-   │ Лист 1                       PLANA   │
-   └─────────────────────────────────────┘"""
+• AXIS GRID:
+  - Dashed thin grey lines extending beyond the plan
+  - Each axis ends in a CIRCLE (~600 mm dia, drawn as 12-15 mm on sheet) with letter or number inside
+  - Vertical axes (left/right of plan): «А», «Б», «В», «Г», «Д», «Е», «Ж», «И» (avoid «З» — looks like 3)
+  - Horizontal axes (top/bottom): «1», «2», «3»… up to «10»
+
+• DIMENSION CHAINS (very specific Kazakh format):
+  - Outer chain along ENTIRE bottom and left facades
+  - Numbers in mm WITHOUT unit symbol: «1500», «2100», «2700», «4500», «7200»
+  - Total building dimension in larger text below: «25 200» or «60 000»
+  - Inner chains along walls for individual room dimensions
+  - All dimension text in narrow CAD font (ISOCPEUR/GOST), horizontal regardless of line orientation
+
+• CUT-SECTION MARKERS «1—1» and «2—2»:
+  - Small thick black arrow (12 mm) pointing INWARD to the plan from outside
+  - Adjacent to arrow: small numbered tag «1» or «2»
+  - Place 2 sets at strategic locations (across long axis and short axis)
+
+• ELEVATION MARKS: triangle markers «±0.000» at main floor level, «-0.150» at entrance steps
+
+• COMPASS «С» (north arrow) in top-right corner — small thin black arrow pointing up with «С» label, NOT decorative
+
+• ROOM LABELS (inside each room):
+  - Room name first line: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Тамбур», «Холл», «Гардеробная», «Терраса»
+  - Area below: «80,1 м²», «32,7 м²» (Russian comma decimal, м² with superscript)
+  - Stack vertically, centered in room
+  - Use narrow Cyrillic CAD font (ISOCPEUR/Arial Narrow), all-caps optional
+
+• TITLE BLOCK (bottom-right corner — Kazakh standard format):
+  Tabular box subdivided into cells. RENDER FIELD LABELS but LEAVE NAME/COMPANY CELLS EMPTY (placeholder «—» or blank):
+  Top row (header labels): «Изм.» | «Кол.уч.» | «Лист» | «N.док.» | «Подпись» | «Дата»
+  Below: «Разработал» | «—» | «—» | «—»  ← DO NOT invent personal names
+  Right column: «Стадия | Лист | Листов»
+  Body: «Строительство [—]», «г.Астана район [—]», «План типового этажа»
+  Bottom-right small: «[—]», «Лицензия [—]»  ← DO NOT invent firm names or license numbers
+  IMPORTANT: never insert real-looking names like «Анферов», «Иванов», never insert real firm acronyms like «ТОО ASTETIKA» or «КазГОР» — keep the block as a TEMPLATE with empty fields.
+
+• AREA SUMMARY (right side or bottom):
+  «Общая площадь — XXX м²»
+  «Площадь застройки — XXX м²»
+  «Жилая площадь — XXX м²» (right-aligned, narrow font)"""
 
 
 # ---------------------------------------------------------------------------

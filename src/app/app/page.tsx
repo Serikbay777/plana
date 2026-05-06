@@ -20,6 +20,7 @@ import {
   visualizeSitePlacementVariants,
   visualizeInteriorGallery,
   editAiPlan,
+  exportFloorplanDxf,
   type GpzuExtraction,
   type ContourAnalysis,
   type ContourRecommendation,
@@ -387,6 +388,27 @@ export default function AppPage() {
     });
   };
 
+  const [dxfLoading, setDxfLoading] = useState(false);
+  const handleExportDxf = async () => {
+    setDxfLoading(true);
+    try {
+      const { blob, filename, metricsHeaders } = await exportFloorplanDxf(buildVisReq(form));
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      console.log("DXF metrics:", metricsHeaders);
+    } catch (e) {
+      alert(`Не удалось сгенерировать DXF: ${(e as Error).message}`);
+    } finally {
+      setDxfLoading(false);
+    }
+  };
+
   const onGenerate =
     tab === "site"      ? generateSite
     : tab === "ai_plans"  ? generateAiPlans
@@ -467,6 +489,7 @@ export default function AppPage() {
               bag={aiPlansBag}
               onGenerate={generateAiPlans}
               onGoToViz={goToVizAndGenerateAll}
+              onExportDxf={() => handleExportDxf()}
               gpzuLoading={gpzuLoading}
               gpzuLastResult={gpzuLastResult}
               gpzuError={gpzuError}
@@ -1540,7 +1563,7 @@ function PlacementTab({
 // ---------------------------------------------------------------------------
 
 function AiPlansTab({
-  bag, onGenerate, onGoToViz,
+  bag, onGenerate, onGoToViz, onExportDxf,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
   onExportFullReport, hasExtraSections,
@@ -1548,6 +1571,7 @@ function AiPlansTab({
   bag: AiPlansBag;
   onGenerate: () => void;
   onGoToViz: () => void;
+  onExportDxf: () => Promise<void>;
   gpzuLoading: boolean;
   gpzuLastResult: GpzuExtraction | null;
   gpzuError: string | null;
@@ -1993,6 +2017,13 @@ function AiPlansTab({
                       <Download size={11} /> PDF
                     </button>
                     <button
+                      onClick={(e) => { e.stopPropagation(); onExportDxf(); }}
+                      className="h-8 px-2.5 rounded-full text-[11px] flex items-center gap-1 hover:bg-violet-500/15 transition border border-violet-400/30 text-violet-200/85 hover:text-white"
+                      title="DXF — реальный CAD-чертёж для AutoCAD"
+                    >
+                      <Download size={11} /> DXF
+                    </button>
+                    <button
                       onClick={(e) => { e.stopPropagation(); onGoToViz(); }}
                       className="h-8 px-3 rounded-full btn-apple text-[11px] flex items-center gap-1.5"
                     >
@@ -2020,6 +2051,14 @@ function AiPlansTab({
               className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition"
             >
               <RefreshCw size={12} /> Перегенерировать
+            </button>
+            <button
+              onClick={onExportDxf}
+              className="h-9 px-3.5 rounded-full text-[12px] flex items-center gap-1.5 hover:bg-violet-500/15 transition border border-violet-400/30 text-violet-200/90 hover:text-white"
+              title="Реальный CAD-чертёж — открывается в AutoCAD/ArchiCAD/Revit"
+            >
+              <Download size={12} /> DXF
+              <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-violet-500/20 ml-0.5">CAD</span>
             </button>
             <button
               onClick={() => exportAiPlansPdf(bag.variants)}

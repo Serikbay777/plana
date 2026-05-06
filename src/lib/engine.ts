@@ -457,5 +457,61 @@ export async function editAiPlan(
   };
 }
 
+// ---------------------------------------------------------------------------
+// CAD-экспорт (DXF) — параллельный пайплайн
+// ---------------------------------------------------------------------------
+
+export type FloorPlanMetrics = {
+  total_floor_area_m2: number;
+  apartments_count: number;
+  avg_apartment_area_m2: number;
+  sections_count: number;
+  units_per_section: number;
+  living_area_estimate_m2: number;
+  efficiency_pct: number;
+};
+
+/**
+ * Скачать DXF плана типового этажа (для AutoCAD/ArchiCAD/Revit).
+ *
+ * Возвращает blob + метрики из заголовков (apt count, площади, К_eff).
+ * В отличие от AI-чертежей это РЕАЛЬНАЯ геометрия со слоями и размерами.
+ */
+export async function exportFloorplanDxf(
+  req: VisualizeFromInputsRequest,
+): Promise<{ blob: Blob; filename: string; metricsHeaders: Record<string, string> }> {
+  const res = await fetch(`${ENGINE_URL}/export/floorplan-dxf`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new EngineError(res.status, await res.text());
+
+  const blob = await res.blob();
+  return {
+    blob,
+    filename: "plana-floorplan.dxf",
+    metricsHeaders: {
+      apartments: res.headers.get("X-Apartments-Count") ?? "",
+      floorArea: res.headers.get("X-Floor-Area") ?? "",
+      livingArea: res.headers.get("X-Living-Area") ?? "",
+      efficiency: res.headers.get("X-Efficiency-Pct") ?? "",
+      sections: res.headers.get("X-Sections") ?? "",
+    },
+  };
+}
+
+/**
+ * Только метрики — для preview прямо в форме (быстро, без генерации DXF).
+ */
+export async function getFloorplanMetrics(
+  req: VisualizeFromInputsRequest,
+): Promise<FloorPlanMetrics> {
+  return request("/export/floorplan-metrics", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;

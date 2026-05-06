@@ -21,6 +21,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .. import __version__
+from ..cad import build_floorplan_dxf, compute_floorplan_metrics
 from ..types import BuildingPurpose
 from ..visualizer import (
     GenerationOptions, MarketingInputs, build_exterior_prompt,
@@ -1102,4 +1103,76 @@ async def import_gpzu(file: UploadFile = File(...)) -> GpzuImportResponse:
         purpose_allowed=ext.purpose_allowed,
         notes=ext.notes,
         confidence=ext.confidence,
+    )
+
+
+# ---------------------------------------------------------------------------
+# CAD-экспорт (DXF) — параллельный пайплайн рядом с AI-чертежами
+# Закрывает ТЗ-пункты 2.4, 2.6, 2.8, 5.2, 5.7
+# ---------------------------------------------------------------------------
+
+
+class FloorPlanMetricsResponse(BaseModel):
+    """Реальные метрики, посчитанные из геометрии (не из промпта)."""
+    total_floor_area_m2: float
+    apartments_count: int
+    avg_apartment_area_m2: float
+    sections_count: int
+    units_per_section: int
+    living_area_estimate_m2: float
+    efficiency_pct: float
+
+
+@app.post("/export/floorplan-dxf")
+def export_floorplan_dxf(req: VisualizeFromInputsRequest) -> Response:
+    """Сгенерировать DXF плана типового этажа (для AutoCAD/ArchiCAD/Revit).
+
+    В отличие от /visualize/floor-variants (картинка от gpt-image), здесь
+    создаётся РЕАЛЬНАЯ геометрия с точными координатами, слоями
+    (СТЕНЫ_НЕСУЩИЕ, ПРОТИВОПОЖАРНЫЕ, ЛИФТЫ_ЛЕСТНИЦЫ, ОСИ, РАЗМЕРЫ и т.д.),
+    размерными цепочками и штампом.
+
+    Архитектор открывает результат в AutoCAD и сразу работает.
+    """
+    inputs = _inputs_from_req(req)
+    try:
+        dxf_bytes = build_floorplan_dxf(inputs)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DXF build failed: {e}")
+
+    metrics = compute_floorplan_metrics(inputs)
+    return Response(
+        content=dxf_bytes,
+        media_type="application/dxf",
+        headers={
+            "Content-Disposition": "attachment; filename=plana-floorplan.dxf",
+            "X-Apartments-Count": str(metrics.apartments_count),
+            "X-Floor-Area": f"{metrics.total_floor_area_m2}",
+            "X-Living-Area": f"{metrics.living_area_estimate_m2}",
+            "X-Efficiency-Pct": f"{metrics.efficiency_pct}",
+            "X-Sections": str(metrics.sections_count),
+            "Access-Control-Expose-Headers":
+                "X-Apartments-Count, X-Floor-Area, X-Living-Area, "
+                "X-Efficiency-Pct, X-Sections",
+        },
+    )
+
+
+@app.post("/export/floorplan-metrics", response_model=FloorPlanMetricsResponse)
+def export_floorplan_metrics(req: VisualizeFromInputsRequest) -> FloorPlanMetricsResponse:
+    """Только метрики (без генерации DXF) — быстрый расчёт по параметрам.
+
+    Полезно для preview прямо в форме: пока юзер крутит слайдеры —
+    видит сколько будет квартир, какая К_efficiency, сколько живой площади.
+    """
+    inputs = _inputs_from_req(req)
+    m = compute_floorplan_metrics(inputs)
+    return FloorPlanMetricsResponse(
+        total_floor_area_m2=m.total_floor_area_m2,
+        apartments_count=m.apartments_count,
+        avg_apartment_area_m2=m.avg_apartment_area_m2,
+        sections_count=m.sections_count,
+        units_per_section=m.units_per_section,
+        living_area_estimate_m2=m.living_area_estimate_m2,
+        efficiency_pct=m.efficiency_pct,
     )
