@@ -21,10 +21,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .. import __version__
-from ..cad import (
-    ApartmentSpec, build_apartment_dxf,
-    build_floorplan_dxf, compute_floorplan_metrics,
-)
+from ..cad import build_floorplan_dxf, compute_floorplan_metrics
 from ..types import BuildingPurpose
 from ..visualizer import (
     GenerationOptions, MarketingInputs, build_exterior_prompt,
@@ -1178,36 +1175,4 @@ def export_floorplan_metrics(req: VisualizeFromInputsRequest) -> FloorPlanMetric
         units_per_section=m.units_per_section,
         living_area_estimate_m2=m.living_area_estimate_m2,
         efficiency_pct=m.efficiency_pct,
-    )
-
-
-# ---------------------------------------------------------------------------
-# CAD-пред-планировка квартиры (DXF через ezdxf)
-# ---------------------------------------------------------------------------
-
-
-@app.post("/generate/apartment-preplan")
-def generate_apartment_preplan(spec: ApartmentSpec) -> Response:
-    """Сгенерировать DXF-пред-планировку квартиры по параметрам.
-
-    Phase 1: spec принимается, но writer пока выдаёт фиксированную
-    1-комнатную 6×4 м — для проверки end-to-end pipeline'а.
-
-    Возврат — application/dxf, файл `apartment-preplan.dwg` (на самом
-    деле DXF; AutoCAD читает оба расширения одинаково).
-    """
-    try:
-        dxf_bytes = build_apartment_dxf(spec)
-    except Exception as exc:  # ezdxf-ошибки → 502
-        raise HTTPException(status_code=502, detail=f"DXF generation failed: {exc}")
-
-    return Response(
-        content=dxf_bytes,
-        media_type="application/dxf",
-        headers={
-            "Content-Disposition": 'attachment; filename="apartment-preplan.dwg"',
-            "Cache-Control": "no-store",
-            "X-Phase": "1",
-            "Access-Control-Expose-Headers": "X-Phase, Content-Disposition",
-        },
     )

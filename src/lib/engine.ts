@@ -458,7 +458,7 @@ export async function editAiPlan(
 }
 
 // ---------------------------------------------------------------------------
-// CAD-экспорт (DXF) — экспорт всего этажа ЖК
+// CAD-экспорт (DXF) — параллельный пайплайн
 // ---------------------------------------------------------------------------
 
 export type FloorPlanMetrics = {
@@ -511,55 +511,6 @@ export async function getFloorplanMetrics(
     method: "POST",
     body: JSON.stringify(req),
   });
-}
-
-// ---------------------------------------------------------------------------
-// CAD пред-планировка квартиры — DXF через ezdxf (Phase 1: хардкод 6×4)
-// ---------------------------------------------------------------------------
-
-export type ApartmentType =
-  | "studio" | "k1" | "euro1" | "k2" | "euro2" | "k3" | "euro3";
-
-export type WindowSide = "north" | "south" | "east" | "west";
-
-export type ApartmentSpec = {
-  apt_type:           ApartmentType;
-  width_m:            number;
-  depth_m:            number;
-  window_sides:       WindowSide[];
-  bathroom_count:     1 | 2;
-  has_loggia:         boolean;
-  loggia_side:        WindowSide | null;
-  ceiling_height_mm:  number;
-};
-
-export const DEFAULT_APARTMENT_SPEC: ApartmentSpec = {
-  apt_type:          "k1",
-  width_m:           6.0,
-  depth_m:           4.0,
-  window_sides:      ["south"],
-  bathroom_count:    1,
-  has_loggia:        false,
-  loggia_side:       null,
-  ceiling_height_mm: 2800,
-};
-
-/**
- * Сгенерировать DXF-пред-планировку квартиры. Возвращает Blob, который
- * можно скачать с расширением `.dwg` — AutoCAD читает обе формы.
- */
-export async function generateApartmentPreplan(spec: ApartmentSpec): Promise<Blob> {
-  const res = await fetch(`${ENGINE_URL}/generate/apartment-preplan`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(spec),
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
-    throw new EngineError(res.status, detail);
-  }
-  return res.blob();
 }
 
 export { EngineError };
