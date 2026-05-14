@@ -22,6 +22,7 @@ import {
   visualizeInteriorGallery,
   editAiPlan,
   exportFloorplanDxf,
+  exportFloorplanIfc,
   type GpzuExtraction,
   type ContourAnalysis,
   type ContourRecommendation,
@@ -37,6 +38,7 @@ import { getSession, signOut, type Session } from "@/lib/auth";
 // ---------------------------------------------------------------------------
 
 type GenState = "idle" | "loading" | "ready" | "error";
+type CadExportKind = "dxf" | "ifc";
 type TopTab = "site" | "viz" | "ai_plans" | "placement";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
 
@@ -124,6 +126,17 @@ function buildVisReq(form: PromptFormState): VisualizeFromInputsRequest {
   };
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -171,19 +184,24 @@ export default function AppPage() {
   useEffect(() => {
     const s = getSession();
     if (!s) { router.replace("/login"); return; }
-    setSession(s);
-    setAuthChecked(true);
+    const timer = window.setTimeout(() => {
+      setSession(s);
+      setAuthChecked(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [router]);
 
   // сбрасываем результаты при изменении формы
   useEffect(() => {
-    setSiteBag(b => b.state === "ready" ? { ...b, state: "idle" } : b);
-    setVizExtBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
-    setVizFloorBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
-    setVizIntBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
-    setVizIntGallery(b => b.state === "ready" ? EMPTY_INT_GALLERY : b);
-    setAiPlansBag(b => b.state === "ready" ? EMPTY_AI_PLANS : b);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const timer = window.setTimeout(() => {
+      setSiteBag(b => b.state === "ready" ? { ...b, state: "idle" } : b);
+      setVizExtBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
+      setVizFloorBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
+      setVizIntBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
+      setVizIntGallery(b => b.state === "ready" ? EMPTY_INT_GALLERY : b);
+      setAiPlansBag(b => b.state === "ready" ? EMPTY_AI_PLANS : b);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [form]);
 
   // ---- ГПЗУ-импорт ---------------------------------------------------------
@@ -389,24 +407,32 @@ export default function AppPage() {
     });
   };
 
-  const [dxfLoading, setDxfLoading] = useState(false);
+  const [cadExportLoading, setCadExportLoading] = useState<CadExportKind | null>(null);
   const handleExportDxf = async () => {
-    setDxfLoading(true);
+    if (cadExportLoading !== null) return;
+    setCadExportLoading("dxf");
     try {
       const { blob, filename, metricsHeaders } = await exportFloorplanDxf(buildVisReq(form));
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, filename);
       console.log("DXF metrics:", metricsHeaders);
     } catch (e) {
       alert(`Не удалось сгенерировать DXF: ${(e as Error).message}`);
     } finally {
-      setDxfLoading(false);
+      setCadExportLoading(null);
+    }
+  };
+
+  const handleExportIfc = async () => {
+    if (cadExportLoading !== null) return;
+    setCadExportLoading("ifc");
+    try {
+      const { blob, filename, projectHeaders } = await exportFloorplanIfc(buildVisReq(form));
+      downloadBlob(blob, filename);
+      console.log("IFC project:", projectHeaders);
+    } catch (e) {
+      alert(`Не удалось сгенерировать IFC: ${(e as Error).message}`);
+    } finally {
+      setCadExportLoading(null);
     }
   };
 
@@ -494,6 +520,8 @@ export default function AppPage() {
               onGenerate={generateAiPlans}
               onGoToViz={goToVizAndGenerateAll}
               onExportDxf={() => handleExportDxf()}
+              onExportIfc={() => handleExportIfc()}
+              cadExportLoading={cadExportLoading}
               gpzuLoading={gpzuLoading}
               gpzuLastResult={gpzuLastResult}
               gpzuError={gpzuError}
@@ -724,17 +752,17 @@ function SiteTab({
 
       {/* Bottom bar */}
       {bag.state === "ready" && bag.imageUrl && (
-        <div className="border-t border-white/[0.05] px-5 py-3 flex items-center justify-between flex-shrink-0">
+        <div className="border-t border-white/[0.05] px-5 py-3 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
           <div className="flex items-center gap-3">
             {preview  && <img src={preview}   alt="" className="h-8 w-12 object-cover rounded-lg opacity-70" />}
             {bldPreview && <img src={bldPreview} alt="" className="h-8 w-12 object-cover rounded-lg opacity-70" />}
             <span className="text-[11px] text-white/35">Хочешь другой вариант?</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button onClick={onGenerate} className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition">
               <RefreshCw size={12} /> Перегенерировать
             </button>
-            <a href={bag.imageUrl} download={`plana-site-${Date.now()}.png`} className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5">
+            <a href={bag.imageUrl} download="plana-site.png" className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5">
               <Download size={12} /> Скачать PNG
             </a>
           </div>
@@ -863,7 +891,7 @@ function VizTab({
 
       {/* ── Bottom bar ── */}
       {anyReady && (
-        <div className="border-t border-white/[0.05] px-5 py-3 flex items-center justify-between flex-shrink-0">
+        <div className="border-t border-white/[0.05] px-5 py-3 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
           <div className="flex items-center gap-2 text-[11px] text-white/40">
             {nonIntModes.map(m => m.bag.state === "ready" ? (
               <span key={m.key} className="flex items-center gap-1 text-emerald-400/70">
@@ -887,14 +915,14 @@ function VizTab({
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button onClick={onGenerate} className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition">
               <RefreshCw size={12} /> Перегенерировать
             </button>
             {mode !== "interior" && activeSingleBag?.state === "ready" && activeSingleBag.imageUrl && (
               <a
                 href={activeSingleBag.imageUrl}
-                download={`${nonIntModes.find(m => m.key === mode)!.downloadName}-${Date.now()}.png`}
+                download={`${nonIntModes.find(m => m.key === mode)!.downloadName}.png`}
                 className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5"
               >
                 <Download size={12} /> Скачать PNG
@@ -1009,7 +1037,7 @@ function InteriorGalleryPanel({
               </div>
               <a
                 href={`data:image/png;base64,${items[lightboxIdx].image_b64}`}
-                download={`plana-interior-${items[lightboxIdx].apt_type}-${Date.now()}.png`}
+                download={`plana-interior-${items[lightboxIdx].apt_type}.png`}
                 className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5"
               >
                 <Download size={12} /> PNG
@@ -1076,7 +1104,7 @@ function InteriorGalleryPanel({
         </div>
         <a
           href={`data:image/png;base64,${active.image_b64}`}
-          download={`plana-interior-${active.apt_type}-${Date.now()}.png`}
+          download={`plana-interior-${active.apt_type}.png`}
           className="h-8 px-3 rounded-full surface text-[11px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/60 hover:text-white"
         >
           <Download size={11} /> PNG
@@ -1150,7 +1178,7 @@ function ImageActionBar({ bag, onGenerate, downloadName }: { bag: ImageBag; onGe
         <button onClick={onGenerate} className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition">
           <RefreshCw size={12} /> Перегенерировать
         </button>
-        <a href={bag.imageUrl} download={`${downloadName}-${Date.now()}.png`} className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5">
+        <a href={bag.imageUrl} download={`${downloadName}.png`} className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5">
           <Download size={12} /> Скачать PNG
         </a>
       </div>
@@ -1405,7 +1433,7 @@ function PlacementTab({
               <div className="text-[15px] font-semibold text-white">{lightbox.label}</div>
               <a
                 href={`data:image/png;base64,${lightbox.image_b64}`}
-                download={`plana-placement-${lightbox.key}-${Date.now()}.png`}
+                download={`plana-placement-${lightbox.key}.png`}
                 className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5"
               >
                 <Download size={12} /> Скачать PNG
@@ -1533,7 +1561,7 @@ function PlacementTab({
                     </div>
                     <a
                       href={`data:image/png;base64,${v.image_b64}`}
-                      download={`plana-placement-${v.key}-${Date.now()}.png`}
+                      download={`plana-placement-${v.key}.png`}
                       className="h-8 px-3 rounded-full surface text-[11px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/55 hover:text-white/85"
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -1567,7 +1595,7 @@ function PlacementTab({
 // ---------------------------------------------------------------------------
 
 function AiPlansTab({
-  bag, onGenerate, onGoToViz, onExportDxf,
+  bag, onGenerate, onGoToViz, onExportDxf, onExportIfc, cadExportLoading,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
   onExportFullReport, hasExtraSections,
@@ -1576,6 +1604,8 @@ function AiPlansTab({
   onGenerate: () => void;
   onGoToViz: () => void;
   onExportDxf: () => Promise<void>;
+  onExportIfc: () => Promise<void>;
+  cadExportLoading: CadExportKind | null;
   gpzuLoading: boolean;
   gpzuLastResult: GpzuExtraction | null;
   gpzuError: string | null;
@@ -1601,14 +1631,18 @@ function AiPlansTab({
 
   // Сброс edit-состояния при смене картинки в lightbox
   useEffect(() => {
-    setEditInstruction("");
-    setEditError(null);
-    setEditing(false);
-    if (editedUrl) URL.revokeObjectURL(editedUrl);
-    setEditedUrl(null);
-    setEditedModel(null);
-    setShowEdited(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const timer = window.setTimeout(() => {
+      setEditInstruction("");
+      setEditError(null);
+      setEditing(false);
+      setEditedUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return null;
+      });
+      setEditedModel(null);
+      setShowEdited(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [lightbox?.key]);
 
   const handleApplyEdit = async () => {
@@ -1732,7 +1766,7 @@ function AiPlansTab({
               <div className="flex items-center gap-2">
                 <a
                   href={currentUrl}
-                  download={`plana-ai-${lightbox.key}${showEdited ? "-edit" : ""}-${Date.now()}.png`}
+                  download={`plana-ai-${lightbox.key}${showEdited ? "-edit" : ""}.png`}
                   className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/70 hover:text-white"
                 >
                   <Download size={12} /> PNG
@@ -2006,7 +2040,7 @@ function AiPlansTab({
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <a
                       href={v.imageUrl}
-                      download={`plana-ai-${v.key}-${Date.now()}.png`}
+                      download={`plana-ai-${v.key}.png`}
                       className="h-8 px-2.5 rounded-full surface text-[11px] flex items-center gap-1 hover:bg-white/[0.08] transition text-white/55 hover:text-white/85"
                       onClick={(e) => e.stopPropagation()}
                       title="Скачать PNG"
@@ -2022,10 +2056,14 @@ function AiPlansTab({
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); onExportDxf(); }}
-                      className="h-8 px-2.5 rounded-full text-[11px] flex items-center gap-1 hover:bg-violet-500/15 transition border border-violet-400/30 text-violet-200/85 hover:text-white"
+                      disabled={cadExportLoading !== null}
+                      className={[
+                        "h-8 px-2.5 rounded-full text-[11px] flex items-center gap-1 transition border border-violet-400/30 text-violet-200/85",
+                        cadExportLoading === null ? "hover:bg-violet-500/15 hover:text-white" : "opacity-60 cursor-wait",
+                      ].join(" ")}
                       title="DXF — реальный CAD-чертёж для AutoCAD"
                     >
-                      <Download size={11} /> DXF
+                      {cadExportLoading === "dxf" ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} DXF
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); onGoToViz(); }}
@@ -2043,13 +2081,13 @@ function AiPlansTab({
 
       {/* Bottom bar */}
       {bag.state === "ready" && (
-        <div className="border-t border-white/[0.05] px-5 py-3 flex items-center justify-between flex-shrink-0">
+        <div className="border-t border-white/[0.05] px-5 py-3 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
           <div className="text-[11px] text-white/40 flex items-center gap-2">
             <span>{bag.variants.length} вариантов</span>
             <span className="text-white/20">·</span>
             <span>Кликни по изображению для полного размера</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               onClick={onGenerate}
               className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition"
@@ -2058,11 +2096,27 @@ function AiPlansTab({
             </button>
             <button
               onClick={onExportDxf}
-              className="h-9 px-3.5 rounded-full text-[12px] flex items-center gap-1.5 hover:bg-violet-500/15 transition border border-violet-400/30 text-violet-200/90 hover:text-white"
+              disabled={cadExportLoading !== null}
+              className={[
+                "h-9 px-3.5 rounded-full text-[12px] flex items-center gap-1.5 transition border border-violet-400/30 text-violet-200/90",
+                cadExportLoading === null ? "hover:bg-violet-500/15 hover:text-white" : "opacity-60 cursor-wait",
+              ].join(" ")}
               title="Реальный CAD-чертёж — открывается в AutoCAD/ArchiCAD/Revit"
             >
-              <Download size={12} /> DXF
+              {cadExportLoading === "dxf" ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} DXF
               <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-violet-500/20 ml-0.5">CAD</span>
+            </button>
+            <button
+              onClick={onExportIfc}
+              disabled={cadExportLoading !== null}
+              className={[
+                "h-9 px-3.5 rounded-full text-[12px] flex items-center gap-1.5 transition border border-cyan-400/30 text-cyan-200/90",
+                cadExportLoading === null ? "hover:bg-cyan-500/15 hover:text-white" : "opacity-60 cursor-wait",
+              ].join(" ")}
+              title="IFC4 BIM-модель — открывается в Revit/ArchiCAD/BIMcollab"
+            >
+              {cadExportLoading === "ifc" ? <Loader2 size={12} className="animate-spin" /> : <Network size={12} />} IFC
+              <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-500/20 ml-0.5">BIM</span>
             </button>
             <button
               onClick={() => exportAiPlansPdf(bag.variants)}

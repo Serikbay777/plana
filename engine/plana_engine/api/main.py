@@ -9,6 +9,9 @@
 - `POST /visualize/floor-variants`            — 5 AI-чертежей (text-to-image × 5)
 - `POST /visualize/interior-gallery`          — интерьер по типам квартир (text-to-image × N)
 - `POST /validate/project`                    — проверка норм РК + ГПЗУ (domain model + shapely)
+- `POST /export/floorplan-dxf`                — DXF плана типового этажа
+- `POST /export/floorplan-ifc`                — IFC4 (BIM) плана типового этажа
+- `POST /export/floorplan-metrics`            — только метрики этажа (быстрый расчёт)
 - `POST /import/gpzu`                         — ГПЗУ-PDF → JSON через Vision
 
 Ничего алгоритмического: параметры → промпт → gpt-image.
@@ -22,7 +25,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .. import __version__
-from ..cad import build_floorplan_dxf, compute_floorplan_metrics
+from ..cad import (
+    build_floorplan_dxf, build_floorplan_ifc, compute_floorplan_metrics,
+)
 from ..types import BuildingPurpose
 from ..visualizer import (
     GenerationOptions, MarketingInputs, build_exterior_prompt,
@@ -1236,6 +1241,41 @@ def export_floorplan_dxf(req: VisualizeFromInputsRequest) -> Response:
             "Access-Control-Expose-Headers":
                 "X-Apartments-Count, X-Floor-Area, X-Living-Area, "
                 "X-Efficiency-Pct, X-Sections",
+        },
+    )
+
+
+@app.post("/export/floorplan-ifc")
+def export_floorplan_ifc(req: VisualizeFromInputsRequest) -> Response:
+    """Сгенерировать IFC4 плана этажа (для Revit / ArchiCAD / BIMcollab).
+
+    BIM-параллель к /export/floorplan-dxf: формируется реальная иерархия
+    IfcProject → IfcSite → IfcBuilding → IfcBuildingStorey (N) с
+    периметральными IfcWall и placeholder IfcSpace на каждом этаже.
+
+    Координаты в метрах, схема IFC4. Расширится в P5 (apartments/rooms)
+    когда AI-генератор начнёт писать реальную этажную геометрию.
+    """
+    from ..domain import marketing_to_project
+
+    inputs = _inputs_from_req(req)
+    project = marketing_to_project(inputs)
+    try:
+        ifc_bytes = build_floorplan_ifc(project)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"IFC build failed: {e}")
+
+    return Response(
+        content=ifc_bytes,
+        media_type="application/x-step",  # формально STEP-based; some viewers ждут "application/ifc"
+        headers={
+            "Content-Disposition": "attachment; filename=plana-floorplan.ifc",
+            "X-Buildings-Count": str(len(project.buildings)),
+            "X-Site-Area": f"{project.site_area_m2:.1f}",
+            "X-Footprint-Area": f"{project.total_footprint_m2:.1f}",
+            "X-Coverage-Pct": f"{project.coverage_pct}",
+            "Access-Control-Expose-Headers":
+                "X-Buildings-Count, X-Site-Area, X-Footprint-Area, X-Coverage-Pct",
         },
     )
 

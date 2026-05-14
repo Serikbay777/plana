@@ -458,7 +458,7 @@ export async function editAiPlan(
 }
 
 // ---------------------------------------------------------------------------
-// CAD-экспорт (DXF) — параллельный пайплайн
+// CAD-экспорт (DXF/IFC) — параллельный пайплайн
 // ---------------------------------------------------------------------------
 
 export type FloorPlanMetrics = {
@@ -497,6 +497,34 @@ export async function exportFloorplanDxf(
       livingArea: res.headers.get("X-Living-Area") ?? "",
       efficiency: res.headers.get("X-Efficiency-Pct") ?? "",
       sections: res.headers.get("X-Sections") ?? "",
+    },
+  };
+}
+
+/**
+ * Скачать IFC4 плана этажа (BIM-заготовка для Revit/ArchiCAD/BIMcollab).
+ *
+ * Возвращает blob + базовые проектные метрики из заголовков.
+ */
+export async function exportFloorplanIfc(
+  req: VisualizeFromInputsRequest,
+): Promise<{ blob: Blob; filename: string; projectHeaders: Record<string, string> }> {
+  const res = await fetch(`${ENGINE_URL}/export/floorplan-ifc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new EngineError(res.status, await res.text());
+
+  const blob = await res.blob();
+  return {
+    blob,
+    filename: "plana-floorplan.ifc",
+    projectHeaders: {
+      buildings: res.headers.get("X-Buildings-Count") ?? "",
+      siteArea: res.headers.get("X-Site-Area") ?? "",
+      footprintArea: res.headers.get("X-Footprint-Area") ?? "",
+      coverage: res.headers.get("X-Coverage-Pct") ?? "",
     },
   };
 }

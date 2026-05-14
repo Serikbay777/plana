@@ -16,8 +16,10 @@ from .floorplan_dxf import (
     FloorPlanDxfBuilder, FloorPlanMetrics,
     build_floorplan_dxf, compute_floorplan_metrics,
 )
+from .floorplan_ifc import build_floorplan_ifc
 
 __all__ = [
     "FloorPlanDxfBuilder", "FloorPlanMetrics",
     "build_floorplan_dxf", "compute_floorplan_metrics",
+    "build_floorplan_ifc",
 ]

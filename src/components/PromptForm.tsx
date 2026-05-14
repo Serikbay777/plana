@@ -109,7 +109,10 @@ type Props = {
 
 export function PromptForm({ value, onChange, onGenerate, generating }: Props) {
   const [local, setLocal] = useState(value);
-  useEffect(() => setLocal(value), [value]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLocal(value), 0);
+    return () => window.clearTimeout(timer);
+  }, [value]);
 
   const update = <K extends keyof PromptFormState>(
     key: K, v: PromptFormState[K],
