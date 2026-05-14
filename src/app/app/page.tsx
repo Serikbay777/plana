@@ -13,6 +13,7 @@ import { ValidationPanel } from "@/components/ValidationPanel";
 import { exportAiPlansPdf, exportFullReportPdf } from "@/lib/pdf-export";
 import {
   importGpzu,
+  importFloorplanDxf,
   analyzeContour,
   visualizeExterior,
   visualizeFloorplanFurniture,
@@ -23,6 +24,7 @@ import {
   editAiPlan,
   exportFloorplanDxf,
   exportFloorplanIfc,
+  type DxfImportResult,
   type GpzuExtraction,
   type ContourAnalysis,
   type ContourRecommendation,
@@ -153,6 +155,10 @@ export default function AppPage() {
   const [gpzuLoading, setGpzuLoading] = useState(false);
   const [gpzuLastResult, setGpzuLastResult] = useState<GpzuExtraction | null>(null);
   const [gpzuError, setGpzuError] = useState<string | null>(null);
+  // CAD-импорт DXF → summary/preview (P2)
+  const [dxfImportLoading, setDxfImportLoading] = useState(false);
+  const [dxfImportResult, setDxfImportResult] = useState<DxfImportResult | null>(null);
+  const [dxfImportError, setDxfImportError] = useState<string | null>(null);
   // Vision-анализ контура / участка (Этап 2 ТЗ)
   const [contourLoading, setContourLoading] = useState(false);
   const [contourResult, setContourResult] = useState<ContourAnalysis | null>(null);
@@ -228,6 +234,21 @@ export default function AppPage() {
       setGpzuError((e as Error).message);
     } finally {
       setGpzuLoading(false);
+    }
+  };
+
+  // ---- CAD DXF-import (P2 MVP) --------------------------------------------
+  const handleDxfImport = async (file: File) => {
+    setDxfImportLoading(true);
+    setDxfImportError(null);
+    setDxfImportResult(null);
+    try {
+      const result = await importFloorplanDxf(file);
+      setDxfImportResult(result);
+    } catch (e) {
+      setDxfImportError((e as Error).message);
+    } finally {
+      setDxfImportLoading(false);
     }
   };
 
@@ -519,6 +540,11 @@ export default function AppPage() {
               bag={aiPlansBag}
               onGenerate={generateAiPlans}
               onGoToViz={goToVizAndGenerateAll}
+              dxfImportLoading={dxfImportLoading}
+              dxfImportResult={dxfImportResult}
+              dxfImportError={dxfImportError}
+              onDxfImport={handleDxfImport}
+              onClearDxfImport={() => { setDxfImportResult(null); setDxfImportError(null); }}
               onExportDxf={() => handleExportDxf()}
               onExportIfc={() => handleExportIfc()}
               cadExportLoading={cadExportLoading}
@@ -1235,6 +1261,181 @@ function GpzuSummary({ ext }: { ext: GpzuExtraction }) {
   );
 }
 
+function DxfImportSummary({ result }: { result: DxfImportResult }) {
+  const bounds = result.bounds;
+  const topLayers = [...result.layers]
+    .sort((a, b) => b.entity_count - a.entity_count)
+    .slice(0, 6);
+  const topTypes = Object.entries(result.entity_types)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,0.75fr)_minmax(300px,1fr)] gap-4">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <Layers size={12} className="text-cyan-300" />
+          <span className="text-[11.5px] text-white/75 truncate">
+            DXF импортирован · {result.filename}
+          </span>
+          <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-400/20 text-cyan-200/80">
+            {result.dxf_version}
+          </span>
+          <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.07] text-white/60">
+            {result.units_name}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          <DxfStat label="Entities" value={String(result.entity_count)} />
+          <DxfStat label="Layers" value={String(result.layer_count)} />
+          <DxfStat
+            label="BBox"
+            value={bounds ? `${bounds.width.toFixed(1)} x ${bounds.height.toFixed(1)} м` : "—"}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-[10.5px] uppercase tracking-[0.12em] text-white/35 mb-1.5">
+              Слои
+            </div>
+            <div className="space-y-1">
+              {topLayers.map((layer) => (
+                <div key={layer.name} className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="text-white/65 truncate">{layer.name}</span>
+                  <span className="text-white/35 tabular">{layer.entity_count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10.5px] uppercase tracking-[0.12em] text-white/35 mb-1.5">
+              Entity types
+            </div>
+            <div className="space-y-1">
+              {topTypes.map(([type, count]) => (
+                <div key={type} className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="text-white/65 truncate">{type}</span>
+                  <span className="text-white/35 tabular">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {result.warnings.length > 0 && (
+          <div className="mt-3 text-[11px] text-amber-200/75 leading-snug">
+            {result.warnings[0]}
+          </div>
+        )}
+      </div>
+
+      <DxfPreview result={result} />
+    </div>
+  );
+}
+
+function DxfStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white/[0.035] border border-white/[0.06] px-3 py-2">
+      <div className="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1">{label}</div>
+      <div className="text-[12px] text-white/85 tabular truncate">{value}</div>
+    </div>
+  );
+}
+
+function DxfPreview({ result }: { result: DxfImportResult }) {
+  const b = result.bounds;
+  if (!b || result.preview_entities.length === 0) {
+    return (
+      <div className="h-44 rounded-lg border border-white/[0.06] bg-black/20 grid place-items-center text-[12px] text-white/35">
+        Preview недоступен для этого DXF
+      </div>
+    );
+  }
+
+  const width = Math.max(b.width, 1);
+  const height = Math.max(b.height, 1);
+  const viewBox = `${b.min_x} ${-b.max_y} ${width} ${height}`;
+
+  return (
+    <div className="h-44 rounded-lg border border-white/[0.06] bg-[#080b10] overflow-hidden">
+      <svg viewBox={viewBox} className="w-full h-full" preserveAspectRatio="xMidYMid meet">
+        <g transform="scale(1 -1)">
+          {result.preview_entities.slice(0, 450).map((entity, i) => {
+            const stroke = DXF_LAYER_COLORS[Math.abs(hashString(entity.layer)) % DXF_LAYER_COLORS.length];
+            if (entity.type === "line") {
+              const [a, c] = entity.points;
+              return (
+                <line
+                  key={i}
+                  x1={a[0]}
+                  y1={a[1]}
+                  x2={c[0]}
+                  y2={c[1]}
+                  stroke={stroke}
+                  vectorEffect="non-scaling-stroke"
+                  strokeWidth={1}
+                  opacity={0.82}
+                />
+              );
+            }
+            if (entity.type === "polyline") {
+              const points = entity.points.map((p) => `${p[0]},${p[1]}`).join(" ");
+              return (
+                <polyline
+                  key={i}
+                  points={points}
+                  fill="none"
+                  stroke={stroke}
+                  vectorEffect="non-scaling-stroke"
+                  strokeWidth={1}
+                  opacity={0.82}
+                />
+              );
+            }
+            return (
+              <circle
+                key={i}
+                cx={entity.center[0]}
+                cy={entity.center[1]}
+                r={entity.radius}
+                fill="none"
+                stroke={stroke}
+                vectorEffect="non-scaling-stroke"
+                strokeWidth={1}
+                strokeDasharray={entity.arc ? "4 3" : undefined}
+                opacity={0.78}
+              />
+            );
+          })}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+const DXF_LAYER_COLORS = [
+  "#67e8f9",
+  "#a7f3d0",
+  "#fca5a5",
+  "#c4b5fd",
+  "#fde68a",
+  "#93c5fd",
+  "#f0abfc",
+  "#d1d5db",
+];
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+}
+
 // ---------------------------------------------------------------------------
 // ContourSummary — карточка с результатами Vision-анализа контура (Этап 2 ТЗ)
 // ---------------------------------------------------------------------------
@@ -1596,6 +1797,7 @@ function PlacementTab({
 
 function AiPlansTab({
   bag, onGenerate, onGoToViz, onExportDxf, onExportIfc, cadExportLoading,
+  dxfImportLoading, dxfImportResult, dxfImportError, onDxfImport, onClearDxfImport,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
   onExportFullReport, hasExtraSections,
@@ -1606,6 +1808,11 @@ function AiPlansTab({
   onExportDxf: () => Promise<void>;
   onExportIfc: () => Promise<void>;
   cadExportLoading: CadExportKind | null;
+  dxfImportLoading: boolean;
+  dxfImportResult: DxfImportResult | null;
+  dxfImportError: string | null;
+  onDxfImport: (f: File) => void;
+  onClearDxfImport: () => void;
   gpzuLoading: boolean;
   gpzuLastResult: GpzuExtraction | null;
   gpzuError: string | null;
@@ -1674,6 +1881,12 @@ function AiPlansTab({
     const f = e.target.files?.[0];
     if (f) onContourAnalyze(f);
     if (contourInputRef.current) contourInputRef.current.value = "";
+  };
+  const dxfInputRef = useRef<HTMLInputElement>(null);
+  const onDxfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) onDxfImport(f);
+    if (dxfInputRef.current) dxfInputRef.current.value = "";
   };
 
   // Что показываем сейчас в lightbox — оригинал или результат правки
@@ -1844,6 +2057,23 @@ function AiPlansTab({
 
         <div className="ml-auto flex items-center gap-2">
           <input
+            ref={dxfInputRef}
+            type="file"
+            accept=".dxf,application/dxf"
+            className="hidden"
+            onChange={onDxfChange}
+          />
+          <button
+            onClick={() => dxfInputRef.current?.click()}
+            disabled={dxfImportLoading}
+            className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
+            title="Загрузить DXF — покажем слои, entities, габариты и быстрый preview"
+          >
+            {dxfImportLoading ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
+            {dxfImportLoading ? "Читаем DXF…" : "DXF import"}
+          </button>
+
+          <input
             ref={contourInputRef}
             type="file"
             accept="image/*,application/pdf"
@@ -1884,6 +2114,29 @@ function AiPlansTab({
           )}
         </div>
       </div>
+
+      {/* DXF import result/error banner */}
+      {(dxfImportResult || dxfImportError) && (
+        <div className="px-5 py-3 border-b border-white/[0.04] flex items-start gap-3 flex-shrink-0">
+          {dxfImportError ? (
+            <div className="flex items-center gap-2 text-[12px] text-rose-300">
+              <AlertCircle size={13} />
+              DXF не импортирован: {dxfImportError}
+            </div>
+          ) : dxfImportResult ? (
+            <div className="flex-1 min-w-0">
+              <DxfImportSummary result={dxfImportResult} />
+            </div>
+          ) : null}
+          <button
+            onClick={onClearDxfImport}
+            className="text-white/30 hover:text-white/70 transition flex-shrink-0"
+            title="Скрыть"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       {/* GPZU result/error banner */}
       {(gpzuLastResult || gpzuError) && (

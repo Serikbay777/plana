@@ -18,6 +18,10 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 
+from .._platform import avoid_windows_wmi_platform_probe
+
+avoid_windows_wmi_platform_probe()
+
 import ezdxf
 from ezdxf.document import Drawing
 from ezdxf.layouts import Modelspace

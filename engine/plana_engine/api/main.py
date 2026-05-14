@@ -12,12 +12,15 @@
 - `POST /export/floorplan-dxf`                — DXF плана типового этажа
 - `POST /export/floorplan-ifc`                — IFC4 (BIM) плана типового этажа
 - `POST /export/floorplan-metrics`            — только метрики этажа (быстрый расчёт)
+- `POST /import/floorplan-dxf`                — DXF пользователя → summary/preview JSON
 - `POST /import/gpzu`                         — ГПЗУ-PDF → JSON через Vision
 
 Ничего алгоритмического: параметры → промпт → gpt-image.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -1054,6 +1057,72 @@ async def visualize_edit_instruction(
             "Access-Control-Expose-Headers": "X-Model-Used, X-Edit-Instruction",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# CAD-импорт: DXF пользователя → summary/preview JSON
+# ---------------------------------------------------------------------------
+
+
+class DxfBoundsResponse(BaseModel):
+    min_x: float
+    min_y: float
+    max_x: float
+    max_y: float
+    width: float
+    height: float
+
+
+class DxfLayerResponse(BaseModel):
+    name: str
+    entity_count: int
+    color: int | None = None
+    linetype: str | None = None
+    is_off: bool = False
+    is_frozen: bool = False
+
+
+class DxfImportResponse(BaseModel):
+    """Ответ /import/floorplan-dxf — metadata + упрощённый preview."""
+    filename: str
+    dxf_version: str
+    units: int | None = None
+    units_name: str
+    entity_count: int
+    layer_count: int
+    layers: list[DxfLayerResponse]
+    entity_types: dict[str, int]
+    bounds: DxfBoundsResponse | None = None
+    preview_entities: list[dict[str, Any]]
+    warnings: list[str]
+
+
+@app.post("/import/floorplan-dxf", response_model=DxfImportResponse)
+async def import_floorplan_dxf(file: UploadFile = File(...)) -> DxfImportResponse:
+    """Прочитать загруженный DXF и вернуть summary для P2 CAD-import MVP.
+
+    На этом шаге не конвертируем CAD в semantic Project. Возвращаем то, что
+    нужно фронту для первого "загрузил свой файл": слои, типы entities, bbox и
+    лёгкий SVG-preview payload.
+    """
+    filename = file.filename or "upload.dxf"
+    if not filename.lower().endswith(".dxf"):
+        raise HTTPException(status_code=400, detail="only .dxf is supported")
+
+    dxf_bytes = await file.read()
+    if not dxf_bytes:
+        raise HTTPException(status_code=400, detail="empty DXF")
+    if len(dxf_bytes) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="DXF is too large for P2 MVP (max 25 MB)")
+
+    from ..importers.dxf import DxfImportError, inspect_dxf
+
+    try:
+        summary = inspect_dxf(dxf_bytes, filename=filename)
+    except DxfImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return DxfImportResponse(**summary.to_dict())
 
 
 # ---------------------------------------------------------------------------

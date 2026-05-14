@@ -137,6 +137,62 @@ export async function importGpzu(file: File): Promise<GpzuExtraction> {
 }
 
 // ---------------------------------------------------------------------------
+// CAD-импорт DXF (P2 MVP)
+// ---------------------------------------------------------------------------
+
+export type DxfBounds = {
+  min_x: number;
+  min_y: number;
+  max_x: number;
+  max_y: number;
+  width: number;
+  height: number;
+};
+
+export type DxfLayerSummary = {
+  name: string;
+  entity_count: number;
+  color: number | null;
+  linetype: string | null;
+  is_off: boolean;
+  is_frozen: boolean;
+};
+
+export type DxfPreviewEntity =
+  | { type: "line"; layer: string; points: [number, number][] }
+  | { type: "polyline"; layer: string; points: [number, number][]; closed: boolean }
+  | { type: "circle"; layer: string; center: [number, number]; radius: number; arc?: boolean };
+
+export type DxfImportResult = {
+  filename: string;
+  dxf_version: string;
+  units: number | null;
+  units_name: string;
+  entity_count: number;
+  layer_count: number;
+  layers: DxfLayerSummary[];
+  entity_types: Record<string, number>;
+  bounds: DxfBounds | null;
+  preview_entities: DxfPreviewEntity[];
+  warnings: string[];
+};
+
+export async function importFloorplanDxf(file: File): Promise<DxfImportResult> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${ENGINE_URL}/import/floorplan-dxf`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  return res.json() as Promise<DxfImportResult>;
+}
+
+// ---------------------------------------------------------------------------
 // Visualize* (одиночные изображения из параметров формы)
 // ---------------------------------------------------------------------------
 
