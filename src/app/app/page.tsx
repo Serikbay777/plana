@@ -139,6 +139,24 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function dxfUnitToMetersScale(unit: number | null): number {
+  switch (unit) {
+    case 1: return 0.0254;   // inches
+    case 2: return 0.3048;   // feet
+    case 4: return 0.001;    // millimeters
+    case 5: return 0.01;     // centimeters
+    case 6: return 1;        // meters
+    case 7: return 1000;     // kilometers
+    case 10: return 0.9144;  // yards
+    case 14: return 0.1;     // decimeters
+    default: return 1;       // unitless/unknown: treat as meters for MVP
+  }
+}
+
+function roundMetric(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -250,6 +268,21 @@ export default function AppPage() {
     } finally {
       setDxfImportLoading(false);
     }
+  };
+
+  const applyDxfBoundsToForm = (result: DxfImportResult) => {
+    if (!result.bounds) return;
+    const scale = dxfUnitToMetersScale(result.units);
+    const widthM = roundMetric(result.bounds.width * scale);
+    const depthM = roundMetric(result.bounds.height * scale);
+    if (widthM <= 0 || depthM <= 0) return;
+    setForm((f) => ({
+      ...f,
+      building_width_m: widthM,
+      building_depth_m: depthM,
+      site_width_m: widthM,
+      site_depth_m: depthM,
+    }));
   };
 
   // ---- Vision-анализ контура (Этап 2 ТЗ) -----------------------------------
@@ -545,6 +578,7 @@ export default function AppPage() {
               dxfImportError={dxfImportError}
               onDxfImport={handleDxfImport}
               onClearDxfImport={() => { setDxfImportResult(null); setDxfImportError(null); }}
+              onApplyDxfBounds={applyDxfBoundsToForm}
               onExportDxf={() => handleExportDxf()}
               onExportIfc={() => handleExportIfc()}
               cadExportLoading={cadExportLoading}
@@ -1261,14 +1295,35 @@ function GpzuSummary({ ext }: { ext: GpzuExtraction }) {
   );
 }
 
-function DxfImportSummary({ result }: { result: DxfImportResult }) {
+function DxfImportSummary({
+  result,
+  onApplyBounds,
+}: {
+  result: DxfImportResult;
+  onApplyBounds: (result: DxfImportResult) => void;
+}) {
   const bounds = result.bounds;
+  const [visibleLayers, setVisibleLayers] = useState<Set<string>>(
+    () => new Set(result.layers.filter((layer) => !layer.is_off && !layer.is_frozen).map((layer) => layer.name)),
+  );
   const topLayers = [...result.layers]
     .sort((a, b) => b.entity_count - a.entity_count)
     .slice(0, 6);
   const topTypes = Object.entries(result.entity_types)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6);
+  const scale = dxfUnitToMetersScale(result.units);
+  const metricBounds = bounds
+    ? `${roundMetric(bounds.width * scale)} x ${roundMetric(bounds.height * scale)} м`
+    : null;
+  const toggleLayer = (name: string) => {
+    setVisibleLayers((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(220px,0.75fr)_minmax(300px,1fr)] gap-4">
@@ -1291,7 +1346,7 @@ function DxfImportSummary({ result }: { result: DxfImportResult }) {
           <DxfStat label="Layers" value={String(result.layer_count)} />
           <DxfStat
             label="BBox"
-            value={bounds ? `${bounds.width.toFixed(1)} x ${bounds.height.toFixed(1)} м` : "—"}
+            value={metricBounds ?? "-"}
           />
         </div>
 
@@ -1302,10 +1357,25 @@ function DxfImportSummary({ result }: { result: DxfImportResult }) {
             </div>
             <div className="space-y-1">
               {topLayers.map((layer) => (
-                <div key={layer.name} className="flex items-center justify-between gap-2 text-[11px]">
-                  <span className="text-white/65 truncate">{layer.name}</span>
+                <button
+                  key={layer.name}
+                  onClick={() => toggleLayer(layer.name)}
+                  className="w-full flex items-center justify-between gap-2 text-[11px] rounded-md px-1.5 py-1 hover:bg-white/[0.05] transition"
+                  title={visibleLayers.has(layer.name) ? "Скрыть слой" : "Показать слой"}
+                >
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span
+                      className={[
+                        "size-2 rounded-full flex-shrink-0",
+                        visibleLayers.has(layer.name) ? "bg-cyan-300" : "bg-white/20",
+                      ].join(" ")}
+                    />
+                    <span className={visibleLayers.has(layer.name) ? "text-white/70 truncate" : "text-white/30 truncate"}>
+                      {layer.name}
+                    </span>
+                  </span>
                   <span className="text-white/35 tabular">{layer.entity_count}</span>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -1329,9 +1399,33 @@ function DxfImportSummary({ result }: { result: DxfImportResult }) {
             {result.warnings[0]}
           </div>
         )}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => onApplyBounds(result)}
+            disabled={!bounds}
+            className="h-8 px-3 rounded-full border border-cyan-400/30 bg-cyan-500/10 text-cyan-100/90 text-[11.5px] hover:bg-cyan-500/15 transition disabled:opacity-40"
+            title="Записать bbox DXF в ширину и глубину формы"
+          >
+            Применить габариты
+          </button>
+          <button
+            onClick={() => setVisibleLayers(new Set(result.layers.map((layer) => layer.name)))}
+            className="h-8 px-3 rounded-full surface text-[11.5px] hover:bg-white/[0.08] transition"
+            title="Показать все слои"
+          >
+            Все слои
+          </button>
+          <button
+            onClick={() => setVisibleLayers(new Set())}
+            className="h-8 px-3 rounded-full surface text-[11.5px] hover:bg-white/[0.08] transition"
+            title="Скрыть все слои"
+          >
+            Скрыть
+          </button>
+        </div>
       </div>
 
-      <DxfPreview result={result} />
+      <DxfPreview result={result} visibleLayers={visibleLayers} />
     </div>
   );
 }
@@ -1345,7 +1439,15 @@ function DxfStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DxfPreview({ result }: { result: DxfImportResult }) {
+function DxfPreview({
+  result,
+  visibleLayers,
+}: {
+  result: DxfImportResult;
+  visibleLayers: Set<string>;
+}) {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const b = result.bounds;
   if (!b || result.preview_entities.length === 0) {
     return (
@@ -1357,61 +1459,133 @@ function DxfPreview({ result }: { result: DxfImportResult }) {
 
   const width = Math.max(b.width, 1);
   const height = Math.max(b.height, 1);
-  const viewBox = `${b.min_x} ${-b.max_y} ${width} ${height}`;
+  const visibleEntities = result.preview_entities.filter((entity) => visibleLayers.has(entity.layer));
+  const viewWidth = width / zoom;
+  const viewHeight = height / zoom;
+  const stepX = viewWidth * 0.12;
+  const stepY = viewHeight * 0.12;
+  const viewBox = `${b.min_x + pan.x + (width - viewWidth) / 2} ${-b.max_y + pan.y + (height - viewHeight) / 2} ${viewWidth} ${viewHeight}`;
+  const resetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
 
   return (
-    <div className="h-44 rounded-lg border border-white/[0.06] bg-[#080b10] overflow-hidden">
-      <svg viewBox={viewBox} className="w-full h-full" preserveAspectRatio="xMidYMid meet">
-        <g transform="scale(1 -1)">
-          {result.preview_entities.slice(0, 450).map((entity, i) => {
-            const stroke = DXF_LAYER_COLORS[Math.abs(hashString(entity.layer)) % DXF_LAYER_COLORS.length];
-            if (entity.type === "line") {
-              const [a, c] = entity.points;
+    <div className="rounded-lg border border-white/[0.06] bg-[#080b10] overflow-hidden">
+      <div className="h-9 border-b border-white/[0.06] px-2.5 flex items-center justify-between gap-2">
+        <div className="text-[10.5px] text-white/40 tabular">
+          {visibleEntities.length}/{result.preview_entities.length} preview entities
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setPan((p) => ({ ...p, x: p.x - stepX }))}
+            className="size-6 rounded-md surface text-[10px] text-white/55 hover:text-white"
+            title="Pan left"
+          >
+            L
+          </button>
+          <button
+            onClick={() => setPan((p) => ({ ...p, y: p.y - stepY }))}
+            className="size-6 rounded-md surface text-[10px] text-white/55 hover:text-white"
+            title="Pan up"
+          >
+            U
+          </button>
+          <button
+            onClick={() => setPan((p) => ({ ...p, y: p.y + stepY }))}
+            className="size-6 rounded-md surface text-[10px] text-white/55 hover:text-white"
+            title="Pan down"
+          >
+            D
+          </button>
+          <button
+            onClick={() => setPan((p) => ({ ...p, x: p.x + stepX }))}
+            className="size-6 rounded-md surface text-[10px] text-white/55 hover:text-white"
+            title="Pan right"
+          >
+            R
+          </button>
+          <button
+            onClick={() => setZoom((z) => Math.max(0.5, z / 1.25))}
+            className="size-6 rounded-md surface text-[12px] text-white/55 hover:text-white"
+            title="Zoom out"
+          >
+            -
+          </button>
+          <button
+            onClick={() => setZoom((z) => Math.min(12, z * 1.25))}
+            className="size-6 rounded-md surface text-[12px] text-white/55 hover:text-white"
+            title="Zoom in"
+          >
+            +
+          </button>
+          <button
+            onClick={resetView}
+            className="h-6 px-2 rounded-md surface text-[10px] text-white/55 hover:text-white"
+            title="Reset view"
+          >
+            Fit
+          </button>
+        </div>
+      </div>
+      <div className="h-44 relative">
+        {visibleEntities.length === 0 && (
+          <div className="absolute inset-0 grid place-items-center text-[12px] text-white/35">
+            Все preview-слои скрыты
+          </div>
+        )}
+        <svg viewBox={viewBox} className="w-full h-full" preserveAspectRatio="xMidYMid meet">
+          <g transform="scale(1 -1)">
+            {visibleEntities.slice(0, 450).map((entity, i) => {
+              const stroke = DXF_LAYER_COLORS[Math.abs(hashString(entity.layer)) % DXF_LAYER_COLORS.length];
+              if (entity.type === "line") {
+                const [a, c] = entity.points;
+                return (
+                  <line
+                    key={i}
+                    x1={a[0]}
+                    y1={a[1]}
+                    x2={c[0]}
+                    y2={c[1]}
+                    stroke={stroke}
+                    vectorEffect="non-scaling-stroke"
+                    strokeWidth={1}
+                    opacity={0.82}
+                  />
+                );
+              }
+              if (entity.type === "polyline") {
+                const points = entity.points.map((p) => `${p[0]},${p[1]}`).join(" ");
+                return (
+                  <polyline
+                    key={i}
+                    points={points}
+                    fill="none"
+                    stroke={stroke}
+                    vectorEffect="non-scaling-stroke"
+                    strokeWidth={1}
+                    opacity={0.82}
+                  />
+                );
+              }
               return (
-                <line
+                <circle
                   key={i}
-                  x1={a[0]}
-                  y1={a[1]}
-                  x2={c[0]}
-                  y2={c[1]}
-                  stroke={stroke}
-                  vectorEffect="non-scaling-stroke"
-                  strokeWidth={1}
-                  opacity={0.82}
-                />
-              );
-            }
-            if (entity.type === "polyline") {
-              const points = entity.points.map((p) => `${p[0]},${p[1]}`).join(" ");
-              return (
-                <polyline
-                  key={i}
-                  points={points}
+                  cx={entity.center[0]}
+                  cy={entity.center[1]}
+                  r={entity.radius}
                   fill="none"
                   stroke={stroke}
                   vectorEffect="non-scaling-stroke"
                   strokeWidth={1}
-                  opacity={0.82}
+                  strokeDasharray={entity.arc ? "4 3" : undefined}
+                  opacity={0.78}
                 />
               );
-            }
-            return (
-              <circle
-                key={i}
-                cx={entity.center[0]}
-                cy={entity.center[1]}
-                r={entity.radius}
-                fill="none"
-                stroke={stroke}
-                vectorEffect="non-scaling-stroke"
-                strokeWidth={1}
-                strokeDasharray={entity.arc ? "4 3" : undefined}
-                opacity={0.78}
-              />
-            );
-          })}
-        </g>
-      </svg>
+            })}
+          </g>
+        </svg>
+      </div>
     </div>
   );
 }
@@ -1797,7 +1971,7 @@ function PlacementTab({
 
 function AiPlansTab({
   bag, onGenerate, onGoToViz, onExportDxf, onExportIfc, cadExportLoading,
-  dxfImportLoading, dxfImportResult, dxfImportError, onDxfImport, onClearDxfImport,
+  dxfImportLoading, dxfImportResult, dxfImportError, onDxfImport, onClearDxfImport, onApplyDxfBounds,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
   onExportFullReport, hasExtraSections,
@@ -1813,6 +1987,7 @@ function AiPlansTab({
   dxfImportError: string | null;
   onDxfImport: (f: File) => void;
   onClearDxfImport: () => void;
+  onApplyDxfBounds: (result: DxfImportResult) => void;
   gpzuLoading: boolean;
   gpzuLastResult: GpzuExtraction | null;
   gpzuError: string | null;
@@ -2125,7 +2300,11 @@ function AiPlansTab({
             </div>
           ) : dxfImportResult ? (
             <div className="flex-1 min-w-0">
-              <DxfImportSummary result={dxfImportResult} />
+              <DxfImportSummary
+                key={`${dxfImportResult.filename}:${dxfImportResult.entity_count}`}
+                result={dxfImportResult}
+                onApplyBounds={onApplyDxfBounds}
+              />
             </div>
           ) : null}
           <button
