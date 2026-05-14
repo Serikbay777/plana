@@ -513,5 +513,49 @@ export async function getFloorplanMetrics(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Validation (P3) — проверка KZ-норм и ГПЗУ через доменную модель + Shapely
+// ---------------------------------------------------------------------------
+
+export type ViolationSeverity = "error" | "warning" | "info";
+
+export type ProjectViolation = {
+  rule: string;
+  severity: ViolationSeverity;
+  message: string;
+  norm: string;
+  actual: number | null;
+  expected: number | null;
+  target: string;
+};
+
+export type ProjectValidationSummary = {
+  site_area_m2: number;
+  total_footprint_m2: number;
+  coverage_pct: number;
+  buildings_count: number;
+};
+
+export type ProjectValidationResponse = {
+  summary: ProjectValidationSummary;
+  violations: ProjectViolation[];
+  errors_count: number;
+  warnings_count: number;
+  infos_count: number;
+};
+
+/**
+ * Прогнать форму через KZ-валидаторы. Использует доменную модель + shapely
+ * на бэке. Тот же VisualizeFromInputsRequest, что и /export/floorplan-metrics.
+ */
+export async function validateProject(
+  req: VisualizeFromInputsRequest,
+): Promise<ProjectValidationResponse> {
+  return request("/validate/project", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;

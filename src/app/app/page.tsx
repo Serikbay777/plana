@@ -9,6 +9,7 @@ import {
   Trees, Flame, DoorOpen, Network,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
+import { ValidationPanel } from "@/components/ValidationPanel";
 import { exportAiPlansPdf, exportFullReportPdf } from "@/lib/pdf-export";
 import {
   importGpzu,
@@ -440,14 +441,17 @@ export default function AppPage() {
         className="flex-1 px-6 pb-6 pt-4 grid gap-4"
         style={{ gridTemplateColumns: (tab === "placement" || tab === "site") ? "1fr" : "300px minmax(0, 1fr)" }}
       >
-        {/* LEFT — форма (скрыта на фото-табах) */}
+        {/* LEFT — форма + панель валидации (скрыто на фото-табах) */}
         {tab !== "placement" && tab !== "site" && (
-          <PromptForm
-            value={form}
-            onChange={setForm}
-            onGenerate={onGenerate}
-            generating={isLoading}
-          />
+          <div className="flex flex-col gap-3 min-h-0">
+            <PromptForm
+              value={form}
+              onChange={setForm}
+              onGenerate={onGenerate}
+              generating={isLoading}
+            />
+            <ValidationPanel request={buildVisReq(form)} />
+          </div>
         )}
 
         {/* RIGHT — зависит от таба */}
