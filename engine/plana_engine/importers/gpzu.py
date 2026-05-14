@@ -1,6 +1,6 @@
 """ГПЗУ-импорт через OpenAI Vision API.
 
-Принимает PDF-байты ГПЗУ, рендерит первые N страниц в PNG через pymupdf
+Принимает PDF-байты ГПЗУ, рендерит первые N страниц в PNG через pypdfium2
 и отправляет в OpenAI structured-output (json_schema) — модель извлекает
 нормативные ограничения (отступы, высота, КИТ, разрешённое назначение).
 
@@ -107,36 +107,18 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
-def _pdf_to_png(pdf_bytes: bytes, *, dpi: int = 150, max_pages: int = 4) -> list[bytes]:
-    """Отрендерить до `max_pages` страниц PDF в PNG-байты."""
-    try:
-        import pymupdf  # type: ignore[import-untyped]
-    except ImportError as e:
-        raise GpzuParseError(
-            "pymupdf не установлен — добавь его в pyproject.toml"
-        ) from e
-
-    pages: list[bytes] = []
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
-        n = min(len(doc), max_pages)
-        zoom = dpi / 72.0
-        mat = pymupdf.Matrix(zoom, zoom)
-        for i in range(n):
-            pix = doc[i].get_pixmap(matrix=mat, alpha=False)
-            pages.append(pix.tobytes("png"))
-    return pages
-
-
 def extract_gpzu(pdf_bytes: bytes, *, model: str = "gpt-4.1") -> GpzuExtraction:
     """Извлечь поля из PDF-ГПЗУ через OpenAI Vision."""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise GpzuParseError("OPENAI_API_KEY не задан в окружении")
 
+    from .._pdf_render import PdfRenderError, pdf_to_png
+
     try:
-        png_pages = _pdf_to_png(pdf_bytes)
-    except GpzuParseError:
-        raise
+        png_pages = pdf_to_png(pdf_bytes)
+    except PdfRenderError as e:
+        raise GpzuParseError(str(e)) from e
     except Exception as e:
         raise GpzuParseError(f"не удалось отрендерить PDF: {e}") from e
     if not png_pages:

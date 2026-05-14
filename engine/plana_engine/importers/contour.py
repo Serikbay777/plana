@@ -191,37 +191,21 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
-def _pdf_to_png(pdf_bytes: bytes, *, dpi: int = 150, max_pages: int = 4) -> list[bytes]:
-    """Отрендерить до `max_pages` страниц PDF в PNG-байты."""
-    try:
-        import pymupdf  # type: ignore[import-untyped]
-    except ImportError as e:
-        raise ContourAnalysisError(
-            "pymupdf не установлен — добавь его в pyproject.toml"
-        ) from e
-
-    pages: list[bytes] = []
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
-        n = min(len(doc), max_pages)
-        zoom = dpi / 72.0
-        mat = pymupdf.Matrix(zoom, zoom)
-        for i in range(n):
-            pix = doc[i].get_pixmap(matrix=mat, alpha=False)
-            pages.append(pix.tobytes("png"))
-    return pages
-
-
 def _bytes_to_png_list(data: bytes, *, mime: str | None = None) -> list[bytes]:
     """Привести любой загруженный файл к списку PNG-байт.
 
-    PDF → рендерим в PNG через pymupdf.
+    PDF → рендерим в PNG через pypdfium2.
     JPG/PNG/прочее изображение → отдаём как есть, в одном элементе.
 
     Не валидируем содержимое — gpt-4.1 сам разберётся, если на входе мусор.
     """
     # Простая магическая проверка на PDF
     if data[:4] == b"%PDF" or (mime and "pdf" in mime.lower()):
-        return _pdf_to_png(data)
+        from .._pdf_render import PdfRenderError, pdf_to_png
+        try:
+            return pdf_to_png(data)
+        except PdfRenderError as e:
+            raise ContourAnalysisError(str(e)) from e
     return [data]
 
 
