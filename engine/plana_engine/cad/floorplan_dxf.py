@@ -443,20 +443,47 @@ class FloorPlanMetrics:
 
 
 def compute_floorplan_metrics(inputs: MarketingInputs) -> FloorPlanMetrics:
-    """Расчёт метрик по той же логике что и DXF builder."""
+    """Расчёт метрик плана этажа.
+
+    Габариты / площади идут через доменную модель (shapely) — это даёт нам
+    точный `polygon.area` вместо ручного `W * H`. Сейчас семантически
+    равно тому же значению (участок прямоугольный), но после P5 — когда у
+    нас будет реальная геометрия квартир — те же поля будут считаться по
+    `building.floors[i].apartments[j].area_total_m2` без переписывания
+    API эндпоинта.
+
+    Поля `apartments_count` / `avg_apartment_area` / `living_area` пока
+    остаются эвристиками из MarketingInputs — реальной геометрии квартир
+    в P1 ещё нет.
+    """
+    # Локальный импорт — не тянуть shapely в холодный старт DXF-генератора.
+    from ..domain import marketing_to_project
+
+    project = marketing_to_project(inputs)
+    building = project.buildings[0]
+
+    # Площадь этажа = площадь участка (как было — W*H). После P3
+    # переедет на `building.footprint_area_m2` (пятно после отступов).
+    floor_area = project.site_area_m2
+
+    # Эвристики формы — пока никуда от них не деться.
     builder = FloorPlanDxfBuilder(inputs)
     n_units = builder._approx_unit_count()
     avg = builder._avg_apartment_area()
-    floor_area = builder.W * builder.H
     living = n_units * avg
+
+    sections = max(1, building.sections_count)
+
     return FloorPlanMetrics(
         total_floor_area_m2=round(floor_area, 1),
         apartments_count=n_units,
         avg_apartment_area_m2=round(avg, 1),
-        sections_count=builder.sections,
-        units_per_section=max(2, n_units // builder.sections),
+        sections_count=sections,
+        units_per_section=max(2, n_units // sections),
         living_area_estimate_m2=round(living, 1),
-        efficiency_pct=round(living / floor_area * 100, 1) if floor_area > 0 else 0.0,
+        efficiency_pct=(
+            round(living / floor_area * 100, 1) if floor_area > 0 else 0.0
+        ),
     )
 
 
