@@ -8,6 +8,7 @@
 - `POST /visualize/site-placement-variants`   — 3 стратегии посадки (image-edit × 3)
 - `POST /visualize/floor-variants`            — 5 AI-чертежей (text-to-image × 5)
 - `POST /visualize/interior-gallery`          — интерьер по типам квартир (text-to-image × N)
+- `POST /validate/project`                    — проверка норм РК + ГПЗУ (domain model + shapely)
 - `POST /import/gpzu`                         — ГПЗУ-PDF → JSON через Vision
 
 Ничего алгоритмического: параметры → промпт → gpt-image.
@@ -1103,6 +1104,87 @@ async def import_gpzu(file: UploadFile = File(...)) -> GpzuImportResponse:
         purpose_allowed=ext.purpose_allowed,
         notes=ext.notes,
         confidence=ext.confidence,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Валидация проекта по KZ-нормам и ГПЗУ
+# Закрывает ТЗ-пункт 2.2 «Проверка архитектурных ограничений и нормативов»
+# ---------------------------------------------------------------------------
+
+
+class ProjectValidationViolation(BaseModel):
+    """Одно зафиксированное нарушение / предупреждение."""
+    rule: str
+    severity: str           # "error" | "warning" | "info"
+    message: str
+    norm: str = ""
+    actual: float | None = None
+    expected: float | None = None
+    target: str = ""
+
+
+class ProjectValidationSummary(BaseModel):
+    """Геометрические метрики проекта, посчитанные через shapely."""
+    site_area_m2: float
+    total_footprint_m2: float
+    coverage_pct: float
+    buildings_count: int
+
+
+class ProjectValidationResponse(BaseModel):
+    """Ответ /validate/project — сводка + список нарушений."""
+    summary: ProjectValidationSummary
+    violations: list[ProjectValidationViolation]
+    errors_count: int
+    warnings_count: int
+    infos_count: int
+
+
+@app.post("/validate/project", response_model=ProjectValidationResponse)
+def validate_project_endpoint(
+    req: VisualizeFromInputsRequest,
+) -> ProjectValidationResponse:
+    """Прогнать форму через доменную модель и KZ-валидаторы.
+
+    Возвращает геометрическую сводку (site_area, footprint, coverage) +
+    список нарушений с разбивкой по severity. Базируется на:
+        • shapely 2.x для real-area расчётов
+        • research/kz-norms/ для ссылок на СН/СП РК
+        • ГПЗУ-параметрах формы (max_coverage_pct, max_height_m, ...)
+    """
+    from ..domain import marketing_to_project
+    from ..validators import validate_project
+
+    inputs = _inputs_from_req(req)
+    project = marketing_to_project(inputs)
+    violations = validate_project(project)
+
+    summary = ProjectValidationSummary(
+        site_area_m2=round(project.site_area_m2, 1),
+        total_footprint_m2=round(project.total_footprint_m2, 1),
+        coverage_pct=project.coverage_pct,
+        buildings_count=len(project.buildings),
+    )
+
+    items = [
+        ProjectValidationViolation(
+            rule=v.rule,
+            severity=v.severity,
+            message=v.message,
+            norm=v.norm,
+            actual=v.actual,
+            expected=v.expected,
+            target=v.target,
+        )
+        for v in violations
+    ]
+    return ProjectValidationResponse(
+        summary=summary,
+        violations=items,
+        errors_count=sum(1 for v in violations if v.severity == "error"),
+        warnings_count=sum(1 for v in violations if v.severity == "warning"),
+        infos_count=sum(1 for v in violations if v.severity == "info"),
     )
 
 
