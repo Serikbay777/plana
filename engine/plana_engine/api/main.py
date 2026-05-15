@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -70,6 +71,8 @@ class HealthResponse(BaseModel):
     version: str
     has_image_key: bool
     has_llm_key: bool
+    build_commit: str | None = None
+    routes_version: str = "cad-import-v1"
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -79,6 +82,11 @@ def health() -> HealthResponse:
         version=__version__,
         has_image_key=has_api_key(),
         has_llm_key=has_llm_key(),
+        build_commit=(
+            os.getenv("RENDER_GIT_COMMIT")
+            or os.getenv("VERCEL_GIT_COMMIT_SHA")
+            or os.getenv("GIT_COMMIT")
+        ),
     )
 
 
