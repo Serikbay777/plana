@@ -5,7 +5,8 @@
 // через NEXT_PUBLIC_ENGINE_URL.
 
 const ENGINE_URL =
-  process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:8001";
+  process.env.NEXT_PUBLIC_ENGINE_URL ??
+  (process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8001");
 
 // ---------------------------------------------------------------------------
 // Типы — повторяют схему движка (engine/plana_engine/api/main.py).
