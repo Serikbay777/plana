@@ -13,6 +13,7 @@
 - `POST /export/floorplan-ifc`                — IFC4 (BIM) плана типового этажа
 - `POST /export/floorplan-metrics`            — только метрики этажа (быстрый расчёт)
 - `POST /import/floorplan-dxf`                — DXF пользователя → summary/preview JSON
+- `POST /import/floorplan-dwg`                — DWG пользователя → DXF → summary/preview JSON
 - `POST /import/gpzu`                         — ГПЗУ-PDF → JSON через Vision
 
 Ничего алгоритмического: параметры → промпт → gpt-image.
@@ -1085,6 +1086,9 @@ class DxfLayerResponse(BaseModel):
 class DxfImportResponse(BaseModel):
     """Ответ /import/floorplan-dxf — metadata + упрощённый preview."""
     filename: str
+    source_format: str = "dxf"
+    converted_from: str | None = None
+    converter: str | None = None
     dxf_version: str
     units: int | None = None
     units_name: str
@@ -1122,7 +1126,42 @@ async def import_floorplan_dxf(file: UploadFile = File(...)) -> DxfImportRespons
     except DxfImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return DxfImportResponse(**summary.to_dict())
+    return DxfImportResponse(**summary.to_dict(), source_format="dxf")
+
+
+@app.post("/import/floorplan-dwg", response_model=DxfImportResponse)
+async def import_floorplan_dwg(file: UploadFile = File(...)) -> DxfImportResponse:
+    """Конвертировать DWG в DXF и вернуть тот же summary/preview, что у DXF import."""
+    filename = file.filename or "upload.dwg"
+    if not filename.lower().endswith(".dwg"):
+        raise HTTPException(status_code=400, detail="only .dwg is supported")
+
+    dwg_bytes = await file.read()
+    if not dwg_bytes:
+        raise HTTPException(status_code=400, detail="empty DWG")
+    if len(dwg_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="DWG is too large for P2 MVP (max 50 MB)")
+
+    from ..importers.dwg import DwgConversionError, dwg_to_dxf
+    from ..importers.dxf import DxfImportError, inspect_dxf
+
+    try:
+        converted = dwg_to_dxf(dwg_bytes, filename=filename)
+        summary = inspect_dxf(
+            converted.dxf_bytes,
+            filename=f"{filename.rsplit('.', 1)[0]}.dxf",
+        )
+    except DwgConversionError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except DxfImportError as e:
+        raise HTTPException(status_code=400, detail=f"converted DXF is not readable: {e}")
+
+    return DxfImportResponse(
+        **summary.to_dict(),
+        source_format="dwg",
+        converted_from=filename,
+        converter=converted.converter,
+    )
 
 
 # ---------------------------------------------------------------------------

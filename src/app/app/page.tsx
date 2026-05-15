@@ -13,7 +13,7 @@ import { ValidationPanel } from "@/components/ValidationPanel";
 import { exportAiPlansPdf, exportFullReportPdf } from "@/lib/pdf-export";
 import {
   importGpzu,
-  importFloorplanDxf,
+  importFloorplanCad,
   analyzeContour,
   visualizeExterior,
   visualizeFloorplanFurniture,
@@ -261,7 +261,7 @@ export default function AppPage() {
     setDxfImportError(null);
     setDxfImportResult(null);
     try {
-      const result = await importFloorplanDxf(file);
+      const result = await importFloorplanCad(file);
       setDxfImportResult(result);
     } catch (e) {
       setDxfImportError((e as Error).message);
@@ -1331,8 +1331,13 @@ function DxfImportSummary({
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <Layers size={12} className="text-cyan-300" />
           <span className="text-[11.5px] text-white/75 truncate">
-            DXF импортирован · {result.filename}
+            {result.source_format === "dwg" ? "DWG импортирован" : "DXF импортирован"} · {result.converted_from ?? result.filename}
           </span>
+          {result.converter && (
+            <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-400/20 text-emerald-200/80">
+              {result.converter} → DXF
+            </span>
+          )}
           <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-400/20 text-cyan-200/80">
             {result.dxf_version}
           </span>
@@ -2234,7 +2239,7 @@ function AiPlansTab({
           <input
             ref={dxfInputRef}
             type="file"
-            accept=".dxf,application/dxf"
+            accept=".dxf,.dwg,application/dxf"
             className="hidden"
             onChange={onDxfChange}
           />
@@ -2242,10 +2247,10 @@ function AiPlansTab({
             onClick={() => dxfInputRef.current?.click()}
             disabled={dxfImportLoading}
             className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
-            title="Загрузить DXF — покажем слои, entities, габариты и быстрый preview"
+            title="Загрузить DXF/DWG — покажем слои, entities, габариты и быстрый preview"
           >
             {dxfImportLoading ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
-            {dxfImportLoading ? "Читаем DXF…" : "DXF import"}
+            {dxfImportLoading ? "Читаем CAD…" : "CAD import"}
           </button>
 
           <input
@@ -2296,7 +2301,7 @@ function AiPlansTab({
           {dxfImportError ? (
             <div className="flex items-center gap-2 text-[12px] text-rose-300">
               <AlertCircle size={13} />
-              DXF не импортирован: {dxfImportError}
+              CAD не импортирован: {dxfImportError}
             </div>
           ) : dxfImportResult ? (
             <div className="flex-1 min-w-0">

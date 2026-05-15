@@ -165,6 +165,9 @@ export type DxfPreviewEntity =
 
 export type DxfImportResult = {
   filename: string;
+  source_format: "dxf" | "dwg";
+  converted_from: string | null;
+  converter: string | null;
   dxf_version: string;
   units: number | null;
   units_name: string;
@@ -177,10 +180,14 @@ export type DxfImportResult = {
   warnings: string[];
 };
 
-export async function importFloorplanDxf(file: File): Promise<DxfImportResult> {
+export async function importFloorplanCad(file: File): Promise<DxfImportResult> {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch(`${ENGINE_URL}/import/floorplan-dxf`, {
+  const lower = file.name.toLowerCase();
+  const path = lower.endsWith(".dwg")
+    ? "/import/floorplan-dwg"
+    : "/import/floorplan-dxf";
+  const res = await fetch(`${ENGINE_URL}${path}`, {
     method: "POST",
     body: fd,
   });
