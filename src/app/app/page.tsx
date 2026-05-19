@@ -736,10 +736,17 @@ export default function AppPage() {
     setCadExportLoading("ifc");
     try {
       const visReq = buildVisReq(form);
-      const layout = await generateFloorLayout(visReq);
-      const { blob, filename, projectHeaders } = await exportFloorplanIfc(visReq, layout);
-      downloadBlob(blob, filename);
-      console.log("IFC project:", projectHeaders);
+      let result;
+      try {
+        // Богатый IFC: GPT-планировка → IfcSpace на каждую комнату
+        const layout = await generateFloorLayout(visReq);
+        result = await exportFloorplanIfc(visReq, layout);
+      } catch {
+        // Фолбэк: параметрический IFC (перекрытия/ядра/коридоры) без layout
+        result = await exportFloorplanIfc(visReq);
+      }
+      downloadBlob(result.blob, result.filename);
+      console.log("IFC project:", result.projectHeaders);
     } catch (e) {
       alert(`Не удалось сгенерировать IFC: ${(e as Error).message}`);
     } finally {
@@ -788,7 +795,13 @@ export default function AppPage() {
         onNewProject={handleNewProject}
         onOpenProject={handleOpenProject}
       />
-      <TabStrip tab={tab} onChange={setTab} />
+      <TabStrip
+        tab={tab}
+        onChange={setTab}
+        onExportDxf={handleExportDxf}
+        onExportIfc={handleExportIfc}
+        cadExportLoading={cadExportLoading}
+      />
 
       <main
         className="flex-1 px-6 pb-6 pt-4 grid gap-4"
@@ -1072,7 +1085,15 @@ function Header({
   );
 }
 
-function TabStrip({ tab, onChange }: { tab: TopTab; onChange: (t: TopTab) => void }) {
+function TabStrip({
+  tab, onChange, onExportDxf, onExportIfc, cadExportLoading,
+}: {
+  tab: TopTab;
+  onChange: (t: TopTab) => void;
+  onExportDxf: () => void;
+  onExportIfc: () => void;
+  cadExportLoading: CadExportKind | null;
+}) {
   const items: Array<{ key: TopTab; label: string; icon: React.ReactNode }> = [
     { key: "ai_plans",  label: "AI Чертежи",          icon: <Sparkles size={13} /> },
     { key: "viz",       label: "Визуализации",         icon: <ImageIcon size={13} /> },
@@ -1080,7 +1101,7 @@ function TabStrip({ tab, onChange }: { tab: TopTab; onChange: (t: TopTab) => voi
     { key: "placement", label: "Размещение ЖК",        icon: <Building2 size={13} /> },
   ];
   return (
-    <div className="px-6 pt-3 pb-1 border-b border-white/[0.04]">
+    <div className="px-6 pt-3 pb-1 border-b border-white/[0.04] flex items-center justify-between gap-3 flex-wrap">
       <div className="inline-flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.05]">
         {items.map((it) => (
           <button
@@ -1097,6 +1118,33 @@ function TabStrip({ tab, onChange }: { tab: TopTab; onChange: (t: TopTab) => voi
             {it.label}
           </button>
         ))}
+      </div>
+      {/* Экспорт CAD/BIM — доступен в любом разделе (параметрический, от формы) */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onExportDxf}
+          disabled={cadExportLoading !== null}
+          className={[
+            "h-8 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 transition border border-violet-400/30 text-violet-200/90",
+            cadExportLoading === null ? "hover:bg-violet-500/15 hover:text-white" : "opacity-60 cursor-wait",
+          ].join(" ")}
+          title="DXF — реальный CAD-чертёж для AutoCAD/ArchiCAD/Revit"
+        >
+          {cadExportLoading === "dxf" ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} DXF
+          <span className="text-[8.5px] uppercase tracking-wider px-1 py-0.5 rounded bg-violet-500/20">CAD</span>
+        </button>
+        <button
+          onClick={onExportIfc}
+          disabled={cadExportLoading !== null}
+          className={[
+            "h-8 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 transition border border-cyan-400/30 text-cyan-200/90",
+            cadExportLoading === null ? "hover:bg-cyan-500/15 hover:text-white" : "opacity-60 cursor-wait",
+          ].join(" ")}
+          title="IFC4 BIM-модель — открывается в Revit/ArchiCAD/BIMcollab"
+        >
+          {cadExportLoading === "ifc" ? <Loader2 size={11} className="animate-spin" /> : <Network size={11} />} IFC
+          <span className="text-[8.5px] uppercase tracking-wider px-1 py-0.5 rounded bg-cyan-500/20">BIM</span>
+        </button>
       </div>
     </div>
   );
