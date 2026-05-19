@@ -37,9 +37,21 @@ def init_db() -> None:
             )
         """)
         c.execute("""
+            CREATE TABLE IF NOT EXISTS generation_runs (
+                id              TEXT PRIMARY KEY,
+                project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                tab             TEXT NOT NULL DEFAULT 'ai_plans',
+                floor           INTEGER NOT NULL DEFAULT 1,
+                params_snapshot TEXT NOT NULL DEFAULT '{}',
+                created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("""
             CREATE TABLE IF NOT EXISTS project_assets (
                 id          TEXT PRIMARY KEY,
                 project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                run_id      TEXT REFERENCES generation_runs(id) ON DELETE SET NULL,
                 tab         TEXT NOT NULL,
                 variant_key TEXT NOT NULL,
                 floor       INTEGER NOT NULL DEFAULT 1,
@@ -49,13 +61,17 @@ def init_db() -> None:
             )
         """)
         c.commit()
-    # migration: add floor column to existing tables
+    # migrations
     with _conn() as c:
-        try:
-            c.execute("ALTER TABLE project_assets ADD COLUMN floor INTEGER NOT NULL DEFAULT 1")
-            c.commit()
-        except Exception:
-            pass  # column already exists
+        for col_sql in [
+            "ALTER TABLE project_assets ADD COLUMN floor INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE project_assets ADD COLUMN run_id TEXT REFERENCES generation_runs(id) ON DELETE SET NULL",
+        ]:
+            try:
+                c.execute(col_sql)
+                c.commit()
+            except Exception:
+                pass
 
     # Автоматически создаём seed-пользователя при старте, если задан в env.
     # Это позволяет Render пересоздавать пользователя после каждого редеплоя.
@@ -162,17 +178,20 @@ def delete_project(project_id: str, user_id: str) -> bool:
 
 def create_asset(
     project_id: str, tab: str, variant_key: str, file_path: str,
-    model_used: str | None, floor: int = 1,
+    model_used: str | None, floor: int = 1, run_id: str | None = None,
 ) -> dict:
     asset_id = str(uuid.uuid4())
     with _conn() as c:
         c.execute(
-            "INSERT INTO project_assets (id, project_id, tab, variant_key, floor, file_path, model_used) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (asset_id, project_id, tab, variant_key, floor, file_path, model_used),
+            """INSERT INTO project_assets
+               (id, project_id, run_id, tab, variant_key, floor, file_path, model_used)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (asset_id, project_id, run_id, tab, variant_key, floor, file_path, model_used),
         )
         c.execute("UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (project_id,))
         c.commit()
-    return {"id": asset_id, "project_id": project_id, "tab": tab, "variant_key": variant_key, "floor": floor, "file_path": file_path}
+    return {"id": asset_id, "project_id": project_id, "run_id": run_id,
+            "tab": tab, "variant_key": variant_key, "floor": floor, "file_path": file_path}
 
 
 def list_assets(project_id: str) -> list[dict]:
@@ -191,3 +210,64 @@ def get_project_thumbnail(project_id: str) -> str | None:
             (project_id,),
         ).fetchone()
         return row["file_path"] if row else None
+
+
+def get_project_thumbnails(project_id: str, limit: int = 4) -> list[str]:
+    """Return up to `limit` distinct asset file_paths for the project preview grid."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT DISTINCT file_path FROM project_assets
+               WHERE project_id = ? ORDER BY created_at DESC LIMIT ?""",
+            (project_id, limit),
+        ).fetchall()
+        return [r["file_path"] for r in rows]
+
+
+def get_project_counts(project_id: str) -> dict:
+    with _conn() as c:
+        asset_count = c.execute(
+            "SELECT COUNT(*) FROM project_assets WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        run_count = c.execute(
+            "SELECT COUNT(*) FROM generation_runs WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        return {"asset_count": asset_count, "run_count": run_count}
+
+
+# ---------------------------------------------------------------------------
+# Generation runs
+# ---------------------------------------------------------------------------
+
+def create_run(
+    project_id: str, user_id: str, tab: str, floor: int, params_snapshot: str
+) -> dict:
+    run_id = str(uuid.uuid4())
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO generation_runs (id, project_id, user_id, tab, floor, params_snapshot)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (run_id, project_id, user_id, tab, floor, params_snapshot),
+        )
+        c.execute("UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (project_id,))
+        c.commit()
+    return {"id": run_id, "project_id": project_id, "user_id": user_id,
+            "tab": tab, "floor": floor, "params_snapshot": params_snapshot}
+
+
+def list_runs(project_id: str, limit: int = 100) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT * FROM generation_runs WHERE project_id = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (project_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_run_assets(run_id: str) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM project_assets WHERE run_id = ? ORDER BY created_at",
+            (run_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]

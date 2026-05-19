@@ -7,7 +7,7 @@ import {
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, ArrowRight, Wand2, Loader2, ScanSearch, Compass, Ruler,
   Trees, Flame, DoorOpen, Network, Save, FolderOpen, Check,
-  LayoutGrid, List,
+  LayoutGrid, List, History, ChevronDown, Plus,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { ValidationPanel } from "@/components/ValidationPanel";
@@ -43,7 +43,8 @@ import {
   type FloorPlanMetrics,
 } from "@/lib/engine";
 import { getSession, signOut, type Session } from "@/lib/auth";
-import { createProject, updateProject, uploadAsset, getProject } from "@/lib/projects";
+import { createProject, updateProject, uploadAsset, getProject, createRun, listProjects, type GenerationRun, type Project as ProjectType } from "@/lib/projects";
+import HistoryPanel from "@/components/HistoryPanel";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -178,6 +179,10 @@ export default function AppPage() {
   const [authChecked, setAuthChecked] = useState(false);
   // Хранение проектов
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [autoSaveLabel, setAutoSaveLabel] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<ProjectType[]>([]);
   const [projectName, setProjectName] = useState("Без названия");
   const [saving, setSaving] = useState(false);
   const [saveOk, setSaveOk] = useState(false);
@@ -231,6 +236,12 @@ export default function AppPage() {
     setSession(s);
     setAuthChecked(true);
   }, [router]);
+
+  // ---- загрузка последних проектов для переключателя
+  useEffect(() => {
+    if (!authChecked) return;
+    listProjects().then(setRecentProjects).catch(() => {});
+  }, [authChecked]);
 
   // ---- загрузка проекта по ?project=ID
   useEffect(() => {
@@ -301,6 +312,46 @@ export default function AppPage() {
       setSaving(false);
     }
   }, [saving, projectId, projectName, form, floorBags, vizExtBag, vizFloorBag, siteBag]);
+
+  // ---- авто-сохранение после генерации
+  const autoSaveGeneration = useCallback(async (
+    tab: string,
+    floor: number,
+    assets: { variantKey: string; imageUrl: string; modelUsed?: string }[],
+    currentForm: PromptFormState,
+  ) => {
+    if (autoSaving) return;
+    setAutoSaving(true);
+    try {
+      // Создаём проект автоматически если его ещё нет
+      let pid = projectId;
+      let pname = projectName;
+      if (!pid) {
+        const auto = `${currentForm.purpose === "residential" ? "ЖК" : "Проект"} ${currentForm.floors}эт ${currentForm.building_width_m}×${currentForm.building_depth_m}`;
+        pname = auto;
+        setProjectName(auto);
+        const p = await createProject(auto, currentForm);
+        pid = p.id;
+        setProjectId(pid);
+        window.history.replaceState(null, "", `?project=${pid}`);
+        setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
+      } else {
+        await updateProject(pid, { params: currentForm }).catch(() => {});
+      }
+      // Создаём run
+      const run = await createRun(pid, tab, floor, currentForm);
+      // Загружаем ассеты
+      await Promise.all(
+        assets.map((a) =>
+          uploadAsset(pid!, tab, a.variantKey, a.imageUrl, a.modelUsed, floor, run.id).catch(() => {}),
+        ),
+      );
+      setAutoSaveLabel(pname || "проект");
+      setTimeout(() => setAutoSaveLabel(null), 3000);
+    } catch { /* silent */ } finally {
+      setAutoSaving(false);
+    }
+  }, [autoSaving, projectId, projectName]);
 
   // сбрасываем результаты при изменении формы
   useEffect(() => {
@@ -501,9 +552,10 @@ export default function AppPage() {
 
   const generateAiPlans = async () => {
     const fl = currentFloor;
+    const snapForm = form;
     setFloorBags(prev => ({ ...prev, [fl]: { ...EMPTY_AI_PLANS, state: "loading" } }));
     try {
-      const res = await visualizeFloorByLevel({ ...buildVisReq(form), floor_number: fl });
+      const res = await visualizeFloorByLevel({ ...buildVisReq(snapForm), floor_number: fl });
       const variants: AiPlanVariant[] = res.variants.map((v) => ({
         key: v.key,
         label: v.label,
@@ -512,6 +564,12 @@ export default function AppPage() {
         imageUrl: `data:image/png;base64,${v.image_b64}`,
       }));
       setFloorBags(prev => ({ ...prev, [fl]: { state: "ready", variants, elapsedMs: res.elapsed_ms, errorMessage: null } }));
+      // авто-сохранение в фоне
+      autoSaveGeneration(
+        "ai_plans", fl,
+        variants.map((v) => ({ variantKey: v.key, imageUrl: v.imageUrl, modelUsed: v.modelUsed })),
+        snapForm,
+      );
     } catch (e) {
       setFloorBags(prev => ({ ...prev, [fl]: { ...EMPTY_AI_PLANS, state: "error", errorMessage: (e as Error).message } }));
     }
@@ -556,6 +614,54 @@ export default function AppPage() {
       floorplanFurnitureUrl: vizFloorBag.state === "ready" ? vizFloorBag.imageUrl : null,
       interiors: vizIntGallery.state === "ready" ? vizIntGallery.items : [],
     });
+  };
+
+  // ---- восстановление из истории
+  const handleRestoreRun = useCallback((run: GenerationRun) => {
+    if (run.tab === "ai_plans") {
+      const variants: AiPlanVariant[] = run.assets.map((a) => ({
+        key: a.variant_key,
+        label: a.variant_key,
+        imageUrl: a.url,
+        modelUsed: a.model_used ?? "",
+        enhancerUsed: "",
+      }));
+      setFloorBags((prev) => ({
+        ...prev,
+        [run.floor]: { state: "ready", variants, elapsedMs: null, errorMessage: null },
+      }));
+      setCurrentFloor(run.floor);
+      setTab("ai_plans");
+    } else if (run.tab === "viz_exterior" && run.assets[0]) {
+      setVizExtBag({ state: "ready", imageUrl: run.assets[0].url, modelUsed: run.assets[0].model_used, enhancerUsed: null, errorMessage: null });
+      setTab("viz");
+    } else if (run.tab === "viz_floor" && run.assets[0]) {
+      setVizFloorBag({ state: "ready", imageUrl: run.assets[0].url, modelUsed: run.assets[0].model_used, enhancerUsed: null, errorMessage: null });
+      setTab("viz");
+    } else if (run.tab === "site" && run.assets[0]) {
+      setSiteBag({ state: "ready", imageUrl: run.assets[0].url, modelUsed: run.assets[0].model_used, enhancerUsed: null, errorMessage: null });
+      setTab("site");
+    }
+  }, []);
+
+  const handleRestoreParams = useCallback((params: PromptFormState) => {
+    setForm(params);
+  }, []);
+
+  const handleNewProject = () => {
+    setProjectId(null);
+    setProjectName("Без названия");
+    setForm(DEFAULT_PROMPT_FORM);
+    setFloorBags({});
+    setVizExtBag(EMPTY_IMAGE_BAG);
+    setVizFloorBag(EMPTY_IMAGE_BAG);
+    setSiteBag(EMPTY_IMAGE_BAG);
+    setCurrentFloor(1);
+    window.history.replaceState(null, "", "/app");
+  };
+
+  const handleOpenProject = (p: ProjectType) => {
+    window.location.href = `/app?project=${p.id}`;
   };
 
   const [cadExportLoading, setCadExportLoading] = useState<CadExportKind | null>(null);
@@ -618,8 +724,15 @@ export default function AppPage() {
         onSave={saveProject}
         saving={saving}
         saveOk={saveOk}
+        autoSaving={autoSaving}
+        autoSaveLabel={autoSaveLabel}
         projectName={projectName}
         onRenameProject={setProjectName}
+        historyOpen={historyOpen}
+        onToggleHistory={() => setHistoryOpen((v) => !v)}
+        recentProjects={recentProjects}
+        onNewProject={handleNewProject}
+        onOpenProject={handleOpenProject}
       />
       <TabStrip tab={tab} onChange={setTab} />
 
@@ -642,8 +755,9 @@ export default function AppPage() {
           </div>
         )}
 
-        {/* RIGHT — зависит от таба */}
-        <section className="surface-strong rounded-2xl relative overflow-hidden flex flex-col min-h-[660px]">
+        {/* RIGHT — зависит от таба + панель истории */}
+        <div className="flex min-h-[660px] gap-0 rounded-2xl overflow-hidden">
+        <section className="surface-strong relative overflow-hidden flex flex-col flex-1 min-w-0 rounded-2xl" style={historyOpen ? { borderRadius: "1rem 0 0 1rem" } : {}}>
           {tab === "site" && (
             <SiteTab
               bag={siteBag}
@@ -735,6 +849,15 @@ export default function AppPage() {
             />
           )}
         </section>
+        {historyOpen && (
+          <HistoryPanel
+            projectId={projectId}
+            onRestoreImages={handleRestoreRun}
+            onRestoreParams={handleRestoreParams}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
+        </div>
       </main>
     </div>
   );
@@ -745,18 +868,28 @@ export default function AppPage() {
 // ---------------------------------------------------------------------------
 
 function Header({
-  session, onSignOut, onSave, saving, saveOk, projectName, onRenameProject,
+  session, onSignOut, onSave, saving, saveOk, autoSaving, autoSaveLabel,
+  projectName, onRenameProject,
+  historyOpen, onToggleHistory, recentProjects, onNewProject, onOpenProject,
 }: {
   session: Session | null;
   onSignOut: () => void;
   onSave: () => void;
   saving: boolean;
   saveOk: boolean;
+  autoSaving: boolean;
+  autoSaveLabel: string | null;
   projectName: string;
   onRenameProject: (name: string) => void;
+  historyOpen: boolean;
+  onToggleHistory: () => void;
+  recentProjects: ProjectType[];
+  onNewProject: () => void;
+  onOpenProject: (p: ProjectType) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(projectName);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const commitRename = () => {
     const trimmed = draft.trim() || "Без названия";
@@ -766,36 +899,96 @@ function Header({
   };
 
   return (
-    <header className="px-6 py-3 flex items-center justify-between border-b border-white/[0.05]">
+    <header className="px-6 py-3 flex items-center justify-between border-b border-white/[0.05] flex-shrink-0">
       <div className="flex items-center gap-2.5">
-        <div className="size-7 rounded-lg bg-white grid place-items-center">
+        <div className="size-7 rounded-lg bg-white grid place-items-center flex-shrink-0">
           <Layers size={13} className="text-black" strokeWidth={2.5} />
         </div>
         <span className="text-[14px] font-semibold tracking-display">Plana</span>
         <span className="text-white/20 text-[13px]">/</span>
-        {editing ? (
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }}
-            className="bg-transparent border-b border-white/30 text-[13px] text-white/85 outline-none w-40"
-          />
-        ) : (
-          <button onClick={() => { setDraft(projectName); setEditing(true); }} className="text-[13px] text-white/50 hover:text-white/80 transition">
-            {projectName}
-          </button>
+        {/* Project name + switcher */}
+        <div className="relative">
+          <div className="flex items-center gap-0.5">
+            {editing ? (
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }}
+                className="bg-transparent border-b border-white/30 text-[13px] text-white/85 outline-none w-44"
+              />
+            ) : (
+              <button onClick={() => { setDraft(projectName); setEditing(true); }} className="text-[13px] text-white/60 hover:text-white/90 transition max-w-[180px] truncate">
+                {projectName}
+              </button>
+            )}
+            <button
+              onClick={() => setSwitcherOpen((v) => !v)}
+              className="h-5 w-5 grid place-items-center text-white/30 hover:text-white/70 transition"
+            >
+              <ChevronDown size={11} className={switcherOpen ? "rotate-180 transition-transform" : "transition-transform"} />
+            </button>
+          </div>
+          {switcherOpen && (
+            <div className="absolute left-0 top-8 z-50 w-56 rounded-xl border border-white/[0.1] bg-[#151515] shadow-2xl overflow-hidden">
+              <button
+                onClick={() => { onNewProject(); setSwitcherOpen(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-white/70 hover:bg-white/[0.06] transition border-b border-white/[0.06]"
+              >
+                <Plus size={11} className="text-violet-400" /> Новый проект
+              </button>
+              {recentProjects.slice(0, 7).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => { onOpenProject(p); setSwitcherOpen(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-[12px] text-white/65 hover:bg-white/[0.06] transition"
+                >
+                  {p.thumbnail_url ? (
+                    <img src={p.thumbnail_url} alt="" className="size-7 rounded object-cover flex-shrink-0 opacity-70" />
+                  ) : (
+                    <div className="size-7 rounded bg-white/[0.05] flex-shrink-0 grid place-items-center">
+                      <Layers size={10} className="text-white/30" />
+                    </div>
+                  )}
+                  <span className="truncate">{p.name}</span>
+                </button>
+              ))}
+              <a
+                href="/projects"
+                onClick={() => setSwitcherOpen(false)}
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-[11.5px] text-white/40 hover:bg-white/[0.04] transition border-t border-white/[0.06]"
+              >
+                <FolderOpen size={10} /> Все проекты
+              </a>
+            </div>
+          )}
+        </div>
+        {/* Auto-save indicator */}
+        {autoSaving && (
+          <div className="flex items-center gap-1.5 text-[11px] text-white/35">
+            <Loader2 size={10} className="animate-spin" /> Сохраняем…
+          </div>
+        )}
+        {autoSaveLabel && !autoSaving && (
+          <div className="flex items-center gap-1.5 text-[11px] text-emerald-400/70">
+            <Check size={10} /> Автосохранено
+          </div>
         )}
       </div>
       <div className="flex items-center gap-2">
-        <a
-          href="/projects"
-          className="h-8 px-3 rounded-full border border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06] flex items-center gap-1.5 text-[12px] text-white/60 hover:text-white/90 transition"
+        <button
+          onClick={onToggleHistory}
+          className={[
+            "h-8 px-3 rounded-full border flex items-center gap-1.5 text-[12px] transition",
+            historyOpen
+              ? "bg-violet-500/20 border-violet-400/30 text-violet-200"
+              : "border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06] text-white/60 hover:text-white/90",
+          ].join(" ")}
         >
-          <FolderOpen size={12} />
-          Проекты
-        </a>
+          <History size={12} />
+          История
+        </button>
         <button
           onClick={onSave}
           disabled={saving}

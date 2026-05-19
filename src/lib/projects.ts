@@ -36,12 +36,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Типы
+// Types
 // ---------------------------------------------------------------------------
 
 export type ProjectAsset = {
   id: string;
   project_id: string;
+  run_id: string | null;
   tab: string;
   variant_key: string;
   floor: number;
@@ -50,18 +51,31 @@ export type ProjectAsset = {
   created_at: string;
 };
 
+export type GenerationRun = {
+  id: string;
+  project_id: string;
+  tab: string;
+  floor: number;
+  params_snapshot: PromptFormState;
+  created_at: string;
+  assets: ProjectAsset[];
+};
+
 export type Project = {
   id: string;
   name: string;
   params: Record<string, unknown>;
   thumbnail_url: string | null;
+  thumbnails: string[];
+  asset_count: number;
+  run_count: number;
   created_at: string;
   updated_at: string;
   assets?: ProjectAsset[];
 };
 
 // ---------------------------------------------------------------------------
-// API
+// Projects API
 // ---------------------------------------------------------------------------
 
 export async function createProject(name: string, params: PromptFormState): Promise<Project> {
@@ -100,14 +114,15 @@ export async function uploadAsset(
   imageUrl: string,
   modelUsed?: string,
   floor: number = 1,
+  runId?: string,
 ): Promise<ProjectAsset> {
-  // imageUrl может быть data:URL (base64) или blob:URL
   const blob = await fetch(imageUrl).then((r) => r.blob());
   const fd = new FormData();
   fd.append("tab", tab);
   fd.append("variant_key", variantKey);
   fd.append("floor", String(floor));
   fd.append("model_used", modelUsed ?? "");
+  fd.append("run_id", runId ?? "");
   fd.append("image", blob, "asset.png");
 
   const res = await fetch(`${ENGINE_URL}/projects/${projectId}/assets`, {
@@ -121,4 +136,24 @@ export async function uploadAsset(
     throw new ProjectsError(res.status, detail);
   }
   return res.json() as Promise<ProjectAsset>;
+}
+
+// ---------------------------------------------------------------------------
+// Generation Runs API
+// ---------------------------------------------------------------------------
+
+export async function createRun(
+  projectId: string,
+  tab: string,
+  floor: number,
+  paramsSnapshot: PromptFormState,
+): Promise<GenerationRun> {
+  return req(`/projects/${projectId}/runs`, {
+    method: "POST",
+    body: JSON.stringify({ tab, floor, params_snapshot: paramsSnapshot }),
+  });
+}
+
+export async function listRuns(projectId: string): Promise<GenerationRun[]> {
+  return req(`/projects/${projectId}/runs`);
 }

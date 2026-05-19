@@ -6,11 +6,12 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from ..auth.db import (
-    create_asset, create_project, delete_project,
-    get_project, get_project_thumbnail, list_assets,
-    list_projects, update_project,
+    create_asset, create_project, create_run, delete_project,
+    get_project, get_project_counts, get_project_thumbnails,
+    list_assets, list_projects, list_run_assets, list_runs,
+    update_project,
 )
-from .storage import ASSETS_DIR, delete_project_assets, save_asset
+from .storage import delete_project_assets, save_asset
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -19,12 +20,16 @@ def _asset_url(file_path: str) -> str:
     return f"/api/static/{file_path}"
 
 
-def _project_out(p: dict) -> dict:
-    thumbnail = get_project_thumbnail(p["id"])
-    return {
+def _project_out(p: dict, *, include_counts: bool = True) -> dict:
+    thumbnails = get_project_thumbnails(p["id"], limit=4)
+    out = {
         **p,
-        "thumbnail_url": _asset_url(thumbnail) if thumbnail else None,
+        "thumbnail_url": _asset_url(thumbnails[0]) if thumbnails else None,
+        "thumbnails": [_asset_url(fp) for fp in thumbnails],
     }
+    if include_counts:
+        out.update(get_project_counts(p["id"]))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +108,7 @@ async def upload_asset(
     variant_key: str = Form(...),
     floor: int = Form(1),
     model_used: str = Form(""),
+    run_id: str = Form(""),
     image: UploadFile = File(...),
 ) -> dict:
     user = request.state.user
@@ -112,5 +118,54 @@ async def upload_asset(
 
     image_bytes = await image.read()
     file_path = save_asset(project_id, tab, variant_key, image_bytes, floor)
-    asset = create_asset(project_id, tab, variant_key, file_path, model_used or None, floor)
+    asset = create_asset(
+        project_id, tab, variant_key, file_path,
+        model_used or None, floor, run_id or None,
+    )
     return {**asset, "url": _asset_url(file_path)}
+
+
+# ---------------------------------------------------------------------------
+# Generation runs
+# ---------------------------------------------------------------------------
+
+class CreateRunRequest(BaseModel):
+    tab: str = "ai_plans"
+    floor: int = 1
+    params_snapshot: dict = {}
+
+
+@router.post("/{project_id}/runs", status_code=201)
+def create_run_endpoint(project_id: str, req: CreateRunRequest, request: Request) -> dict:
+    user = request.state.user
+    p = get_project(project_id, user["sub"])
+    if not p:
+        raise HTTPException(status_code=404, detail="Проект не найден")
+    run = create_run(
+        project_id, user["sub"], req.tab, req.floor,
+        json.dumps(req.params_snapshot, ensure_ascii=False),
+    )
+    return run
+
+
+@router.get("/{project_id}/runs")
+def list_runs_endpoint(project_id: str, request: Request) -> list[dict]:
+    user = request.state.user
+    p = get_project(project_id, user["sub"])
+    if not p:
+        raise HTTPException(status_code=404, detail="Проект не найден")
+    runs = list_runs(project_id)
+    result = []
+    for run in runs:
+        assets = list_run_assets(run["id"])
+        # parse params_snapshot back to dict for frontend
+        try:
+            params = json.loads(run.get("params_snapshot") or "{}")
+        except Exception:
+            params = {}
+        result.append({
+            **run,
+            "params_snapshot": params,
+            "assets": [{**a, "url": _asset_url(a["file_path"])} for a in assets],
+        })
+    return result
