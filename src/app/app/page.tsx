@@ -306,8 +306,10 @@ export default function AppPage() {
         pid = p.id;
         setProjectId(pid);
         window.history.replaceState(null, "", `?project=${pid}`);
+        setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
       } else {
-        await updateProject(pid, { name: projectName, params: form });
+        const p = await updateProject(pid, { name: projectName, params: form });
+        setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
       }
       // сохраняем сгенерированные изображения
       const uploads: Promise<unknown>[] = [];
