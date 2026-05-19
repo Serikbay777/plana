@@ -1,30 +1,35 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { History, ChevronRight, RotateCcw, Layers, Home, LayoutGrid, MapPin, Image as ImageIcon, Loader2, X } from "lucide-react";
+import {
+  History, ChevronRight, RotateCcw, Layers, Home,
+  LayoutGrid, MapPin, Image as ImageIcon, Loader2, X, Building2,
+} from "lucide-react";
 import { listRuns, type GenerationRun } from "@/lib/projects";
 import type { PromptFormState } from "@/components/PromptForm";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Config
 // ---------------------------------------------------------------------------
 
-const TAB_LABEL: Record<string, string> = {
-  ai_plans:           "AI Чертежи",
-  viz_exterior:       "Экстерьер",
-  viz_floor:          "Планировка",
-  site:               "Посадка",
-  viz_interior:       "Интерьер",
-  parking:            "Паркинг",
+type HistoryTab = "ai_plans" | "viz" | "site" | "placement";
+
+const HISTORY_TABS: { key: HistoryTab; label: string; icon: React.ReactNode; tabs: string[] }[] = [
+  { key: "ai_plans",   label: "Чертежи",      icon: <LayoutGrid size={11} />, tabs: ["ai_plans"] },
+  { key: "viz",        label: "Визуализация",  icon: <ImageIcon  size={11} />, tabs: ["viz_exterior", "viz_floor", "viz_interior"] },
+  { key: "site",       label: "Посадка",       icon: <MapPin     size={11} />, tabs: ["site"] },
+  { key: "placement",  label: "Размещение ЖК", icon: <Building2  size={11} />, tabs: ["placement"] },
+];
+
+const VIZ_TAB_LABEL: Record<string, string> = {
+  viz_exterior: "Экстерьер",
+  viz_floor:    "Планировка",
+  viz_interior: "Интерьер",
 };
 
-const TAB_ICON: Record<string, React.ReactNode> = {
-  ai_plans:     <LayoutGrid size={11} />,
-  viz_exterior: <Home size={11} />,
-  viz_floor:    <Layers size={11} />,
-  site:         <MapPin size={11} />,
-  viz_interior: <ImageIcon size={11} />,
-};
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function relativeDate(iso: string): string {
   const d = new Date(iso + "Z");
@@ -56,7 +61,6 @@ function groupByDate(runs: GenerationRun[]): { label: string; runs: GenerationRu
     else if (d.toDateString() === yesterdayStr) label = "Вчера";
     else if (d >= weekAgo) label = "На этой неделе";
     else label = "Ранее";
-
     if (!groups[label]) groups[label] = [];
     groups[label].push(run);
   }
@@ -88,14 +92,17 @@ function RunCard({ run, onRestoreImages, onRestoreParams }: RunCardProps) {
   const thumbs = run.assets.slice(0, 4).map((a) => a.url);
   const hasImages = thumbs.length > 0;
 
+  // For viz runs, show which sub-tab
+  const subLabel = VIZ_TAB_LABEL[run.tab];
+
   return (
     <div className="group rounded-xl border border-white/[0.07] bg-white/[0.025] hover:bg-white/[0.04] transition overflow-hidden">
-      {/* Thumbnail grid */}
+      {/* Thumbnail */}
       {hasImages && (
         <button
           onClick={() => onRestoreImages(run)}
           className="w-full block relative"
-          title="Восстановить изображения в редактор"
+          title="Восстановить изображения"
         >
           <div className={`grid gap-0.5 bg-black/30 ${thumbs.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
             {thumbs.map((url, i) => (
@@ -112,14 +119,15 @@ function RunCard({ run, onRestoreImages, onRestoreParams }: RunCardProps) {
         </button>
       )}
 
-      {/* Meta row */}
+      {/* Meta */}
       <div className="px-2.5 py-2">
         <div className="flex items-center justify-between gap-2 mb-1">
-          <div className="flex items-center gap-1.5 text-[10.5px] text-white/60">
-            <span className="text-white/35">{TAB_ICON[run.tab] ?? <Layers size={11} />}</span>
-            <span>{TAB_LABEL[run.tab] ?? run.tab}</span>
+          <div className="flex items-center gap-1.5 text-[10.5px] text-white/55">
+            {subLabel && (
+              <span className="px-1.5 py-0.5 rounded bg-white/[0.06] text-white/40">{subLabel}</span>
+            )}
             {run.tab === "ai_plans" && run.floor > 1 && (
-              <span className="text-white/30">· этаж {run.floor}</span>
+              <span className="text-white/30">этаж {run.floor}</span>
             )}
           </div>
           <span className="text-[10px] text-white/30 flex-shrink-0">{relativeDate(run.created_at)}</span>
@@ -169,6 +177,7 @@ export default function HistoryPanel({
 }: HistoryPanelProps) {
   const [runs, setRuns] = useState<GenerationRun[]>([]);
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<HistoryTab>("ai_plans");
 
   const load = useCallback(() => {
     if (!projectId) { setRuns([]); return; }
@@ -181,7 +190,15 @@ export default function HistoryPanel({
 
   useEffect(() => { load(); }, [load]);
 
-  const groups = groupByDate(runs);
+  const tabDef = HISTORY_TABS.find((t) => t.key === activeTab)!;
+  const filtered = runs.filter((r) => tabDef.tabs.includes(r.tab));
+  const groups = groupByDate(filtered);
+
+  // Badge counts per tab
+  const countFor = (key: HistoryTab) => {
+    const tabs = HISTORY_TABS.find((t) => t.key === key)!.tabs;
+    return runs.filter((r) => tabs.includes(r.tab)).length;
+  };
 
   return (
     <div className="flex flex-col h-full w-72 border-l border-white/[0.06] bg-[#0d0d0d]">
@@ -189,7 +206,7 @@ export default function HistoryPanel({
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] flex-shrink-0">
         <div className="flex items-center gap-2">
           <History size={13} className="text-white/50" />
-          <span className="text-[12.5px] font-medium text-white/80">История генераций</span>
+          <span className="text-[12.5px] font-medium text-white/80">История</span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -208,6 +225,33 @@ export default function HistoryPanel({
         </div>
       </div>
 
+      {/* Tab selector */}
+      <div className="flex border-b border-white/[0.06] flex-shrink-0 px-2 pt-2 gap-0.5 flex-wrap">
+        {HISTORY_TABS.map((t) => {
+          const count = countFor(t.key);
+          return (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              className={[
+                "flex items-center gap-1.5 px-2 py-1.5 mb-2 rounded-lg text-[10.5px] transition whitespace-nowrap",
+                activeTab === t.key
+                  ? "bg-white/[0.1] text-white"
+                  : "text-white/40 hover:text-white/70 hover:bg-white/[0.05]",
+              ].join(" ")}
+            >
+              {t.icon}
+              {t.label}
+              {count > 0 && (
+                <span className={`text-[9px] px-1 py-0.5 rounded-full ${activeTab === t.key ? "bg-white/20 text-white/80" : "bg-white/[0.08] text-white/35"}`}>
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
         {!projectId ? (
@@ -218,9 +262,11 @@ export default function HistoryPanel({
           <div className="flex items-center justify-center py-10">
             <Loader2 size={18} className="text-white/30 animate-spin" />
           </div>
-        ) : runs.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div className="text-center py-10 text-[12px] text-white/30 leading-relaxed">
-            Пока нет сохранённых генераций.<br />Нажми «Сгенерировать» —<br />они появятся здесь автоматически.
+            {runs.length === 0
+              ? <>Пока нет генераций.<br />Нажми «Сгенерировать» —<br />они появятся здесь.</>
+              : <>Нет генераций<br />для этого раздела.</>}
           </div>
         ) : (
           groups.map(({ label, runs: groupRuns }) => (
