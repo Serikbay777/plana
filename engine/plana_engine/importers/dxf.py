@@ -87,6 +87,8 @@ class DxfImportSummary:
     bounds: DxfBounds | None
     preview_entities: list[dict[str, Any]]
     warnings: list[str]
+    site_polygon: list[list[float]] | None = None
+    """Largest closed polyline from the DXF, normalized to meters with origin at (0,0)."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +103,7 @@ class DxfImportSummary:
             "bounds": self.bounds.to_dict() if self.bounds else None,
             "preview_entities": self.preview_entities,
             "warnings": self.warnings,
+            "site_polygon": self.site_polygon,
         }
 
 
@@ -143,6 +146,66 @@ _UNITS: dict[int, str] = {
     12: "Nanometers",
     13: "Microns",
     14: "Decimeters",
+}
+
+
+def _poly_area(pts: list[list[float]]) -> float:
+    """Shoelace formula — signed area; absolute value is the real area."""
+    n = len(pts)
+    area = 0.0
+    for i in range(n):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % n]
+        area += x1 * y2 - x2 * y1
+    return abs(area) * 0.5
+
+
+def _extract_site_polygon(
+    entities: Any,
+    units: int,
+) -> list[list[float]] | None:
+    """Find the largest closed LWPOLYLINE/POLYLINE; return points in meters, origin at (0,0)."""
+    scale = _UNIT_SCALE.get(units, 1.0)
+    best_pts: list[list[float]] | None = None
+    best_area = 0.0
+
+    for entity in entities:
+        dxftype = entity.dxftype()
+        pts: list[list[float]] = []
+        closed = False
+
+        if dxftype == "LWPOLYLINE":
+            pts = [[float(x), float(y)] for x, y, *_ in entity.get_points("xy")]
+            closed = bool(entity.closed)
+        elif dxftype == "POLYLINE":
+            pts = [[float(v.dxf.location.x), float(v.dxf.location.y)] for v in entity.vertices]
+            closed = bool(entity.is_closed)
+
+        if not closed or len(pts) < 3:
+            continue
+        area = _poly_area(pts)
+        if area > best_area:
+            best_area = area
+            best_pts = pts
+
+    if best_pts is None or len(best_pts) < 3:
+        return None
+
+    # Normalize: scale to meters, shift origin to (0, 0)
+    scaled = [[x * scale, y * scale] for x, y in best_pts]
+    min_x = min(p[0] for p in scaled)
+    min_y = min(p[1] for p in scaled)
+    return [[round(p[0] - min_x, 3), round(p[1] - min_y, 3)] for p in scaled]
+
+
+_UNIT_SCALE: dict[int, float] = {
+    0:  1.0,          # unitless → assume metres
+    1:  0.0254,       # inches
+    2:  0.3048,       # feet
+    4:  0.001,        # millimetres
+    5:  0.01,         # centimetres
+    6:  1.0,          # metres
+    14: 0.1,          # decimetres
 }
 
 
@@ -207,6 +270,8 @@ def inspect_dxf(dxf_bytes: bytes, *, filename: str = "upload.dxf") -> DxfImportS
         for name in sorted(layer_entity_counts)
     ]
 
+    site_polygon = _extract_site_polygon(entities, units)
+
     return DxfImportSummary(
         filename=filename,
         dxf_version=doc.dxfversion,
@@ -219,6 +284,7 @@ def inspect_dxf(dxf_bytes: bytes, *, filename: str = "upload.dxf") -> DxfImportS
         bounds=bounds.finish(),
         preview_entities=preview_entities,
         warnings=warnings,
+        site_polygon=site_polygon,
     )
 
 

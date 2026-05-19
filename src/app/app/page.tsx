@@ -374,6 +374,7 @@ export default function AppPage() {
       building_depth_m: depthM,
       site_width_m: widthM,
       site_depth_m: depthM,
+      site_polygon: result.site_polygon ?? null,
     }));
   };
 
@@ -1577,9 +1578,9 @@ function DxfImportSummary({
             onClick={() => onApplyBounds(result)}
             disabled={!bounds}
             className="h-8 px-3 rounded-full border border-cyan-400/30 bg-cyan-500/10 text-cyan-100/90 text-[11.5px] hover:bg-cyan-500/15 transition disabled:opacity-40"
-            title="Записать bbox DXF в ширину и глубину формы"
+            title={result.site_polygon ? "Применить контур участка + габариты в форму" : "Записать bbox DXF в ширину и глубину формы"}
           >
-            Применить габариты
+            {result.site_polygon ? "Применить контур" : "Применить габариты"}
           </button>
           <button
             onClick={() => setVisibleLayers(new Set(result.layers.map((layer) => layer.name)))}

@@ -189,6 +189,7 @@ export type DxfImportResult = {
   bounds: DxfBounds | null;
   preview_entities: DxfPreviewEntity[];
   warnings: string[];
+  site_polygon: [number, number][] | null;
 };
 
 export async function importFloorplanCad(file: File): Promise<DxfImportResult> {

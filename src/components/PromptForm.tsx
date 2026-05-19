@@ -208,7 +208,7 @@ export function PromptForm({ value, onChange, onGenerate, generating }: Props) {
             <Square size={10} /> Прямоугольник
           </button>
           <button
-            onClick={() => { if (!local.site_polygon) update("site_polygon", local.site_polygon); }}
+            onClick={() => { if (!local.site_polygon) update("site_polygon", []); }}
             className={[
               "h-6 px-2.5 rounded-md text-[11px] transition flex items-center gap-1",
               local.site_polygon ? "bg-violet-500/30 text-violet-100 font-medium" : "text-white/45 hover:text-white",
@@ -269,7 +269,7 @@ export function PromptForm({ value, onChange, onGenerate, generating }: Props) {
                 setLocal(next);
                 onChange(next);
               } else {
-                update("site_polygon", pts);
+                update("site_polygon", pts ?? ([] as Pt[]));
               }
             }}
           />

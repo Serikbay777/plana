@@ -1401,6 +1401,7 @@ class DxfImportResponse(BaseModel):
     bounds: DxfBoundsResponse | None = None
     preview_entities: list[dict[str, Any]]
     warnings: list[str]
+    site_polygon: list[list[float]] | None = None
 
 
 @app.post("/import/floorplan-dxf", response_model=DxfImportResponse)
