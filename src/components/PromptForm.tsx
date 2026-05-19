@@ -87,7 +87,7 @@ export const DEFAULT_PROMPT_FORM: PromptFormState = {
   fire_dead_end_corridor_max_m: 12,
   insolation_priority: true,
   insolation_min_hours: 2.0,
-  max_coverage_pct: 50,
+  max_coverage_pct: 0,
   max_height_m: 30,
 };
 

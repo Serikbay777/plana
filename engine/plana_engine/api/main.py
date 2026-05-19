@@ -174,7 +174,7 @@ class VisualizeFromInputsRequest(BaseModel):
     insolation_priority: bool = True
     insolation_min_hours: float = 2.0
     # ГПЗУ
-    max_coverage_pct: float = 50.0
+    max_coverage_pct: float = 0.0
     max_height_m: float = 30.0
     # рендер
     quality: str = "medium"

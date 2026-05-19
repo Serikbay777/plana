@@ -137,10 +137,12 @@ export function ValidationPanel({ request, debounceMs = 400 }: Props) {
                 <span className="text-white/45">Пятно:</span>
                 <span className="tabular">{summary.total_footprint_m2.toFixed(0)} м²</span>
               </div>
-              <div className="flex justify-between gap-2 col-span-2">
-                <span className="text-white/45">% застройки:</span>
-                <span className="tabular">{summary.coverage_pct.toFixed(1)}%</span>
-              </div>
+              {summary.coverage_pct < 99 && (
+                <div className="flex justify-between gap-2 col-span-2">
+                  <span className="text-white/45">% застройки:</span>
+                  <span className="tabular">{summary.coverage_pct.toFixed(1)}%</span>
+                </div>
+              )}
             </div>
           )}
 
