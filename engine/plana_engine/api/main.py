@@ -83,7 +83,7 @@ _PUBLIC_PATHS = {"/health", "/auth/login", "/auth/register", "/docs", "/openapi.
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next: Any) -> Any:
-    if request.url.path in _PUBLIC_PATHS:
+    if request.url.path in _PUBLIC_PATHS or request.url.path.startswith("/static/"):
         return await call_next(request)
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
