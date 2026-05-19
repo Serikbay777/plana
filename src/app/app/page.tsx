@@ -110,31 +110,35 @@ const EMPTY_PLACEMENT: PlacementBag = {
 };
 
 // Конструируем тело для visualize-эндпоинтов
+const D = DEFAULT_PROMPT_FORM;
+const nn = (v: number | undefined, fallback: number): number =>
+  typeof v === "number" && isFinite(v) ? v : fallback;
+
 function buildVisReq(form: PromptFormState): VisualizeFromInputsRequest {
   return {
-    site_width_m: form.site_width_m,
-    site_depth_m: form.site_depth_m,
-    setback_front_m: form.setback_front_m,
-    setback_side_m: form.setback_side_m,
-    setback_rear_m: form.setback_rear_m,
-    floors: form.floors,
-    purpose: form.purpose,
-    studio_pct: form.studio_pct / 100,
-    k1_pct: form.k1_pct / 100,
-    k2_pct: form.k2_pct / 100,
-    k3_pct: form.k3_pct / 100,
-    sections: form.sections,
-    parking_spaces_per_apt: form.parking_spaces_per_apt,
-    parking_underground_levels: form.parking_underground_levels,
-    fire_evacuation_max_m: form.fire_evacuation_max_m,
-    fire_evacuation_exits_per_section: form.fire_evacuation_exits_per_section,
-    fire_dead_end_corridor_max_m: form.fire_dead_end_corridor_max_m,
-    lifts_passenger: form.lifts_passenger,
-    lifts_freight: form.lifts_freight,
-    insolation_priority: form.insolation_priority,
-    insolation_min_hours: form.insolation_min_hours,
-    max_coverage_pct: form.max_coverage_pct,
-    max_height_m: form.max_height_m,
+    site_width_m:  nn(form.site_width_m,  D.site_width_m),
+    site_depth_m:  nn(form.site_depth_m,  D.site_depth_m),
+    setback_front_m: nn(form.setback_front_m, D.setback_front_m),
+    setback_side_m:  nn(form.setback_side_m,  D.setback_side_m),
+    setback_rear_m:  nn(form.setback_rear_m,  D.setback_rear_m),
+    floors:  nn(form.floors,  D.floors),
+    purpose: form.purpose ?? D.purpose,
+    studio_pct: nn(form.studio_pct, D.studio_pct) / 100,
+    k1_pct:     nn(form.k1_pct,     D.k1_pct)     / 100,
+    k2_pct:     nn(form.k2_pct,     D.k2_pct)     / 100,
+    k3_pct:     nn(form.k3_pct,     D.k3_pct)     / 100,
+    sections:   nn(form.sections,   D.sections),
+    parking_spaces_per_apt:       nn(form.parking_spaces_per_apt,       D.parking_spaces_per_apt),
+    parking_underground_levels:   nn(form.parking_underground_levels,   D.parking_underground_levels),
+    fire_evacuation_max_m:        nn(form.fire_evacuation_max_m,        D.fire_evacuation_max_m),
+    fire_evacuation_exits_per_section: nn(form.fire_evacuation_exits_per_section, D.fire_evacuation_exits_per_section),
+    fire_dead_end_corridor_max_m: nn(form.fire_dead_end_corridor_max_m, D.fire_dead_end_corridor_max_m),
+    lifts_passenger: nn(form.lifts_passenger, D.lifts_passenger),
+    lifts_freight:   nn(form.lifts_freight,   D.lifts_freight),
+    insolation_priority:  form.insolation_priority  ?? D.insolation_priority,
+    insolation_min_hours: nn(form.insolation_min_hours, D.insolation_min_hours),
+    max_coverage_pct: nn(form.max_coverage_pct, D.max_coverage_pct),
+    max_height_m:     nn(form.max_height_m,     D.max_height_m),
     quality: "medium",
     site_polygon: form.site_polygon ?? null,
   };
@@ -250,7 +254,7 @@ export default function AppPage() {
     getProject(pid).then((p) => {
       setProjectId(p.id);
       setProjectName(p.name);
-      setForm(p.params as PromptFormState);
+      setForm({ ...DEFAULT_PROMPT_FORM, ...(p.params as PromptFormState) });
       // восстанавливаем изображения из ассетов
       if (p.assets) {
         // AI-чертежи группируем по этажу

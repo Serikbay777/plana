@@ -29,7 +29,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try { const b = await res.json(); detail = b.detail ?? detail; } catch { /* ignore */ }
+    try { const b = await res.json(); detail = (Array.isArray(b.detail) ? b.detail.map((e: Record<string,unknown>) => e.msg ?? JSON.stringify(e)).join("; ") : b.detail) ?? detail; } catch { /* ignore */ }
     throw new ProjectsError(res.status, detail);
   }
   return res.json() as Promise<T>;
@@ -132,7 +132,7 @@ export async function uploadAsset(
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try { const b = await res.json(); detail = b.detail ?? detail; } catch { /* ignore */ }
+    try { const b = await res.json(); detail = (Array.isArray(b.detail) ? b.detail.map((e: Record<string,unknown>) => e.msg ?? JSON.stringify(e)).join("; ") : b.detail) ?? detail; } catch { /* ignore */ }
     throw new ProjectsError(res.status, detail);
   }
   return res.json() as Promise<ProjectAsset>;

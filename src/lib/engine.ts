@@ -34,6 +34,18 @@ class EngineError extends Error {
   }
 }
 
+function parseDetail(raw: unknown, fallback: string): string {
+  if (typeof raw === "string") return raw;
+  // FastAPI 422 returns detail as array of {loc, msg, type}
+  if (Array.isArray(raw)) {
+    return raw
+      .map((e) => (typeof e === "object" && e !== null ? (e as Record<string, unknown>).msg ?? JSON.stringify(e) : String(e)))
+      .join("; ");
+  }
+  if (raw !== null && raw !== undefined) return String(raw);
+  return fallback;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${ENGINE_URL}${path}`, {
     ...init,
@@ -47,7 +59,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let detail = res.statusText;
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
+      detail = parseDetail(body.detail, detail);
     } catch {
       /* ignore */
     }
@@ -120,7 +132,7 @@ export async function analyzeContour(file: File): Promise<ContourAnalysis> {
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
     throw new EngineError(res.status, detail);
   }
   return res.json() as Promise<ContourAnalysis>;
@@ -138,7 +150,7 @@ export async function importGpzu(file: File): Promise<GpzuExtraction> {
     let detail = res.statusText;
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
+      detail = parseDetail(body.detail, detail);
     } catch {
       /* ignore */
     }
@@ -206,7 +218,7 @@ export async function importFloorplanCad(file: File): Promise<DxfImportResult> {
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
     throw new EngineError(res.status, detail);
   }
   return res.json() as Promise<DxfImportResult>;
@@ -270,7 +282,7 @@ async function _postForImage(
     let detail = res.statusText;
     try {
       const j = await res.json();
-      detail = j.detail ?? detail;
+      detail = parseDetail(j.detail, detail);
     } catch {
       /* ignore */
     }
@@ -332,7 +344,7 @@ export async function visualizeSitePlacement(
     let detail = res.statusText;
     try {
       const j = await res.json();
-      detail = j.detail ?? detail;
+      detail = parseDetail(j.detail, detail);
     } catch {
       /* ignore */
     }
@@ -417,7 +429,7 @@ export async function visualizeParking(
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try { const b = await res.json(); detail = b.detail ?? detail; } catch { /* ignore */ }
+    try { const b = await res.json(); detail = parseDetail(b.detail, detail); } catch { /* ignore */ }
     throw new EngineError(res.status, detail);
   }
   const blob = await res.blob();
@@ -477,7 +489,7 @@ export async function visualizeSitePlacementVariants(
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
     throw new EngineError(res.status, detail);
   }
   return res.json() as Promise<PlacementVariantsResponse>;
@@ -558,7 +570,7 @@ export async function editAiPlan(
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
     throw new EngineError(res.status, detail);
   }
   return {
@@ -589,7 +601,7 @@ export async function inpaintAiPlan(
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
     throw new EngineError(res.status, detail);
   }
   return {
