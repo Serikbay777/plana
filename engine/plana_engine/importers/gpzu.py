@@ -46,26 +46,41 @@ building restrictions. If a value is not stated explicitly or is
 ambiguous, return null — do not guess. Output strictly valid JSON
 matching the provided schema.
 
-All measurements are in meters and square meters. «Минимальные отступы»
-are minimum required distances from the site boundary to the building.
-«Предельная высота» — maximum allowed building height. «Процент
-застройки» — maximum buildup percentage of the site (0..100).
-«Коэффициент использования территории / КИТ» — FAR.
+CRITICAL RULES:
+- All measurements must be in METERS and SQUARE METERS.
+- site_width_m and site_depth_m are the physical width and depth of the
+  land plot bounding box. Typical residential/commercial plots in
+  Kazakhstan/Russia are 10–500 m wide. If you see values > 1000 for
+  dimensions, those are likely geodetic coordinates or millimetres —
+  return null for those fields instead.
+- Do NOT use cadastral/geodetic coordinates as dimensions.
+- If only site_area_m2 is stated but no explicit width/depth — return
+  null for site_width_m and site_depth_m.
+- «Минимальные отступы» are minimum required distances (metres) from
+  the site boundary to the building face.
+- «Предельная высота» — maximum allowed building height in metres.
+- «Процент застройки» — maximum buildup percentage of the site (0..100).
+- «Коэффициент использования территории / КИТ» — FAR (dimensionless ratio).
 """
 
 _USER_PROMPT = """\
 Извлеки следующие поля из изображений ГПЗУ:
 
-- site_area_m2 — общая площадь участка, м²
-- site_width_m, site_depth_m — приблизительные габариты bounding-box участка, м
-- setback_front_m, setback_side_m, setback_rear_m — минимальные отступы
-  от красных линий / границ участка, м
+- site_area_m2 — общая площадь участка, м² (ищи «площадь участка», «S=»)
+- site_width_m — ширина участка в МЕТРАХ (10–500 м для типичного участка);
+  если не указана явно или значение > 1000 — верни null
+- site_depth_m — глубина участка в МЕТРАХ (10–500 м); аналогично null если
+  не указана или > 1000
+- setback_front_m, setback_side_m, setback_rear_m — минимальные отступы от
+  границ участка, м (ищи «минимальные отступы», «красные линии»)
 - max_height_m — предельная высота зданий, м
-- max_floors — предельная этажность
-- max_coverage_pct — процент застройки, 0..100
-- max_far — коэффициент использования территории (КИТ / FAR)
+- max_floors — предельная этажность (целое число)
+- max_coverage_pct — процент застройки, 0..100 (ищи «процент застройки»,
+  «КЗ»)
+- max_far — коэффициент использования территории (КИТ / FAR),
+  безразмерное число обычно 0.5–5
 - purpose_allowed — список разрешённых видов использования
-  (например: residential, commercial, mixed_use, hotel)
+  (residential, commercial, mixed_use, hotel — переводи на английский)
 - notes — свободные заметки о красных линиях, особых условиях, всём,
   что не уложилось в структурированные поля
 - confidence — твоя уверенность: "high" | "medium" | "low"
@@ -105,6 +120,66 @@ _SCHEMA: dict[str, Any] = {
     },
     "strict": True,
 }
+
+
+def _sanitize_extraction(ext: GpzuExtraction) -> GpzuExtraction:
+    """Post-process: drop obviously wrong dimensions (coordinates, wrong units)."""
+    w, d, area = ext.site_width_m, ext.site_depth_m, ext.site_area_m2
+
+    # Sanity: dimensions must be in [5, 2000] m for any buildable plot.
+    if w is not None and not (5 <= w <= 2000):
+        w = None
+    if d is not None and not (5 <= d <= 2000):
+        d = None
+
+    # Cross-check: if area is known and both dims available, their product should
+    # be within 3× of the stated area. If not, the dims are from a different field.
+    if area and area > 0 and w and d:
+        ratio = (w * d) / area
+        if not (0.33 <= ratio <= 3.0):
+            w = None
+            d = None
+
+    # If area is known but dims are missing, estimate a square-ish footprint
+    # as a hint (marked approximate via notes).
+    if area and area > 0 and (w is None or d is None):
+        import math as _math
+        side = round(_math.sqrt(area))
+        w = side if w is None else w
+        d = side if d is None else d
+        note_suffix = f" [site_width/depth approximated as √{area:.0f}≈{side} m]"
+        ext = GpzuExtraction(
+            site_area_m2=area,
+            site_width_m=w,
+            site_depth_m=d,
+            setback_front_m=ext.setback_front_m,
+            setback_side_m=ext.setback_side_m,
+            setback_rear_m=ext.setback_rear_m,
+            max_height_m=ext.max_height_m,
+            max_floors=ext.max_floors,
+            max_coverage_pct=ext.max_coverage_pct,
+            max_far=ext.max_far,
+            purpose_allowed=ext.purpose_allowed,
+            notes=(ext.notes or "") + note_suffix,
+            confidence="low" if ext.confidence == "high" else ext.confidence,
+        )
+        return ext
+
+    return GpzuExtraction(
+        site_area_m2=area,
+        site_width_m=w,
+        site_depth_m=d,
+        setback_front_m=ext.setback_front_m,
+        setback_side_m=ext.setback_side_m,
+        setback_rear_m=ext.setback_rear_m,
+        max_height_m=ext.max_height_m,
+        max_floors=ext.max_floors,
+        max_coverage_pct=ext.max_coverage_pct,
+        max_far=ext.max_far,
+        purpose_allowed=ext.purpose_allowed,
+        notes=ext.notes,
+        confidence=ext.confidence,
+    )
 
 
 def extract_gpzu(pdf_bytes: bytes, *, model: str = "gpt-4.1") -> GpzuExtraction:
@@ -158,6 +233,8 @@ def extract_gpzu(pdf_bytes: bytes, *, model: str = "gpt-4.1") -> GpzuExtraction:
         raise GpzuParseError(f"OpenAI вернул невалидный JSON: {e}") from e
 
     try:
-        return GpzuExtraction(**data)
+        raw = GpzuExtraction(**data)
     except TypeError as e:
         raise GpzuParseError(f"структура ответа не соответствует схеме: {e}") from e
+
+    return _sanitize_extraction(raw)

@@ -704,6 +704,8 @@ export default function AppPage() {
               contourError={contourError}
               onContourAnalyze={handleContourAnalyze}
               onClearContour={() => { setContourResult(null); setContourError(null); }}
+              onApplyContourDims={(w, d) => setForm(f => ({ ...f, site_width_m: w, site_depth_m: d, building_width_m: w, building_depth_m: d }))}
+
               onGetMetrics={() => getFloorplanMetrics(buildVisReq(form))}
               parkingBag={parkingBag}
               parkingLevel={parkingLevel}
@@ -1812,7 +1814,7 @@ const REC_PRIORITY_STYLES: Record<ContourRecommendation["priority"], string> = {
   low:    "bg-white/[0.05] border-white/10 text-white/60",
 };
 
-function ContourSummary({ analysis }: { analysis: ContourAnalysis }) {
+function ContourSummary({ analysis, onApplyDims }: { analysis: ContourAnalysis; onApplyDims?: () => void }) {
   const a = analysis;
   const orientation = a.estimated_orientation_deg != null
     ? `${a.estimated_orientation_deg.toFixed(0)}° от севера`
@@ -1823,7 +1825,7 @@ function ContourSummary({ analysis }: { analysis: ContourAnalysis }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         <ScanSearch size={12} className="text-violet-300" />
         <span className="text-[11.5px] text-white/70">
           Анализ контура · уверенность {a.confidence === "high" ? "высокая" : a.confidence === "medium" ? "средняя" : "низкая"}
@@ -1837,6 +1839,15 @@ function ContourSummary({ analysis }: { analysis: ContourAnalysis }) {
           <span className="text-[10.5px] tabular px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.07] text-white/65 flex items-center gap-1">
             <Compass size={10} /> {orientation}
           </span>
+        )}
+        {onApplyDims && (
+          <button
+            onClick={onApplyDims}
+            className="h-6 px-2.5 rounded-full border border-violet-400/30 bg-violet-500/10 text-violet-100/90 text-[10.5px] hover:bg-violet-500/20 transition"
+            title="Применить габариты из анализа в форму"
+          >
+            Применить размеры
+          </button>
         )}
       </div>
       <div className="text-[12.5px] text-white/85 mb-2.5">{a.shape_summary}</div>
@@ -2148,7 +2159,7 @@ function AiPlansTab({
   onGenerate, onGoToViz, onExportDxf, onExportIfc, cadExportLoading,
   dxfImportLoading, dxfImportResult, dxfImportError, onDxfImport, onClearDxfImport, onApplyDxfBounds,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
-  contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
+  contourLoading, contourResult, contourError, onContourAnalyze, onClearContour, onApplyContourDims,
   onGetMetrics, parkingBag, parkingLevel, parkingLevelsTotal, onParkingLevel, onGenerateParking,
   onExportFullReport, hasExtraSections,
 }: {
@@ -2178,6 +2189,7 @@ function AiPlansTab({
   contourError: string | null;
   onContourAnalyze: (f: File) => void;
   onClearContour: () => void;
+  onApplyContourDims: (w: number, d: number) => void;
   onGetMetrics: () => Promise<FloorPlanMetrics>;
   parkingBag: ImageBag;
   parkingLevel: number;
@@ -2676,7 +2688,14 @@ function AiPlansTab({
             </div>
           ) : contourResult ? (
             <div className="flex-1 min-w-0">
-              <ContourSummary analysis={contourResult} />
+              <ContourSummary
+                analysis={contourResult}
+                onApplyDims={
+                  contourResult.estimated_width_m && contourResult.estimated_depth_m
+                    ? () => onApplyContourDims(contourResult.estimated_width_m!, contourResult.estimated_depth_m!)
+                    : undefined
+                }
+              />
             </div>
           ) : null}
           <button
