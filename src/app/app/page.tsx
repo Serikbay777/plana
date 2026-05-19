@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
@@ -166,8 +166,6 @@ export default function AppPage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const searchParams = useSearchParams();
-
   // Хранение проектов
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("Без названия");
@@ -222,7 +220,7 @@ export default function AppPage() {
 
   // ---- загрузка проекта по ?project=ID
   useEffect(() => {
-    const pid = searchParams.get("project");
+    const pid = new URLSearchParams(window.location.search).get("project");
     if (!pid || !authChecked) return;
     getProject(pid).then((p) => {
       setProjectId(p.id);
@@ -242,7 +240,7 @@ export default function AppPage() {
         if (site) setSiteBag({ state: "ready", imageUrl: site.url, modelUsed: site.model_used, enhancerUsed: null, errorMessage: null });
       }
     }).catch(() => { /* проект не найден — просто игнорируем */ });
-  }, [searchParams, authChecked]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authChecked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- сохранение проекта
   const saveProject = useCallback(async () => {
