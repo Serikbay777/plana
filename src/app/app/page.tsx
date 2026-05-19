@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Layers, LogOut, Sparkles, Download, RefreshCw, AlertCircle,
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, ArrowRight, Wand2, Loader2, ScanSearch, Compass, Ruler,
-  Trees, Flame, DoorOpen, Network,
+  Trees, Flame, DoorOpen, Network, Save, FolderOpen, Check,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { ValidationPanel } from "@/components/ValidationPanel";
@@ -34,6 +34,7 @@ import {
   type InteriorGalleryItem,
 } from "@/lib/engine";
 import { getSession, signOut, type Session } from "@/lib/auth";
+import { createProject, updateProject, uploadAsset, getProject } from "@/lib/projects";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -165,6 +166,13 @@ export default function AppPage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const searchParams = useSearchParams();
+
+  // Хранение проектов
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState("Без названия");
+  const [saving, setSaving] = useState(false);
+  const [saveOk, setSaveOk] = useState(false);
 
   const [form, setForm] = useState<PromptFormState>(DEFAULT_PROMPT_FORM);
   const [tab, setTab] = useState<TopTab>("ai_plans");
@@ -208,12 +216,64 @@ export default function AppPage() {
   useEffect(() => {
     const s = getSession();
     if (!s) { router.replace("/login"); return; }
-    const timer = window.setTimeout(() => {
-      setSession(s);
-      setAuthChecked(true);
-    }, 0);
-    return () => window.clearTimeout(timer);
+    setSession(s);
+    setAuthChecked(true);
   }, [router]);
+
+  // ---- загрузка проекта по ?project=ID
+  useEffect(() => {
+    const pid = searchParams.get("project");
+    if (!pid || !authChecked) return;
+    getProject(pid).then((p) => {
+      setProjectId(p.id);
+      setProjectName(p.name);
+      setForm(p.params as PromptFormState);
+      // восстанавливаем изображения из ассетов
+      if (p.assets) {
+        const aiVariants = p.assets
+          .filter((a) => a.tab === "ai_plans")
+          .map((a) => ({ key: a.variant_key, label: a.variant_key, imageUrl: a.url, modelUsed: a.model_used ?? "", enhancerUsed: "" }));
+        if (aiVariants.length) setAiPlansBag({ state: "ready", variants: aiVariants, elapsedMs: null, errorMessage: null });
+        const ext = p.assets.find((a) => a.tab === "viz_exterior");
+        if (ext) setVizExtBag({ state: "ready", imageUrl: ext.url, modelUsed: ext.model_used, enhancerUsed: null, errorMessage: null });
+        const floor = p.assets.find((a) => a.tab === "viz_floor");
+        if (floor) setVizFloorBag({ state: "ready", imageUrl: floor.url, modelUsed: floor.model_used, enhancerUsed: null, errorMessage: null });
+        const site = p.assets.find((a) => a.tab === "site");
+        if (site) setSiteBag({ state: "ready", imageUrl: site.url, modelUsed: site.model_used, enhancerUsed: null, errorMessage: null });
+      }
+    }).catch(() => { /* проект не найден — просто игнорируем */ });
+  }, [searchParams, authChecked]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- сохранение проекта
+  const saveProject = useCallback(async () => {
+    if (saving) return;
+    setSaving(true);
+    setSaveOk(false);
+    try {
+      let pid = projectId;
+      if (!pid) {
+        const p = await createProject(projectName, form);
+        pid = p.id;
+        setProjectId(pid);
+        window.history.replaceState(null, "", `?project=${pid}`);
+      } else {
+        await updateProject(pid, { name: projectName, params: form });
+      }
+      // сохраняем сгенерированные изображения
+      const uploads: Promise<unknown>[] = [];
+      aiPlansBag.variants.forEach((v) => {
+        uploads.push(uploadAsset(pid!, "ai_plans", v.key, v.imageUrl, v.modelUsed).catch(() => {}));
+      });
+      if (vizExtBag.imageUrl)   uploads.push(uploadAsset(pid!, "viz_exterior", "exterior",  vizExtBag.imageUrl,   vizExtBag.modelUsed ?? undefined).catch(() => {}));
+      if (vizFloorBag.imageUrl) uploads.push(uploadAsset(pid!, "viz_floor",    "floor",     vizFloorBag.imageUrl, vizFloorBag.modelUsed ?? undefined).catch(() => {}));
+      if (siteBag.imageUrl)     uploads.push(uploadAsset(pid!, "site",         "placement", siteBag.imageUrl,     siteBag.modelUsed ?? undefined).catch(() => {}));
+      await Promise.all(uploads);
+      setSaveOk(true);
+      setTimeout(() => setSaveOk(false), 2500);
+    } catch { /* ignore */ } finally {
+      setSaving(false);
+    }
+  }, [saving, projectId, projectName, form, aiPlansBag, vizExtBag, vizFloorBag, siteBag]);
 
   // сбрасываем результаты при изменении формы
   useEffect(() => {
@@ -514,7 +574,15 @@ export default function AppPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header session={session} onSignOut={() => { signOut(); router.replace("/"); }} />
+      <Header
+        session={session}
+        onSignOut={() => { signOut(); router.replace("/"); }}
+        onSave={saveProject}
+        saving={saving}
+        saveOk={saveOk}
+        projectName={projectName}
+        onRenameProject={setProjectName}
+      />
       <TabStrip tab={tab} onChange={setTab} />
 
       <main
@@ -623,7 +691,27 @@ export default function AppPage() {
 // Header & TabStrip
 // ---------------------------------------------------------------------------
 
-function Header({ session, onSignOut }: { session: Session | null; onSignOut: () => void }) {
+function Header({
+  session, onSignOut, onSave, saving, saveOk, projectName, onRenameProject,
+}: {
+  session: Session | null;
+  onSignOut: () => void;
+  onSave: () => void;
+  saving: boolean;
+  saveOk: boolean;
+  projectName: string;
+  onRenameProject: (name: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(projectName);
+
+  const commitRename = () => {
+    const trimmed = draft.trim() || "Без названия";
+    onRenameProject(trimmed);
+    setDraft(trimmed);
+    setEditing(false);
+  };
+
   return (
     <header className="px-6 py-3 flex items-center justify-between border-b border-white/[0.05]">
       <div className="flex items-center gap-2.5">
@@ -631,8 +719,38 @@ function Header({ session, onSignOut }: { session: Session | null; onSignOut: ()
           <Layers size={13} className="text-black" strokeWidth={2.5} />
         </div>
         <span className="text-[14px] font-semibold tracking-display">Plana</span>
+        <span className="text-white/20 text-[13px]">/</span>
+        {editing ? (
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }}
+            className="bg-transparent border-b border-white/30 text-[13px] text-white/85 outline-none w-40"
+          />
+        ) : (
+          <button onClick={() => { setDraft(projectName); setEditing(true); }} className="text-[13px] text-white/50 hover:text-white/80 transition">
+            {projectName}
+          </button>
+        )}
       </div>
       <div className="flex items-center gap-2">
+        <a
+          href="/projects"
+          className="h-8 px-3 rounded-full border border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06] flex items-center gap-1.5 text-[12px] text-white/60 hover:text-white/90 transition"
+        >
+          <FolderOpen size={12} />
+          Проекты
+        </a>
+        <button
+          onClick={onSave}
+          disabled={saving}
+          className="h-8 px-3 rounded-full border border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06] flex items-center gap-1.5 text-[12px] text-white/60 hover:text-white/90 disabled:opacity-40 transition"
+        >
+          {saveOk ? <Check size={12} className="text-green-400" /> : saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+          {saveOk ? "Сохранено" : saving ? "Сохраняем…" : "Сохранить"}
+        </button>
         {session && (
           <div className="h-8 px-3 rounded-full bg-white/[0.04] border border-white/[0.07] flex items-center gap-2 text-[12px]">
             <div className="size-5 rounded-full bg-white/15 grid place-items-center text-[10px] font-semibold text-white/85">

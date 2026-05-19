@@ -28,11 +28,14 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import __version__
 from ..auth import init_db, router as auth_router
 from ..auth.jwt_utils import verify_token
+from ..projects import router as projects_router
+from ..projects.storage import ASSETS_DIR
 from ..cad import (
     build_floorplan_dxf, build_floorplan_ifc, compute_floorplan_metrics,
 )
@@ -50,7 +53,9 @@ from ..visualizer.openai_client import (
 
 
 @asynccontextmanager
-async def _lifespan(_: FastAPI):
+async def _lifespan(application: FastAPI):
+    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    application.mount("/static", StaticFiles(directory=str(ASSETS_DIR)), name="static")
     init_db()
     yield
 
@@ -98,6 +103,7 @@ async def auth_middleware(request: Request, call_next: Any) -> Any:
 
 
 app.include_router(auth_router)
+app.include_router(projects_router)
 
 
 
