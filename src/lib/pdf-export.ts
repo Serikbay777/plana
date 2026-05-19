@@ -15,6 +15,7 @@ import type {
   GpzuExtraction,
   InteriorGalleryItem,
   PlacementVariant,
+  KvartirografiyaResponse,
 } from "./engine";
 
 type AiPlanVariant = {
@@ -412,6 +413,201 @@ function drawCoverBody(
       tocCursor += 5.5;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Квартирография PDF
+// ---------------------------------------------------------------------------
+
+export function exportKvartirografiyaPdf(
+  data: KvartirografiyaResponse,
+  projectName = "plana-kvartirografiya",
+): void {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const PW = 210;
+  const PAD = 16;
+  const CW = PW - PAD * 2;
+  let y = PAD;
+
+  // Header
+  doc.setFillColor(26, 26, 46);
+  doc.rect(0, 0, PW, 24, "F");
+  doc.setFontSize(13);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 255, 255);
+  doc.text("Квартирография", PAD, 14);
+  doc.setFontSize(7);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(180, 180, 210);
+  doc.text(`Сформировано: ${new Date().toLocaleDateString("ru-RU")}`, PW - PAD, 14, { align: "right" });
+  y = 34;
+
+  // Table header
+  const cols = [
+    { label: "Тип",          w: 28 },
+    { label: "Доля, %",      w: 22 },
+    { label: "Кол-во",       w: 22 },
+    { label: "м²/кв.",       w: 22 },
+    { label: "Жил. м²/кв.",  w: 28 },
+    { label: "Итого м²",     w: 28 },
+    { label: "Жил. итого",   w: 28 },
+  ];
+  const tableW = cols.reduce((s, c) => s + c.w, 0);
+  const tableX = PAD + (CW - tableW) / 2;
+
+  doc.setFillColor(240, 240, 250);
+  doc.rect(tableX, y, tableW, 7, "F");
+  doc.setFontSize(7.5);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(60, 60, 100);
+  let cx = tableX;
+  for (const col of cols) {
+    doc.text(col.label, cx + col.w / 2, y + 4.8, { align: "center" });
+    cx += col.w;
+  }
+  y += 7;
+
+  // Rows
+  const activeRows = data.rows.filter(r => r.total_count > 0);
+  for (let i = 0; i < activeRows.length; i++) {
+    const r = activeRows[i];
+    const bg = i % 2 === 0 ? [255, 255, 255] : [248, 248, 252];
+    doc.setFillColor(bg[0], bg[1], bg[2]);
+    doc.rect(tableX, y, tableW, 7, "F");
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(r.norm_ok ? 30 : 180, r.norm_ok ? 30 : 50, 50);
+
+    const cells = [
+      r.label,
+      r.share_pct.toFixed(1),
+      String(r.total_count),
+      r.area_m2.toFixed(0),
+      r.living_m2.toFixed(0),
+      r.total_area_m2.toFixed(0),
+      r.total_living_m2.toFixed(0),
+    ];
+    cx = tableX;
+    for (let ci = 0; ci < cols.length; ci++) {
+      doc.text(cells[ci], cx + cols[ci].w / 2, y + 4.8, { align: "center" });
+      cx += cols[ci].w;
+    }
+    y += 7;
+  }
+
+  // Grid lines
+  doc.setDrawColor(210, 210, 230);
+  doc.setLineWidth(0.2);
+  const tableTop = 34;
+  doc.rect(tableX, tableTop, tableW, y - tableTop);
+  cx = tableX;
+  for (const col of cols.slice(0, -1)) {
+    cx += col.w;
+    doc.line(cx, tableTop, cx, y);
+  }
+
+  y += 8;
+
+  // ТЭП block
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(60, 60, 100);
+  doc.text("ТЕХНИКО-ЭКОНОМИЧЕСКИЕ ПОКАЗАТЕЛИ", PAD, y);
+  y += 6;
+
+  const tep = data.tep;
+  const tepRows: [string, string][] = [
+    ["Этажей:", String(tep.total_floors)],
+    ["Всего квартир:", String(tep.total_apartments)],
+    ["Общая площадь здания:", `${tep.total_floor_area_m2.toFixed(0)} м²`],
+    ["Площадь квартир:", `${tep.total_apt_area_m2.toFixed(0)} м²`],
+    ["Жилая площадь:", `${tep.total_living_area_m2.toFixed(0)} м²`],
+    ["Средняя площадь квартиры:", `${tep.avg_apt_area_m2} м²`],
+    ["КПД планировки:", `${tep.efficiency_pct}%`],
+    ["Насыщенность:", `${tep.apt_per_1000m2} кв./1000 м²`],
+  ];
+
+  const half = Math.ceil(tepRows.length / 2);
+  const col1 = tepRows.slice(0, half);
+  const col2 = tepRows.slice(half);
+  const colW2 = CW / 2 - 4;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  let yLeft = y, yRight = y;
+  for (const [k, v] of col1) {
+    doc.setTextColor(120, 120, 140);
+    doc.text(k, PAD, yLeft);
+    doc.setTextColor(30, 30, 50);
+    doc.text(v, PAD + colW2, yLeft, { align: "right" });
+    yLeft += 5.5;
+  }
+  for (const [k, v] of col2) {
+    doc.setTextColor(120, 120, 140);
+    doc.text(k, PAD + CW / 2 + 4, yRight);
+    doc.setTextColor(30, 30, 50);
+    doc.text(v, PAD + CW, yRight, { align: "right" });
+    yRight += 5.5;
+  }
+  y = Math.max(yLeft, yRight) + 6;
+
+  // Recommendations
+  if (data.recommendations.length > 0) {
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(180, 120, 40);
+    doc.text("РЕКОМЕНДАЦИИ ПО ОПТИМИЗАЦИИ", PAD, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(80, 60, 20);
+    for (const rec of data.recommendations) {
+      const lines = doc.splitTextToSize(`• ${rec}`, CW);
+      doc.text(lines, PAD, y);
+      y += lines.length * 5;
+    }
+  }
+
+  doc.save(`${projectName}.pdf`);
+}
+
+// ---------------------------------------------------------------------------
+// Квартирография CSV (открывается в Excel)
+// ---------------------------------------------------------------------------
+
+export function exportKvartirografiyaCsv(
+  data: KvartirografiyaResponse,
+  projectName = "plana-kvartirografiya",
+): void {
+  const sep = ";";
+  const lines: string[] = [
+    ["Тип", "Доля %", "Кол-во", "м²/кв.", "Жил.м²/кв.", "Итого м²", "Жил.итого м²"].join(sep),
+    ...data.rows
+      .filter(r => r.total_count > 0)
+      .map(r =>
+        [r.label, r.share_pct.toFixed(1), r.total_count, r.area_m2, r.living_m2,
+          r.total_area_m2.toFixed(0), r.total_living_m2.toFixed(0)].join(sep)
+      ),
+    "",
+    ["ТЭП", ""].join(sep),
+    ["Этажей", data.tep.total_floors].join(sep),
+    ["Всего квартир", data.tep.total_apartments].join(sep),
+    ["Площадь здания м²", data.tep.total_floor_area_m2.toFixed(0)].join(sep),
+    ["Площадь квартир м²", data.tep.total_apt_area_m2.toFixed(0)].join(sep),
+    ["Жилая площадь м²", data.tep.total_living_area_m2.toFixed(0)].join(sep),
+    ["Ср. площадь кв. м²", data.tep.avg_apt_area_m2].join(sep),
+    ["КПД %", data.tep.efficiency_pct].join(sep),
+    ["Насыщенность кв/1000м²", data.tep.apt_per_1000m2].join(sep),
+  ];
+
+  const bom = "﻿";
+  const blob = new Blob([bom + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${projectName}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function drawSectionTitle(doc: jsPDF, title: string, x: number, y: number): number {

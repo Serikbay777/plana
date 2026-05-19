@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayoutGrid, ChevronDown, Loader2, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { LayoutGrid, ChevronDown, Loader2, AlertTriangle, CheckCircle2, Info, Download } from "lucide-react";
 import {
   getKvartirografiya,
   type KvartirografiyaResponse,
   type AptTypeRow,
   type VisualizeFromInputsRequest,
 } from "@/lib/engine";
+import { exportKvartirografiyaPdf, exportKvartirografiyaCsv } from "@/lib/pdf-export";
 
 type Props = { request: VisualizeFromInputsRequest; debounceMs?: number };
 
@@ -158,6 +159,22 @@ export function KvartirografiyaPanel({ request, debounceMs = 500 }: Props) {
               Микс в пределах рыночных норм РК
             </div>
           )}
+
+          {/* Экспорт */}
+          <div className="flex gap-1.5 pt-1">
+            <button
+              onClick={() => exportKvartirografiyaCsv(data)}
+              className="flex-1 h-7 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/60 hover:text-white hover:bg-white/[0.07] transition flex items-center justify-center gap-1.5"
+            >
+              <Download size={10} /> CSV (Excel)
+            </button>
+            <button
+              onClick={() => exportKvartirografiyaPdf(data)}
+              className="flex-1 h-7 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/60 hover:text-white hover:bg-white/[0.07] transition flex items-center justify-center gap-1.5"
+            >
+              <Download size={10} /> PDF
+            </button>
+          </div>
         </div>
       )}
     </div>
