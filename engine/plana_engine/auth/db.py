@@ -4,6 +4,8 @@ import os
 import sqlite3
 import uuid
 
+import bcrypt as _bcrypt
+
 DB_PATH = os.getenv("DB_PATH", "plana.db")
 
 
@@ -52,10 +54,9 @@ def init_db() -> None:
     seed_email = os.getenv("AUTH_SEED_EMAIL")
     seed_password = os.getenv("AUTH_SEED_PASSWORD")
     if seed_email and seed_password:
-        from passlib.context import CryptContext  # lazy import
-        ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
         if get_user_by_email(seed_email) is None:
-            _create_user_raw(seed_email, ctx.hash(seed_password), role="admin")
+            hashed = _bcrypt.hashpw(seed_password.encode(), _bcrypt.gensalt()).decode()
+            _create_user_raw(seed_email, hashed, role="admin")
 
 
 def get_user_by_email(email: str) -> dict | None:

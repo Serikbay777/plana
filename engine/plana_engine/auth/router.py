@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import bcrypt as _bcrypt
+
 from fastapi import APIRouter, HTTPException, Request
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 from .db import create_user, get_user_by_email
 from .jwt_utils import create_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _hash(password: str) -> str:
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+
+
+def _verify(password: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(password.encode(), hashed.encode())
 
 
 def _derive_name(email: str) -> str:
@@ -50,7 +58,7 @@ class TokenResponse(BaseModel):
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest) -> TokenResponse:
     user = get_user_by_email(req.email.lower().strip())
-    if not user or not _pwd.verify(req.password, user["password_hash"]):
+    if not user or not _verify(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Неверный email или пароль")
     token = create_token(user["id"], user["email"], user["role"])
     return TokenResponse(access_token=token, email=user["email"], name=_derive_name(user["email"]))
@@ -63,7 +71,7 @@ def register(req: RegisterRequest) -> TokenResponse:
         raise HTTPException(status_code=400, detail="Пароль должен быть не менее 8 символов")
     if get_user_by_email(email) is not None:
         raise HTTPException(status_code=409, detail="Пользователь с таким email уже существует")
-    user = create_user(email, _pwd.hash(req.password))
+    user = create_user(email, _hash(req.password))
     token = create_token(user["id"], user["email"], user["role"])
     return TokenResponse(access_token=token, email=user["email"], name=_derive_name(user["email"]))
 

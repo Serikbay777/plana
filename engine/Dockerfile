@@ -18,7 +18,7 @@ RUN pip install --upgrade pip && \
         python-multipart "openai>=1.40" httpx pillow \
         "pypdfium2>=4.30" "ezdxf>=1.3" "shapely>=2.1" \
         "ifcopenshell>=0.8" "numpy>=1.26" \
-        "python-jose[cryptography]>=3.3" "passlib[bcrypt]>=1.7"
+        "python-jose[cryptography]>=3.3" "bcrypt>=4.0"
 
 COPY plana_engine ./plana_engine
 
