@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import io
+import math
 from dataclasses import dataclass
 
 from .._platform import avoid_windows_wmi_platform_probe
@@ -112,8 +113,12 @@ class FloorPlanDxfBuilder:
         self._draw_section_separators()
         self._draw_section_cores()      # лифты+лестницы
         self._draw_apartment_layout()
+        self._draw_windows()            # P2.3: оконные проёмы
+        self._draw_doors()              # P2.3: дверные арки
         self._draw_axes()
         self._draw_dimensions()
+        self._draw_fire_evacuation_annotation()  # P2.3: аннотации эвакуации
+        self._draw_north_arrow()        # P2.3: стрелка севера
         self._draw_title_block()
         self._draw_metadata_text()
 
@@ -234,47 +239,68 @@ class FloorPlanDxfBuilder:
 
     # ── 4. Раскладка квартир ─────────────────────────────────────────────────
 
+    _APT_TYPE_AREA: dict[str, float] = {"Ст": 30.0, "1К": 45.0, "2К": 65.0, "3К": 90.0}
+
+    def _apt_type_sequence(self, count: int) -> list[str]:
+        """Типы квартир по проценту микса в нужном количестве."""
+        mapping = [
+            ("Ст", self.inputs.studio_pct),
+            ("1К", self.inputs.k1_pct),
+            ("2К", self.inputs.k2_pct),
+            ("3К", self.inputs.k3_pct),
+        ]
+        s = sum(pct for _, pct in mapping)
+        result: list[str] = []
+        for typ, pct in mapping:
+            n = round(count * pct / s) if s > 0.01 else 0
+            result.extend([typ] * n)
+        # дополняем/обрезаем до нужного count
+        fallback = max(mapping, key=lambda x: x[1])[0] if s > 0.01 else "2К"
+        while len(result) < count:
+            result.append(fallback)
+        return result[:count]
+
     def _draw_apartment_layout(self) -> None:
-        """Упрощённая раскладка: квартиры идут вдоль фасадов (юг и север)
-        в каждой секции, разделённые перегородками. Размер по среднему м².
-        """
+        """Раскладка квартир вдоль фасадов с типами по миксу."""
         n_units = self._approx_unit_count()
         units_per_section = max(2, n_units // self.sections)
-        avg_area = self._avg_apartment_area()
-        # Ширина средней квартиры вдоль фасада, исходя из глубины зоны квартир
-        # Зона = (H - depth_of_corridor) / 2 на каждой стороне фасада
-        apt_zone_depth = (self.H - CORRIDOR_W_M - STAIR_LENGTH_M) / 2
-        if apt_zone_depth < 4.0:
-            apt_zone_depth = 4.0
-        # ширина = площадь / глубина
-        avg_w = max(4.0, avg_area / apt_zone_depth)
+        apt_zone_depth = max(4.0, (self.H - CORRIDOR_W_M - STAIR_LENGTH_M) / 2)
 
         for s in range(self.sections):
             x_start = s * self.section_w + WALL_BEARING_M
             x_end = (s + 1) * self.section_w - WALL_BEARING_M
-            # сколько квартир влезет в одну сторону
             apts_per_side = max(1, units_per_section // 2)
             side_w = (x_end - x_start) / apts_per_side
+
+            total_count = apts_per_side * 2
+            types = self._apt_type_sequence(total_count)
+
             # Юг (нижний фасад)
             for i in range(apts_per_side):
+                t_label = types[i]
+                area = self._APT_TYPE_AREA.get(t_label, self._avg_apartment_area())
                 x = x_start + i * side_w
                 self._add_rect(
                     x + 0.05, WALL_BEARING_M + 0.05,
                     side_w - 0.1, apt_zone_depth - 0.1,
                     layer="APARTMENTS_BOUNDARY",
                 )
+                # номер + тип
                 self._add_text(
-                    f"Кв. {s+1}-{i+1}",
-                    (x + side_w / 2, apt_zone_depth / 2 + WALL_BEARING_M),
+                    f"Кв. {s+1}-{i+1} [{t_label}]",
+                    (x + side_w / 2, apt_zone_depth / 2 + WALL_BEARING_M + 0.2),
                     height=0.35, layer="ANNOTATIONS",
                 )
                 self._add_text(
-                    f"S = {avg_area:.1f} м²",
-                    (x + side_w / 2, apt_zone_depth / 2 + WALL_BEARING_M - 0.6),
-                    height=0.22, layer="ANNOTATIONS",
+                    f"S = {area:.0f} м²",
+                    (x + side_w / 2, apt_zone_depth / 2 + WALL_BEARING_M - 0.35),
+                    height=0.25, layer="ANNOTATIONS",
                 )
-            # Север (верхний фасад) — со смещением номеров
+
+            # Север (верхний фасад)
             for i in range(apts_per_side):
+                t_label = types[apts_per_side + i]
+                area = self._APT_TYPE_AREA.get(t_label, self._avg_apartment_area())
                 x = x_start + i * side_w
                 y = self.H - WALL_BEARING_M - apt_zone_depth + 0.05
                 self._add_rect(
@@ -283,14 +309,14 @@ class FloorPlanDxfBuilder:
                 )
                 idx_n = apts_per_side + i + 1
                 self._add_text(
-                    f"Кв. {s+1}-{idx_n}",
-                    (x + side_w / 2, y + apt_zone_depth / 2),
+                    f"Кв. {s+1}-{idx_n} [{t_label}]",
+                    (x + side_w / 2, y + apt_zone_depth / 2 + 0.2),
                     height=0.35, layer="ANNOTATIONS",
                 )
                 self._add_text(
-                    f"S = {avg_area:.1f} м²",
-                    (x + side_w / 2, y + apt_zone_depth / 2 - 0.6),
-                    height=0.22, layer="ANNOTATIONS",
+                    f"S = {area:.0f} м²",
+                    (x + side_w / 2, y + apt_zone_depth / 2 - 0.35),
+                    height=0.25, layer="ANNOTATIONS",
                 )
 
     def _approx_unit_count(self) -> int:
@@ -312,6 +338,72 @@ class FloorPlanDxfBuilder:
             65 * self.inputs.k2_pct +
             90 * self.inputs.k3_pct
         ) / s
+
+    # ── 5a. Оконные проёмы ───────────────────────────────────────────────────
+
+    def _draw_windows(self) -> None:
+        """Три параллельных линии в толще внешних стен — условный оконный проём."""
+        n_units = self._approx_unit_count()
+        units_per_section = max(2, n_units // self.sections)
+        t = WALL_BEARING_M
+        WIN_RATIO = 0.6  # окно занимает 60 % шага
+
+        for s in range(self.sections):
+            x_start = s * self.section_w + t
+            x_end = (s + 1) * self.section_w - t
+            apts_per_side = max(1, units_per_section // 2)
+            side_w = (x_end - x_start) / apts_per_side
+
+            for i in range(apts_per_side):
+                cx = x_start + i * side_w + side_w / 2
+                hw = side_w * WIN_RATIO / 2
+
+                for y in (0.0, t * 0.5, t):
+                    self.msp.add_line(
+                        (cx - hw, y), (cx + hw, y),
+                        dxfattribs={"layer": "WINDOWS"},
+                    )
+                for y in (self.H - t, self.H - t * 0.5, self.H):
+                    self.msp.add_line(
+                        (cx - hw, y), (cx + hw, y),
+                        dxfattribs={"layer": "WINDOWS"},
+                    )
+
+    # ── 5b. Дверные арки ────────────────────────────────────────────────────
+
+    def _draw_doors(self) -> None:
+        """Линия полотна + четверть-дуга качания у каждой квартиры со стороны коридора."""
+        n_units = self._approx_unit_count()
+        units_per_section = max(2, n_units // self.sections)
+        apt_zone_depth = max(4.0, (self.H - CORRIDOR_W_M - STAIR_LENGTH_M) / 2)
+        t = WALL_BEARING_M
+        DOOR_W = 0.9
+
+        y_south = t + apt_zone_depth          # граница южных квартир со стороны коридора
+        y_north = self.H - t - apt_zone_depth  # граница северных квартир
+
+        for s in range(self.sections):
+            x_start = s * self.section_w + t
+            x_end = (s + 1) * self.section_w - t
+            apts_per_side = max(1, units_per_section // 2)
+            side_w = (x_end - x_start) / apts_per_side
+
+            for i in range(apts_per_side):
+                hx = x_start + i * side_w + (side_w - DOOR_W) / 2
+
+                # Южные квартиры — дверь открывается вверх (в коридор)
+                hs = (hx, y_south)
+                self.msp.add_line(hs, (hx + DOOR_W, y_south),
+                                  dxfattribs={"layer": "DOORS"})
+                self.msp.add_arc(hs, DOOR_W, 0, 90,
+                                 dxfattribs={"layer": "DOORS"})
+
+                # Северные квартиры — дверь открывается вниз (в коридор)
+                hn = (hx, y_north)
+                self.msp.add_line(hn, (hx + DOOR_W, y_north),
+                                  dxfattribs={"layer": "DOORS"})
+                self.msp.add_arc(hn, DOOR_W, 270, 360,
+                                 dxfattribs={"layer": "DOORS"})
 
     # ── 5. Оси ───────────────────────────────────────────────────────────────
 
@@ -367,7 +459,47 @@ class FloorPlanDxfBuilder:
                     dxfattribs={"layer": "DIMENSIONS"},
                 ).render()
 
-    # ── 7. Штамп с информацией ──────────────────────────────────────────────
+    # ── 7. Аннотации путей эвакуации ────────────────────────────────────────
+
+    def _draw_fire_evacuation_annotation(self) -> None:
+        """Пунктирная стрелка пути эвакуации + расстояние по норме КМК 2.02-05-2003."""
+        t = WALL_BEARING_M
+        far = (t * 0.5, t * 0.5)                  # дальний угол плана
+        core_x = self.section_w / 2               # первое лифтовое ядро
+        core_y = self.H / 2
+        dist_m = math.hypot(core_x - far[0], core_y - far[1])
+
+        self.msp.add_line(far, (core_x, core_y),
+                          dxfattribs={"layer": "ANNOTATIONS", "linetype": "DASHED", "color": 1})
+        self.msp.add_circle(far, 0.25,
+                            dxfattribs={"layer": "ANNOTATIONS", "color": 1})
+        self._add_text(
+            f"Эвак. ≤ {dist_m:.0f} м  (КМК 2.02-05-2003)",
+            ((far[0] + core_x) / 2, (far[1] + core_y) / 2 + 0.6),
+            height=0.22, layer="ANNOTATIONS",
+        )
+
+    # ── 8. Стрелка севера ───────────────────────────────────────────────────
+
+    def _draw_north_arrow(self) -> None:
+        """Стрелка «Север» в правом верхнем углу вне плана."""
+        cx = self.W + 3.5
+        cy = self.H + 4.0
+        arm = 1.2
+        tip = (cx, cy + arm)
+
+        self.msp.add_line((cx, cy - arm), tip,
+                          dxfattribs={"layer": "ANNOTATIONS"})
+        aw = 0.25
+        self.msp.add_line(tip, (cx - aw, cy + arm * 0.5),
+                          dxfattribs={"layer": "ANNOTATIONS"})
+        self.msp.add_line(tip, (cx + aw, cy + arm * 0.5),
+                          dxfattribs={"layer": "ANNOTATIONS"})
+        self.msp.add_circle((cx, cy), 0.35,
+                            dxfattribs={"layer": "ANNOTATIONS"})
+        self._add_text("С", (cx, cy + arm + 0.55), height=0.5, layer="ANNOTATIONS")
+
+    # ── 9. Штамп с информацией ──────────────────────────────────────────────
 
     def _draw_title_block(self) -> None:
         """Штамп проекта в правом нижнем углу под планом."""
