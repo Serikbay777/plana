@@ -7,6 +7,7 @@ import {
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, ArrowRight, Wand2, Loader2, ScanSearch, Compass, Ruler,
   Trees, Flame, DoorOpen, Network, Save, FolderOpen, Check,
+  LayoutGrid, List,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { ValidationPanel } from "@/components/ValidationPanel";
@@ -25,6 +26,7 @@ import {
   editAiPlan,
   exportFloorplanDxf,
   exportFloorplanIfc,
+  getFloorplanMetrics,
   type DxfImportResult,
   type GpzuExtraction,
   type ContourAnalysis,
@@ -33,6 +35,7 @@ import {
   type VisualizeResult,
   type PlacementVariant,
   type InteriorGalleryItem,
+  type FloorPlanMetrics,
 } from "@/lib/engine";
 import { getSession, signOut, type Session } from "@/lib/auth";
 import { createProject, updateProject, uploadAsset, getProject } from "@/lib/projects";
@@ -685,6 +688,7 @@ export default function AppPage() {
               contourError={contourError}
               onContourAnalyze={handleContourAnalyze}
               onClearContour={() => { setContourResult(null); setContourError(null); }}
+              onGetMetrics={() => getFloorplanMetrics(buildVisReq(form))}
               onExportFullReport={handleExportFullReport}
               hasExtraSections={
                 placementBag.state === "ready" ||
@@ -2124,7 +2128,7 @@ function AiPlansTab({
   dxfImportLoading, dxfImportResult, dxfImportError, onDxfImport, onClearDxfImport, onApplyDxfBounds,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
-  onExportFullReport, hasExtraSections,
+  onGetMetrics, onExportFullReport, hasExtraSections,
 }: {
   bag: AiPlansBag;
   currentFloor: number;
@@ -2152,10 +2156,22 @@ function AiPlansTab({
   contourError: string | null;
   onContourAnalyze: (f: File) => void;
   onClearContour: () => void;
+  onGetMetrics: () => Promise<FloorPlanMetrics>;
   onExportFullReport: () => Promise<void>;
   hasExtraSections: boolean;
 }) {
   const [lightbox, setLightbox] = useState<AiPlanVariant | null>(null);
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+  const [metrics, setMetrics] = useState<FloorPlanMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+
+  const switchToTable = async () => {
+    setViewMode("table");
+    if (!metrics && !metricsLoading) {
+      setMetricsLoading(true);
+      try { setMetrics(await onGetMetrics()); } catch { /* ignore */ } finally { setMetricsLoading(false); }
+    }
+  };
   // Интерактивная корректировка (Этап 4 ТЗ): юзер пишет инструкцию,
   // gpt-image-edit перерисовывает чертёж, результат показываем поверх оригинала.
   const [editInstruction, setEditInstruction] = useState("");
@@ -2608,7 +2624,18 @@ function AiPlansTab({
 
         {bag.state === "error" && <ErrorState message={bag.errorMessage} onRetry={onGenerate} />}
 
-        {bag.state === "ready" && bag.variants.length > 0 && (
+        {bag.state === "ready" && bag.variants.length > 0 && viewMode === "table" && (
+          <ComparisonTable
+            variants={bag.variants}
+            metrics={metrics}
+            metricsLoading={metricsLoading}
+            onOpenLightbox={setLightbox}
+            onExportDxf={onExportDxf}
+            cadExportLoading={cadExportLoading}
+          />
+        )}
+
+        {bag.state === "ready" && bag.variants.length > 0 && viewMode === "grid" && (
           <div className="p-5 grid grid-cols-2 gap-4">
             {bag.variants.map((v, i) => (
               <div
@@ -2700,10 +2727,18 @@ function AiPlansTab({
       {/* Bottom bar */}
       {bag.state === "ready" && (
         <div className="border-t border-white/[0.05] px-5 py-3 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
-          <div className="text-[11px] text-white/40 flex items-center gap-2">
-            <span>{bag.variants.length} вариантов</span>
-            <span className="text-white/20">·</span>
-            <span>Кликни по изображению для полного размера</span>
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-lg border border-white/[0.07] bg-white/[0.02] p-0.5">
+              <button
+                onClick={() => setViewMode("grid")}
+                className={["h-7 px-2.5 rounded-md text-[11.5px] flex items-center gap-1.5 transition", viewMode === "grid" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/70"].join(" ")}
+              ><LayoutGrid size={12} /> Сетка</button>
+              <button
+                onClick={switchToTable}
+                className={["h-7 px-2.5 rounded-md text-[11.5px] flex items-center gap-1.5 transition", viewMode === "table" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/70"].join(" ")}
+              ><List size={12} /> Таблица</button>
+            </div>
+            <span className="text-[11px] text-white/30">{bag.variants.length} вариантов</span>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <button
@@ -2762,6 +2797,115 @@ function AiPlansTab({
         </div>
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// P2.1 — Сравнительная таблица вариантов
+// ---------------------------------------------------------------------------
+
+const VARIANT_STRATEGY: Record<string, string> = {
+  max_useful_area: "Компактное ядро, квартиры сквозь всю глубину, минимум коридоров",
+  max_apt_count:   "Студии и 1К, двусторонний коридор, 8–12 квартир на этаже",
+  balanced_mix:    "20% студии · 30% 1К · 35% 2К · 15% 3К — советский/классический mix",
+  max_insolation:  "Все жилые на юг, технические (санузел, кухня) на север",
+  open_plan:       "3–5 крупных евроквартир, open-plan кухня-гостиная ≥ 22 м²",
+};
+
+function ComparisonTable({
+  variants, metrics, metricsLoading, onOpenLightbox, onExportDxf, cadExportLoading,
+}: {
+  variants: AiPlanVariant[];
+  metrics: FloorPlanMetrics | null;
+  metricsLoading: boolean;
+  onOpenLightbox: (v: AiPlanVariant) => void;
+  onExportDxf: () => Promise<void>;
+  cadExportLoading: CadExportKind | null;
+}) {
+  return (
+    <div className="p-5 flex flex-col gap-4">
+      {/* Метрики здания — единые для всех вариантов */}
+      <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-5 py-3.5 flex flex-wrap gap-x-6 gap-y-2">
+        {metricsLoading ? (
+          <div className="flex items-center gap-2 text-[11.5px] text-white/40">
+            <Loader2 size={12} className="animate-spin" /> Считаем метрики…
+          </div>
+        ) : metrics ? (
+          <>
+            <MetricChip label="Площадь этажа" value={`${metrics.total_floor_area_m2} м²`} />
+            <MetricChip label="Квартир на этаже" value={String(metrics.apartments_count)} />
+            <MetricChip label="Ср. площадь квартиры" value={`${metrics.avg_apartment_area_m2} м²`} />
+            <MetricChip label="КПД" value={`${metrics.efficiency_pct}%`} accent />
+            <MetricChip label="Секций" value={String(metrics.sections_count)} />
+            <MetricChip label="Квартир/секция" value={String(metrics.units_per_section)} />
+          </>
+        ) : (
+          <span className="text-[11.5px] text-white/30">Метрики не загружены</span>
+        )}
+      </div>
+
+      {/* Таблица вариантов */}
+      <div className="rounded-xl border border-white/[0.07] overflow-hidden">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-white/[0.07] bg-white/[0.02]">
+              <th className="px-4 py-2.5 text-[11px] font-medium text-white/40 w-20">Превью</th>
+              <th className="px-4 py-2.5 text-[11px] font-medium text-white/40">Вариант</th>
+              <th className="px-4 py-2.5 text-[11px] font-medium text-white/40">Стратегия</th>
+              <th className="px-4 py-2.5 text-[11px] font-medium text-white/40 w-32 text-right">Скачать</th>
+            </tr>
+          </thead>
+          <tbody>
+            {variants.map((v, i) => (
+              <tr key={v.key} className={["border-b border-white/[0.05] hover:bg-white/[0.02] transition", i === variants.length - 1 ? "border-b-0" : ""].join(" ")}>
+                <td className="px-4 py-3">
+                  <button onClick={() => onOpenLightbox(v)} className="relative group rounded-lg overflow-hidden w-16 h-12 flex-shrink-0">
+                    <img src={v.imageUrl} alt={v.label} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition flex items-center justify-center">
+                      <Eye size={12} className="text-white opacity-0 group-hover:opacity-100 transition" />
+                    </div>
+                  </button>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="text-[12.5px] font-medium text-white/90">{v.label}</div>
+                  <div className="text-[10.5px] text-white/35 mt-0.5">{v.modelUsed}</div>
+                </td>
+                <td className="px-4 py-3 text-[11.5px] text-white/55 leading-relaxed max-w-xs">
+                  {VARIANT_STRATEGY[v.key] ?? "—"}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1.5 justify-end">
+                    <a
+                      href={v.imageUrl}
+                      download={`plana-ai-${v.key}.png`}
+                      className="h-7 px-2 rounded-lg surface text-[10.5px] flex items-center gap-1 hover:bg-white/[0.08] transition text-white/55 hover:text-white"
+                    >
+                      <Download size={10} /> PNG
+                    </a>
+                    <button
+                      onClick={onExportDxf}
+                      disabled={cadExportLoading !== null}
+                      className="h-7 px-2 rounded-lg text-[10.5px] flex items-center gap-1 transition border border-violet-400/30 text-violet-200/80 hover:bg-violet-500/15 disabled:opacity-50"
+                    >
+                      <Download size={10} /> DXF
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function MetricChip({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span className="text-[10.5px] text-white/40">{label}:</span>
+      <span className={["text-[13px] font-semibold", accent ? "text-emerald-300" : "text-white/85"].join(" ")}>{value}</span>
+    </div>
   );
 }
 
