@@ -245,6 +245,12 @@ export default function AppPage() {
   // Prevents form-change effect from clearing bags during project/history restore
   const restoringRef = useRef(false);
 
+  // Сериализация авто-сохранений: очередь вместо «дропнуть если занято».
+  // projectIdRef держит актуальный id даже до того, как setProjectId долетит.
+  const projectIdRef = useRef<string | null>(null);
+  const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  useEffect(() => { projectIdRef.current = projectId; }, [projectId]);
+
   // ---- auth gate
   useEffect(() => {
     const s = getSession();
@@ -334,44 +340,49 @@ export default function AppPage() {
   }, [saving, projectId, projectName, form, floorBags, vizExtBag, vizFloorBag, siteBag]);
 
   // ---- авто-сохранение после генерации
-  const autoSaveGeneration = useCallback(async (
+  const autoSaveGeneration = useCallback((
     tab: string,
     floor: number,
     assets: { variantKey: string; imageUrl: string; modelUsed?: string }[],
     currentForm: PromptFormState,
   ) => {
-    if (autoSaving) return;
-    setAutoSaving(true);
-    try {
-      // Создаём проект автоматически если его ещё нет
-      let pid = projectId;
-      let pname = projectName;
-      if (!pid) {
-        const auto = `${currentForm.purpose === "residential" ? "ЖК" : "Проект"} ${currentForm.floors}эт ${currentForm.building_width_m}×${currentForm.building_depth_m}`;
-        pname = auto;
-        setProjectName(auto);
-        const p = await createProject(auto, currentForm);
-        pid = p.id;
-        setProjectId(pid);
-        window.history.replaceState(null, "", `?project=${pid}`);
-        setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
-      } else {
-        await updateProject(pid, { params: currentForm }).catch(() => {});
+    const task = async () => {
+      setAutoSaving(true);
+      try {
+        // Создаём проект автоматически если его ещё нет.
+        // projectIdRef, а не state — чтобы поставленные в очередь сохранения
+        // видели уже созданный проект и не плодили дубли.
+        let pid = projectIdRef.current;
+        let pname = projectName;
+        if (!pid) {
+          const auto = `${currentForm.purpose === "residential" ? "ЖК" : "Проект"} ${currentForm.floors}эт ${currentForm.building_width_m}×${currentForm.building_depth_m}`;
+          pname = auto;
+          setProjectName(auto);
+          const p = await createProject(auto, currentForm);
+          pid = p.id;
+          projectIdRef.current = pid;
+          setProjectId(pid);
+          window.history.replaceState(null, "", `?project=${pid}`);
+          setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
+        } else {
+          await updateProject(pid, { params: currentForm }).catch(() => {});
+        }
+        const run = await createRun(pid, tab, floor, currentForm);
+        await Promise.all(
+          assets.map((a) =>
+            uploadAsset(pid!, tab, a.variantKey, a.imageUrl, a.modelUsed, floor, run.id).catch(() => {}),
+          ),
+        );
+        setAutoSaveLabel(pname || "проект");
+        setTimeout(() => setAutoSaveLabel(null), 3000);
+      } catch { /* silent */ } finally {
+        setAutoSaving(false);
       }
-      // Создаём run
-      const run = await createRun(pid, tab, floor, currentForm);
-      // Загружаем ассеты
-      await Promise.all(
-        assets.map((a) =>
-          uploadAsset(pid!, tab, a.variantKey, a.imageUrl, a.modelUsed, floor, run.id).catch(() => {}),
-        ),
-      );
-      setAutoSaveLabel(pname || "проект");
-      setTimeout(() => setAutoSaveLabel(null), 3000);
-    } catch { /* silent */ } finally {
-      setAutoSaving(false);
-    }
-  }, [autoSaving, projectId, projectName]);
+    };
+    // Очередь: сохранения сериализуются, ничего не дропается.
+    saveChainRef.current = saveChainRef.current.then(task, task);
+    return saveChainRef.current;
+  }, [projectName]);
 
   // сбрасываем результаты при изменении формы
   useEffect(() => {
