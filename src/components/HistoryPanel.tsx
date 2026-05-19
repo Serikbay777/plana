@@ -164,6 +164,7 @@ function RunCard({ run, onRestoreImages, onRestoreParams }: RunCardProps) {
 
 export type HistoryPanelProps = {
   projectId: string | null;
+  currentTab?: HistoryTab;
   onRestoreImages: (run: GenerationRun) => void;
   onRestoreParams: (params: PromptFormState) => void;
   onClose: () => void;
@@ -171,13 +172,19 @@ export type HistoryPanelProps = {
 
 export default function HistoryPanel({
   projectId,
+  currentTab,
   onRestoreImages,
   onRestoreParams,
   onClose,
 }: HistoryPanelProps) {
   const [runs, setRuns] = useState<GenerationRun[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<HistoryTab>("ai_plans");
+  const [activeTab, setActiveTab] = useState<HistoryTab>(currentTab ?? "ai_plans");
+
+  // Следуем за активным разделом приложения: открыл Посадку — видишь её историю
+  useEffect(() => {
+    if (currentTab) setActiveTab(currentTab);
+  }, [currentTab]);
 
   const load = useCallback(() => {
     if (!projectId) { setRuns([]); return; }

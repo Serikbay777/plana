@@ -906,6 +906,7 @@ export default function AppPage() {
         {historyOpen && (
           <HistoryPanel
             projectId={projectId}
+            currentTab={tab}
             onRestoreImages={handleRestoreRun}
             onRestoreParams={handleRestoreParams}
             onClose={() => setHistoryOpen(false)}
