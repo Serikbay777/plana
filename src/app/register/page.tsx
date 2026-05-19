@@ -5,25 +5,30 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Layers, ArrowRight, AlertCircle } from "lucide-react";
-import { signIn } from "@/lib/auth";
+import { register } from "@/lib/auth";
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
+    if (password !== password2) {
+      setError("Пароли не совпадают");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      await signIn(email, password);
+      await register(email, password);
       router.push("/app");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка входа");
+      setError(err instanceof Error ? err.message : "Ошибка регистрации");
       setSubmitting(false);
     }
   };
@@ -48,10 +53,10 @@ export default function LoginPage() {
         >
           <div className="text-center mb-10">
             <h1 className="text-[40px] font-semibold tracking-display leading-tight">
-              С возвращением
+              Создать аккаунт
             </h1>
             <p className="text-[15px] text-neutral-500 mt-2.5 leading-relaxed">
-              Войдите, чтобы начать проектировать.
+              Начните проектировать прямо сейчас.
             </p>
           </div>
 
@@ -69,6 +74,13 @@ export default function LoginPage() {
               type="password"
               value={password}
               onChange={setPassword}
+              placeholder="Не менее 8 символов"
+            />
+            <Field
+              label="Подтвердите пароль"
+              type="password"
+              value={password2}
+              onChange={setPassword2}
               placeholder="••••••••"
             />
 
@@ -81,12 +93,12 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={submitting || !email || !password}
+              disabled={submitting || !email || !password || !password2}
               className="btn-apple h-12 mt-3 flex items-center justify-center gap-2 text-[15px] disabled:opacity-50"
             >
-              {submitting ? "Входим…" : (
+              {submitting ? "Создаём аккаунт…" : (
                 <>
-                  Продолжить
+                  Зарегистрироваться
                   <ArrowRight size={16} />
                 </>
               )}
@@ -95,9 +107,9 @@ export default function LoginPage() {
 
           <div className="mt-10 pt-8 border-t border-neutral-200/80 text-center">
             <p className="text-[13px] text-neutral-500">
-              Ещё нет аккаунта?{" "}
-              <Link href="/register" className="text-[#0a84ff] hover:underline font-medium">
-                Зарегистрироваться
+              Уже есть аккаунт?{" "}
+              <Link href="/login" className="text-[#0a84ff] hover:underline font-medium">
+                Войти
               </Link>
             </p>
           </div>

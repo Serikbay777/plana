@@ -4,6 +4,13 @@
 // По умолчанию в dev — http://localhost:8001, в проде — переопределяется
 // через NEXT_PUBLIC_ENGINE_URL.
 
+import { getToken } from "./auth";
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 const ENGINE_URL =
   process.env.NEXT_PUBLIC_ENGINE_URL ??
   (process.env.NODE_ENV === "production" ? "/api" : "http://localhost:8001");
@@ -32,6 +39,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders(),
       ...(init?.headers ?? {}),
     },
   });
@@ -107,6 +115,7 @@ export async function analyzeContour(file: File): Promise<ContourAnalysis> {
   fd.append("file", file);
   const res = await fetch(`${ENGINE_URL}/analyze/contour`, {
     method: "POST",
+    headers: authHeaders(),
     body: fd,
   });
   if (!res.ok) {
@@ -122,6 +131,7 @@ export async function importGpzu(file: File): Promise<GpzuExtraction> {
   fd.append("file", file);
   const res = await fetch(`${ENGINE_URL}/import/gpzu`, {
     method: "POST",
+    headers: authHeaders(),
     body: fd,
   });
   if (!res.ok) {
@@ -190,6 +200,7 @@ export async function importFloorplanCad(file: File): Promise<DxfImportResult> {
     : "/import/floorplan-dxf";
   const res = await fetch(`${ENGINE_URL}${path}`, {
     method: "POST",
+    headers: authHeaders(),
     body: fd,
   });
   if (!res.ok) {
@@ -249,7 +260,7 @@ async function _postForImage(
 ): Promise<VisualizeResult> {
   const res = await fetch(`${ENGINE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -311,6 +322,7 @@ export async function visualizeSitePlacement(
 
   const res = await fetch(`${ENGINE_URL}/visualize/site-placement`, {
     method: "POST",
+    headers: authHeaders(),
     body: fd,
   });
   if (!res.ok) {
@@ -427,6 +439,7 @@ export async function visualizeSitePlacementVariants(
 
   const res = await fetch(`${ENGINE_URL}/visualize/site-placement-variants`, {
     method: "POST",
+    headers: authHeaders(),
     body: fd,
   });
   if (!res.ok) {
@@ -507,6 +520,7 @@ export async function editAiPlan(
 
   const res = await fetch(`${ENGINE_URL}/visualize/edit-instruction`, {
     method: "POST",
+    headers: authHeaders(),
     body: fd,
   });
   if (!res.ok) {
@@ -546,7 +560,7 @@ export async function exportFloorplanDxf(
 ): Promise<{ blob: Blob; filename: string; metricsHeaders: Record<string, string> }> {
   const res = await fetch(`${ENGINE_URL}/export/floorplan-dxf`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(req),
   });
   if (!res.ok) throw new EngineError(res.status, await res.text());
@@ -575,7 +589,7 @@ export async function exportFloorplanIfc(
 ): Promise<{ blob: Blob; filename: string; projectHeaders: Record<string, string> }> {
   const res = await fetch(`${ENGINE_URL}/export/floorplan-ifc`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(req),
   });
   if (!res.ok) throw new EngineError(res.status, await res.text());

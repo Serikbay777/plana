@@ -7,21 +7,21 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Native deps для ifcopenshell wheel (OpenCASCADE bundled, требует libgomp1).
-# libstdc++6 уже есть в python:3.11-slim, отдельно ставить не нужно.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
 RUN pip install --upgrade pip && \
-    pip install pydantic fastapi "uvicorn[standard]" \
-                python-multipart "openai>=1.40" httpx pillow \
-                "pypdfium2>=4.30" "ezdxf>=1.3" "shapely>=2.1" \
-                "ifcopenshell>=0.8" "numpy>=1.26"
+    pip install \
+        pydantic fastapi "uvicorn[standard]" \
+        python-multipart "openai>=1.40" httpx pillow \
+        "pypdfium2>=4.30" "ezdxf>=1.3" "shapely>=2.1" \
+        "ifcopenshell>=0.8" "numpy>=1.26" \
+        "python-jose[cryptography]>=3.3" "passlib[bcrypt]>=1.7"
 
 COPY plana_engine ./plana_engine
 
-EXPOSE 10000
+EXPOSE 8001
 
-CMD ["sh", "-c", "uvicorn plana_engine.api.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["uvicorn", "plana_engine.api.main:app", "--host", "0.0.0.0", "--port", "8001"]

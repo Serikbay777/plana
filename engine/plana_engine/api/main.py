@@ -22,14 +22,17 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .. import __version__
+from ..auth import init_db, router as auth_router
+from ..auth.jwt_utils import verify_token
 from ..cad import (
     build_floorplan_dxf, build_floorplan_ifc, compute_floorplan_metrics,
 )
@@ -46,10 +49,17 @@ from ..visualizer.openai_client import (
 )
 
 
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="Plana Engine API",
     version=__version__,
     description="Prompt-driven визуализатор планировок (Plana).",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -59,6 +69,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Публичные пути — не требуют токена
+_PUBLIC_PATHS = {"/health", "/auth/login", "/auth/register", "/docs", "/openapi.json", "/redoc"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next: Any) -> Any:
+    if request.url.path in _PUBLIC_PATHS:
+        return await call_next(request)
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return Response(
+            content='{"detail":"Not authenticated"}',
+            status_code=401,
+            media_type="application/json",
+        )
+    try:
+        payload = verify_token(auth_header[7:])
+        request.state.user = payload
+    except ValueError:
+        return Response(
+            content='{"detail":"Invalid or expired token"}',
+            status_code=401,
+            media_type="application/json",
+        )
+    return await call_next(request)
+
+
+app.include_router(auth_router)
+
 
 
 # ---------------------------------------------------------------------------
