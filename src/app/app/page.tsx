@@ -476,17 +476,26 @@ export default function AppPage() {
   const wrapImageGen = async (
     setter: React.Dispatch<React.SetStateAction<ImageBag>>,
     fn: () => Promise<VisualizeResult>,
+    saveSpec?: { tab: string; variantKey: string },
   ) => {
     setter({ ...EMPTY_IMAGE_BAG, state: "loading" });
     try {
       const result = await fn();
+      const imageUrl = URL.createObjectURL(result.blob);
       setter({
         state: "ready",
-        imageUrl: URL.createObjectURL(result.blob),
+        imageUrl,
         modelUsed: result.modelUsed,
         enhancerUsed: result.enhancerUsed,
         errorMessage: null,
       });
+      if (saveSpec) {
+        autoSaveGeneration(
+          saveSpec.tab, 1,
+          [{ variantKey: saveSpec.variantKey, imageUrl, modelUsed: result.modelUsed ?? undefined }],
+          form,
+        );
+      }
     } catch (e) {
       setter({ ...EMPTY_IMAGE_BAG, state: "error", errorMessage: (e as Error).message });
     }
@@ -501,7 +510,11 @@ export default function AppPage() {
       setSiteBag({ ...EMPTY_IMAGE_BAG, state: "error", errorMessage: "Загрузите фото или рендер здания" });
       return;
     }
-    return wrapImageGen(setSiteBag, () => visualizeSitePlacement(siteFile, buildVisReq(form), siteBldFile));
+    return wrapImageGen(
+      setSiteBag,
+      () => visualizeSitePlacement(siteFile, buildVisReq(form), siteBldFile),
+      { tab: "site", variantKey: "placement" },
+    );
   };
 
   // Генератор интерьер-галереи — по типам из процентов формы
@@ -541,6 +554,15 @@ export default function AppPage() {
         apt_types: aptTypes,
       });
       setVizIntGallery({ state: "ready", items: res.items, elapsedMs: res.elapsed_ms, errorMessage: null });
+      autoSaveGeneration(
+        "viz_interior", 1,
+        res.items.map((it) => ({
+          variantKey: it.apt_type,
+          imageUrl: `data:image/png;base64,${it.image_b64}`,
+          modelUsed: it.model_used,
+        })),
+        form,
+      );
     } catch (e) {
       setVizIntGallery({ ...EMPTY_INT_GALLERY, state: "error", errorMessage: (e as Error).message });
     }
@@ -549,8 +571,8 @@ export default function AppPage() {
   // Генерация одного режима (по активному vizMode) — для ручного запуска
   const generateViz = () => {
     const req = buildVisReq(form);
-    if (vizMode === "exterior")                 wrapImageGen(setVizExtBag,   () => visualizeExterior(req));
-    else if (vizMode === "floorplan_furniture") wrapImageGen(setVizFloorBag, () => visualizeFloorplanFurniture(req));
+    if (vizMode === "exterior")                 wrapImageGen(setVizExtBag,   () => visualizeExterior(req),           { tab: "viz_exterior", variantKey: "exterior" });
+    else if (vizMode === "floorplan_furniture") wrapImageGen(setVizFloorBag, () => visualizeFloorplanFurniture(req), { tab: "viz_floor",    variantKey: "floor" });
     else                                        generateInteriorGallery();
   };
 
@@ -617,6 +639,15 @@ export default function AppPage() {
         quality:         "medium",
       });
       setPlacementBag({ state: "ready", variants: res.variants, elapsedMs: res.elapsed_ms, errorMessage: null });
+      autoSaveGeneration(
+        "placement", 1,
+        res.variants.map((v) => ({
+          variantKey: v.key,
+          imageUrl: `data:image/png;base64,${v.image_b64}`,
+          modelUsed: v.model_used,
+        })),
+        form,
+      );
     } catch (e) {
       setPlacementBag({ ...EMPTY_PLACEMENT, state: "error", errorMessage: (e as Error).message });
     }
