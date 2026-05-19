@@ -3064,6 +3064,7 @@ function AiPlansTab({
             metricsLoading={metricsLoading}
             onOpenLightbox={setLightbox}
             onExportDxf={onExportDxf}
+            onExportIfc={onExportIfc}
             cadExportLoading={cadExportLoading}
           />
         )}
@@ -3142,6 +3143,17 @@ function AiPlansTab({
                       title="DXF — реальный CAD-чертёж для AutoCAD"
                     >
                       {cadExportLoading === "dxf" ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} DXF
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onExportIfc(); }}
+                      disabled={cadExportLoading !== null}
+                      className={[
+                        "h-8 px-2.5 rounded-full text-[11px] flex items-center gap-1 transition border border-cyan-400/30 text-cyan-200/85",
+                        cadExportLoading === null ? "hover:bg-cyan-500/15 hover:text-white" : "opacity-60 cursor-wait",
+                      ].join(" ")}
+                      title="IFC4 BIM-модель — открывается в Revit/ArchiCAD/BIMcollab"
+                    >
+                      {cadExportLoading === "ifc" ? <Loader2 size={11} className="animate-spin" /> : <Network size={11} />} IFC
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); onGoToViz(); }}
@@ -3257,13 +3269,14 @@ const VARIANT_STRATEGY: Record<string, string> = {
 };
 
 function ComparisonTable({
-  variants, metrics, metricsLoading, onOpenLightbox, onExportDxf, cadExportLoading,
+  variants, metrics, metricsLoading, onOpenLightbox, onExportDxf, onExportIfc, cadExportLoading,
 }: {
   variants: AiPlanVariant[];
   metrics: FloorPlanMetrics | null;
   metricsLoading: boolean;
   onOpenLightbox: (v: AiPlanVariant) => void;
   onExportDxf: () => Promise<void>;
+  onExportIfc: () => Promise<void>;
   cadExportLoading: CadExportKind | null;
 }) {
   return (
@@ -3332,6 +3345,13 @@ function ComparisonTable({
                       className="h-7 px-2 rounded-lg text-[10.5px] flex items-center gap-1 transition border border-violet-400/30 text-violet-200/80 hover:bg-violet-500/15 disabled:opacity-50"
                     >
                       <Download size={10} /> DXF
+                    </button>
+                    <button
+                      onClick={onExportIfc}
+                      disabled={cadExportLoading !== null}
+                      className="h-7 px-2 rounded-lg text-[10.5px] flex items-center gap-1 transition border border-cyan-400/30 text-cyan-200/80 hover:bg-cyan-500/15 disabled:opacity-50"
+                    >
+                      <Network size={10} /> IFC
                     </button>
                   </div>
                 </td>
