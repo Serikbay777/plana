@@ -49,6 +49,7 @@ from ..visualizer import (
 from ..visualizer.openai_client import (
     MissingAPIKey, OpenAIError, has_api_key,
     generate_image_edit_with_meta, generate_image_with_meta,
+    generate_image_inpaint_with_meta,
 )
 
 
@@ -1285,6 +1286,74 @@ async def visualize_edit_instruction(
             "X-Model-Used": result.model_used,
             "X-Edit-Instruction": instruction[:120],
             "Access-Control-Expose-Headers": "X-Model-Used, X-Edit-Instruction",
+        },
+    )
+
+
+@app.post("/visualize/inpaint")
+async def visualize_inpaint(
+    image: UploadFile = File(...),
+    mask: UploadFile = File(...),
+    instruction: str = Form(...),
+    quality: str = Form("medium"),
+) -> Response:
+    """Inpainting: перерисовать только закрашенные маской области чертежа.
+
+    mask — PNG с альфа-каналом: прозрачные пиксели = перерисовать, непрозрачные = оставить.
+    Pillow ресайзит маску до размеров изображения перед отправкой в OpenAI.
+    """
+    _validate_quality(quality)
+
+    if not instruction or not instruction.strip():
+        raise HTTPException(status_code=400, detail="instruction is required")
+    if len(instruction) > 1000:
+        raise HTTPException(status_code=400, detail="instruction is too long (≤ 1000 chars)")
+
+    image_bytes = await image.read()
+    mask_bytes = await mask.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="empty image")
+    if not mask_bytes:
+        raise HTTPException(status_code=400, detail="empty mask")
+
+    # Ресайзим маску под размер изображения с помощью Pillow
+    try:
+        from PIL import Image as PILImage
+        import io as _io
+        with PILImage.open(_io.BytesIO(image_bytes)) as img:
+            img_size = img.size  # (width, height)
+        with PILImage.open(_io.BytesIO(mask_bytes)) as msk:
+            if msk.size != img_size:
+                msk = msk.resize(img_size, PILImage.LANCZOS)
+            if msk.mode != "RGBA":
+                msk = msk.convert("RGBA")
+            buf = _io.BytesIO()
+            msk.save(buf, format="PNG")
+            mask_bytes = buf.getvalue()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"mask processing error: {e}")
+
+    prompt = _wrap_edit_instruction(instruction)
+
+    try:
+        result = generate_image_inpaint_with_meta(
+            prompt,
+            image_bytes,
+            mask_bytes,
+            GenerationOptions(quality=quality),  # type: ignore[arg-type]
+        )
+    except MissingAPIKey as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except OpenAIError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return Response(
+        content=result.png,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Model-Used": result.model_used,
+            "Access-Control-Expose-Headers": "X-Model-Used",
         },
     )
 

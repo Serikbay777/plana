@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { ValidationPanel } from "@/components/ValidationPanel";
+import MaskCanvas, { type MaskCanvasHandle } from "@/components/MaskCanvas";
 import { exportAiPlansPdf, exportFullReportPdf } from "@/lib/pdf-export";
 import {
   importGpzu,
@@ -24,6 +25,7 @@ import {
   visualizeSitePlacementVariants,
   visualizeInteriorGallery,
   editAiPlan,
+  inpaintAiPlan,
   exportFloorplanDxf,
   exportFloorplanIfc,
   getFloorplanMetrics,
@@ -2199,6 +2201,10 @@ function AiPlansTab({
   const [editedUrl, setEditedUrl] = useState<string | null>(null);
   const [editedModel, setEditedModel] = useState<string | null>(null);
   const [showEdited, setShowEdited] = useState(false);
+  const [maskMode, setMaskMode] = useState(false);
+  const maskCanvasRef = useRef<MaskCanvasHandle>(null);
+  const [lightboxImgSize, setLightboxImgSize] = useState<{ w: number; h: number } | null>(null);
+  const lightboxImgRef = useRef<HTMLImageElement>(null);
 
   // Сброс edit-состояния при смене картинки в lightbox
   useEffect(() => {
@@ -2212,6 +2218,8 @@ function AiPlansTab({
       });
       setEditedModel(null);
       setShowEdited(false);
+      setMaskMode(false);
+      maskCanvasRef.current?.clear();
     }, 0);
     return () => window.clearTimeout(timer);
   }, [lightbox?.key]);
@@ -2227,6 +2235,27 @@ function AiPlansTab({
       setEditedUrl(url);
       setEditedModel(res.modelUsed);
       setShowEdited(true);
+    } catch (e) {
+      setEditError((e as Error).message);
+    } finally {
+      setEditing(false);
+    }
+  };
+
+  const handleApplyInpaint = async () => {
+    if (!lightbox || !editInstruction.trim() || editing) return;
+    const maskDataUrl = maskCanvasRef.current?.exportMask();
+    if (!maskDataUrl) return;
+    setEditing(true);
+    setEditError(null);
+    try {
+      const res = await inpaintAiPlan(lightbox.imageUrl, maskDataUrl, editInstruction.trim(), "medium");
+      const url = URL.createObjectURL(res.blob);
+      if (editedUrl) URL.revokeObjectURL(editedUrl);
+      setEditedUrl(url);
+      setEditedModel(res.modelUsed);
+      setShowEdited(true);
+      setMaskMode(false);
     } catch (e) {
       setEditError((e as Error).message);
     } finally {
@@ -2305,8 +2334,31 @@ function AiPlansTab({
             )}
 
             {/* Картинка */}
-            <div className="relative">
-              <img src={currentUrl} alt={lightbox.label} className="w-full rounded-2xl shadow-2xl" />
+            <div
+              className="relative"
+              style={{ cursor: maskMode && !editing ? "none" : undefined }}
+            >
+              <img
+                ref={lightboxImgRef}
+                src={currentUrl}
+                alt={lightbox.label}
+                className="w-full rounded-2xl shadow-2xl"
+                onLoad={() => {
+                  const el = lightboxImgRef.current;
+                  if (el) setLightboxImgSize({ w: el.naturalWidth, h: el.naturalHeight });
+                }}
+              />
+              {maskMode && !editing && lightboxImgSize && lightboxImgRef.current && (
+                <div className="absolute inset-0 rounded-2xl overflow-hidden">
+                  <MaskCanvas
+                    ref={maskCanvasRef}
+                    imageWidth={lightboxImgSize.w}
+                    imageHeight={lightboxImgSize.h}
+                    displayWidth={lightboxImgRef.current.clientWidth}
+                    displayHeight={lightboxImgRef.current.clientHeight}
+                  />
+                </div>
+              )}
               {editing && (
                 <div className="absolute inset-0 rounded-2xl bg-black/55 backdrop-blur-sm flex items-center justify-center">
                   <div className="flex flex-col items-center gap-3">
@@ -2362,22 +2414,63 @@ function AiPlansTab({
               <div className="flex items-center gap-2 mb-2.5">
                 <Wand2 size={13} className="text-violet-300" />
                 <span className="text-[12.5px] font-medium text-white/85">Корректировка чертежа</span>
-                <span className="text-[10.5px] text-white/35">
+                <span className="text-[10.5px] text-white/35 flex-1">
                   Опиши что изменить — gpt-image отредактирует план
                 </span>
+                {/* Переключатель: текст / маска */}
+                <div className="inline-flex bg-white/[0.06] border border-white/[0.1] rounded-lg p-0.5 shrink-0">
+                  <button
+                    onClick={() => { setMaskMode(false); maskCanvasRef.current?.clear(); }}
+                    disabled={editing}
+                    className={[
+                      "h-6 px-2.5 rounded-md text-[11px] transition",
+                      !maskMode ? "bg-white/15 text-white font-medium" : "text-white/50 hover:text-white",
+                    ].join(" ")}
+                  >
+                    Текст
+                  </button>
+                  <button
+                    onClick={() => setMaskMode(true)}
+                    disabled={editing}
+                    className={[
+                      "h-6 px-2.5 rounded-md text-[11px] transition flex items-center gap-1",
+                      maskMode ? "bg-red-500/30 text-red-100 font-medium" : "text-white/50 hover:text-white",
+                    ].join(" ")}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Маска
+                  </button>
+                </div>
               </div>
+
+              {maskMode && (
+                <div className="mb-2.5 rounded-lg bg-red-500/10 border border-red-400/20 px-3 py-2 text-[11.5px] text-red-200/80">
+                  Закрась кистью область для перерисовки, затем опиши что нужно — AI заменит только закрашенное.
+                  <button
+                    onClick={() => maskCanvasRef.current?.clear()}
+                    disabled={editing}
+                    className="ml-2 underline text-red-300 hover:text-red-100 transition disabled:opacity-40"
+                  >
+                    Очистить
+                  </button>
+                </div>
+              )}
+
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={editInstruction}
                   onChange={(e) => setEditInstruction(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleApplyEdit(); }}
-                  placeholder="«сделай гостиную больше», «перенеси кухню на южный фасад», …"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") maskMode ? handleApplyInpaint() : handleApplyEdit();
+                  }}
+                  placeholder={maskMode
+                    ? "Что нарисовать в закрашенной области?"
+                    : "«сделай гостиную больше», «перенеси кухню на южный фасад», …"}
                   disabled={editing}
                   className="flex-1 h-10 px-3.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[13px] text-white placeholder:text-white/30 focus:outline-none focus:border-violet-400/40 focus:bg-white/[0.06] transition disabled:opacity-50"
                 />
                 <button
-                  onClick={handleApplyEdit}
+                  onClick={maskMode ? handleApplyInpaint : handleApplyEdit}
                   disabled={editing || !editInstruction.trim()}
                   className="btn-apple h-10 px-4 text-[12.5px] flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >

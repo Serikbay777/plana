@@ -565,6 +565,37 @@ export async function editAiPlan(
   };
 }
 
+export async function inpaintAiPlan(
+  imageDataUrl: string,
+  maskDataUrl: string,
+  instruction: string,
+  quality: "low" | "medium" | "high" = "medium",
+): Promise<VisualizeResult> {
+  const imageBlob = await fetch(imageDataUrl).then((r) => r.blob());
+  const maskBlob = await fetch(maskDataUrl).then((r) => r.blob());
+  const fd = new FormData();
+  fd.append("image", imageBlob, "source.png");
+  fd.append("mask", maskBlob, "mask.png");
+  fd.append("instruction", instruction);
+  fd.append("quality", quality);
+
+  const res = await fetch(`${ENGINE_URL}/visualize/inpaint`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = j.detail ?? detail; } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  return {
+    blob: await res.blob(),
+    modelUsed: res.headers.get("X-Model-Used"),
+    enhancerUsed: null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // CAD-экспорт (DXF/IFC) — параллельный пайплайн
 // ---------------------------------------------------------------------------

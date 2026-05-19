@@ -198,6 +198,72 @@ def generate_image(
     return generate_image_with_meta(prompt, opts, use_cache=use_cache).png
 
 
+def _try_one_model_edit_mask(
+    client, model: str, prompt: str, image_bytes: bytes, mask_bytes: bytes, opts: GenerationOptions,
+) -> bytes:
+    """Inpainting: image + mask (transparent = repaint, opaque = keep) + prompt."""
+    import io
+    image_file = io.BytesIO(image_bytes)
+    image_file.name = "reference.png"
+    mask_file = io.BytesIO(mask_bytes)
+    mask_file.name = "mask.png"
+    response = client.images.edit(
+        model=model,
+        image=image_file,
+        mask=mask_file,
+        prompt=prompt,
+        size=opts.size,
+        quality=opts.quality,
+        n=opts.n,
+    )
+    if not response.data:
+        raise OpenAIError("OpenAI returned empty data")
+    item = response.data[0]
+    if hasattr(item, "b64_json") and item.b64_json:
+        return base64.b64decode(item.b64_json)
+    if hasattr(item, "url") and item.url:
+        import urllib.request
+        with urllib.request.urlopen(item.url, timeout=30) as resp:
+            return resp.read()
+    raise OpenAIError("OpenAI response had neither b64_json nor url")
+
+
+def generate_image_inpaint_with_meta(
+    prompt: str,
+    image_bytes: bytes,
+    mask_bytes: bytes,
+    opts: GenerationOptions | None = None,
+) -> GenerationResult:
+    """Inpainting с маской: прозрачные пиксели маски = перерисовать, белые = оставить.
+
+    mask_bytes — PNG с альфа-каналом (RGBA). Transparent areas → repainted.
+    """
+    options = opts or GenerationOptions()
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise MissingAPIKey("OPENAI_API_KEY не задан")
+
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError("openai SDK не установлен") from e
+
+    client = OpenAI(api_key=api_key)
+    chain = (options.model,) + tuple(options.fallback_models)
+    last_error: Exception | None = None
+    for model in chain:
+        try:
+            png = _try_one_model_edit_mask(client, model, prompt, image_bytes, mask_bytes, options)
+            return GenerationResult(png=png, model_used=model)
+        except Exception as e:
+            last_error = e
+            if _is_fallbackable(e):
+                continue
+            raise OpenAIError(f"OpenAI API error: {e}") from e
+
+    raise OpenAIError(f"All models failed in inpaint chain. Last: {last_error}")
+
+
 def generate_image_edit_with_meta(
     prompt: str,
     image_bytes: bytes,
