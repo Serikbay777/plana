@@ -11,7 +11,7 @@ function isTokenExpired(token: string): boolean {
   }
 }
 
-export function middleware(request: NextRequest): NextResponse {
+export function proxy(request: NextRequest): NextResponse {
   const token = request.cookies.get(TOKEN_KEY)?.value ?? null;
 
   if (token && isTokenExpired(token)) {
