@@ -12,6 +12,7 @@ import {
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { ValidationPanel } from "@/components/ValidationPanel";
 import { InsolationPanel } from "@/components/InsolationPanel";
+import { KvartirografiyaPanel } from "@/components/KvartirografiyaPanel";
 import MaskCanvas, { type MaskCanvasHandle } from "@/components/MaskCanvas";
 import { exportAiPlansPdf, exportFullReportPdf } from "@/lib/pdf-export";
 import {
@@ -634,6 +635,7 @@ export default function AppPage() {
               generating={isLoading}
             />
             <ValidationPanel request={buildVisReq(form)} />
+            <KvartirografiyaPanel request={buildVisReq(form)} />
             <InsolationPanel />
           </div>
         )}

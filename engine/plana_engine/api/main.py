@@ -38,6 +38,7 @@ from ..projects import router as projects_router
 from ..projects.storage import ASSETS_DIR
 from ..cad import (
     build_floorplan_dxf, build_floorplan_ifc, compute_floorplan_metrics,
+    FloorPlanDxfBuilder,
 )
 from ..types import BuildingPurpose
 from ..visualizer import (
@@ -1740,6 +1741,161 @@ def export_floorplan_ifc(req: VisualizeFromInputsRequest) -> Response:
                 "X-Buildings-Count, X-Site-Area, X-Footprint-Area, X-Coverage-Pct",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Квартирография + ТЭП
+# ---------------------------------------------------------------------------
+
+# Нормативные площади типов (м²) — ГОСТ 51929-2002 / СНиП РК 3.02-43-2007
+_APT_AREAS: dict[str, tuple[float, float, str]] = {
+    # type: (total_m2, living_m2, label)
+    "studio": (30.0, 16.0, "Студия"),
+    "k1":     (45.0, 18.0, "1-комн."),
+    "k2":     (65.0, 36.0, "2-комн."),
+    "k3":     (90.0, 54.0, "3-комн."),
+}
+
+# Рыночные нормы КЗ: доля типа в общем количестве квартир (%, min–max)
+_MARKET_NORMS: dict[str, tuple[float, float]] = {
+    "studio": (5.0,  15.0),
+    "k1":     (25.0, 40.0),
+    "k2":     (30.0, 45.0),
+    "k3":     (10.0, 25.0),
+}
+
+
+class AptTypeRow(BaseModel):
+    type_code: str
+    label: str
+    pct_input: float        # введённый % из формы
+    count_per_floor: int
+    total_count: int        # × этажи
+    area_m2: float          # нормативная площадь 1 квартиры
+    living_m2: float        # жилая площадь 1 квартиры
+    total_area_m2: float    # total_count × area_m2
+    total_living_m2: float  # total_count × living_m2
+    share_pct: float        # фактический % от всех квартир
+    norm_min: float
+    norm_max: float
+    norm_ok: bool
+
+
+class TepSummary(BaseModel):
+    total_floors: int
+    total_apartments: int
+    total_floor_area_m2: float      # W × H × floors
+    total_apt_area_m2: float        # сумма площадей всех квартир
+    total_living_area_m2: float     # только жилые комнаты
+    efficiency_pct: float           # apt_area / floor_area × 100
+    avg_apt_area_m2: float
+    apt_per_1000m2: float           # насыщенность (рыночный показатель)
+
+
+class KvartirografiyaResponse(BaseModel):
+    rows: list[AptTypeRow]
+    tep: TepSummary
+    recommendations: list[str]
+
+
+@app.post("/analytics/kvartirografiya", response_model=KvartirografiyaResponse)
+def analytics_kvartirografiya(req: VisualizeFromInputsRequest) -> KvartirografiyaResponse:
+    """Квартирография + ТЭП здания.
+
+    Рассчитывает полную поквартирную сводку по типам (студия/1К/2К/3К),
+    ТЭП на всё здание и рекомендации по оптимизации микса под рынок РК.
+    """
+    inputs = _inputs_from_req(req)
+    builder = FloorPlanDxfBuilder(inputs)
+    n_floor = builder._approx_unit_count()          # квартир на этаже
+    floors  = max(1, inputs.floors)
+    floor_area = inputs.site_width_m * inputs.site_depth_m
+
+    # Нормируем проценты ввода
+    pct_map = {
+        "studio": inputs.studio_pct,
+        "k1":     inputs.k1_pct,
+        "k2":     inputs.k2_pct,
+        "k3":     inputs.k3_pct,
+    }
+    total_pct = sum(pct_map.values())
+    if total_pct < 0.01:
+        pct_map = {"studio": 10, "k1": 30, "k2": 40, "k3": 20}
+        total_pct = 100.0
+
+    rows: list[AptTypeRow] = []
+    total_count = 0
+    total_apt_area = 0.0
+    total_living_area = 0.0
+
+    for code, (area, living, label) in _APT_AREAS.items():
+        frac = pct_map.get(code, 0.0) / total_pct
+        count_per_floor = max(0, round(n_floor * frac))
+        total = count_per_floor * floors
+        norm_min, norm_max = _MARKET_NORMS[code]
+        actual_share = frac * 100
+
+        rows.append(AptTypeRow(
+            type_code=code,
+            label=label,
+            pct_input=round(pct_map.get(code, 0.0), 1),
+            count_per_floor=count_per_floor,
+            total_count=total,
+            area_m2=area,
+            living_m2=living,
+            total_area_m2=round(total * area, 1),
+            total_living_m2=round(total * living, 1),
+            share_pct=round(actual_share, 1),
+            norm_min=norm_min,
+            norm_max=norm_max,
+            norm_ok=(norm_min <= actual_share <= norm_max),
+        ))
+        total_count += total
+        total_apt_area += total * area
+        total_living_area += total * living
+
+    total_floor_area = floor_area * floors
+    efficiency = round(total_apt_area / total_floor_area * 100, 1) if total_floor_area > 0 else 0.0
+    avg_area = round(total_apt_area / total_count, 1) if total_count > 0 else 0.0
+    density = round(total_count / total_floor_area * 1000, 1) if total_floor_area > 0 else 0.0
+
+    tep = TepSummary(
+        total_floors=floors,
+        total_apartments=total_count,
+        total_floor_area_m2=round(total_floor_area, 1),
+        total_apt_area_m2=round(total_apt_area, 1),
+        total_living_area_m2=round(total_living_area, 1),
+        efficiency_pct=efficiency,
+        avg_apt_area_m2=avg_area,
+        apt_per_1000m2=density,
+    )
+
+    # Рекомендации
+    recs: list[str] = []
+    for row in rows:
+        if not row.norm_ok and row.pct_input > 0.01:
+            if row.share_pct < row.norm_min:
+                recs.append(
+                    f"{row.label}: доля {row.share_pct:.0f}% ниже рыночной нормы "
+                    f"({row.norm_min:.0f}–{row.norm_max:.0f}%). Рекомендуется увеличить."
+                )
+            elif row.share_pct > row.norm_max:
+                recs.append(
+                    f"{row.label}: доля {row.share_pct:.0f}% выше нормы "
+                    f"({row.norm_min:.0f}–{row.norm_max:.0f}%). Рекомендуется снизить."
+                )
+    if efficiency < 55:
+        recs.append(
+            f"Эффективность {efficiency}% ниже рекомендуемого минимума 55%. "
+            "Проверьте отступы или увеличьте секционность."
+        )
+    if density > 20:
+        recs.append(
+            f"Насыщенность {density} кв./1000 м² — возможно завышена. "
+            "Среднее по РК: 12–18 кв./1000 м²."
+        )
+
+    return KvartirografiyaResponse(rows=rows, tep=tep, recommendations=recs)
 
 
 @app.post("/export/floorplan-metrics", response_model=FloorPlanMetricsResponse)

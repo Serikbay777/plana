@@ -724,6 +724,48 @@ export async function validateProject(
   });
 }
 
+export type AptTypeRow = {
+  type_code: string;
+  label: string;
+  pct_input: number;
+  count_per_floor: number;
+  total_count: number;
+  area_m2: number;
+  living_m2: number;
+  total_area_m2: number;
+  total_living_m2: number;
+  share_pct: number;
+  norm_min: number;
+  norm_max: number;
+  norm_ok: boolean;
+};
+
+export type TepSummary = {
+  total_floors: number;
+  total_apartments: number;
+  total_floor_area_m2: number;
+  total_apt_area_m2: number;
+  total_living_area_m2: number;
+  efficiency_pct: number;
+  avg_apt_area_m2: number;
+  apt_per_1000m2: number;
+};
+
+export type KvartirografiyaResponse = {
+  rows: AptTypeRow[];
+  tep: TepSummary;
+  recommendations: string[];
+};
+
+export async function getKvartirografiya(
+  req: VisualizeFromInputsRequest,
+): Promise<KvartirografiyaResponse> {
+  return request("/analytics/kvartirografiya", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 export type FacadeInsolation = {
   name: string;
   azimuth_deg: number;
