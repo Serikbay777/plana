@@ -724,5 +724,32 @@ export async function validateProject(
   });
 }
 
+export type FacadeInsolation = {
+  name: string;
+  azimuth_deg: number;
+  hours: number;
+  required: number;
+  compliant: boolean;
+};
+
+export type InsolationValidationResponse = {
+  latitude: number;
+  building_azimuth: number;
+  required_hours: number;
+  lat_zone: string;
+  facades: FacadeInsolation[];
+  compliant: boolean;
+};
+
+export async function validateInsolation(
+  latitude: number,
+  buildingAzimuth: number,
+): Promise<InsolationValidationResponse> {
+  return request(
+    `/validate/insolation?latitude=${latitude}&building_azimuth=${buildingAzimuth}`,
+    { method: "POST" },
+  );
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;

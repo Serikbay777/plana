@@ -25,7 +25,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -1596,6 +1596,62 @@ def validate_project_endpoint(
         errors_count=sum(1 for v in violations if v.severity == "error"),
         warnings_count=sum(1 for v in violations if v.severity == "warning"),
         infos_count=sum(1 for v in violations if v.severity == "info"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Валидация инсоляции (нормы освещения)  КМК 2.04.01-2017 / СанПиН РК
+# ---------------------------------------------------------------------------
+
+
+class FacadeInsolationItem(BaseModel):
+    name: str
+    azimuth_deg: float
+    hours: float
+    required: float
+    compliant: bool
+
+
+class InsolationValidationResponse(BaseModel):
+    latitude: float
+    building_azimuth: float
+    required_hours: float
+    lat_zone: str
+    facades: list[FacadeInsolationItem]
+    compliant: bool
+
+
+@app.post("/validate/insolation", response_model=InsolationValidationResponse)
+def validate_insolation_endpoint(
+    latitude: float = Query(43.3, ge=-90.0, le=90.0, description="Широта объекта (°N)"),
+    building_azimuth: float = Query(0.0, ge=0.0, lt=360.0, description="Азимут северного фасада от Севера (°)"),
+) -> InsolationValidationResponse:
+    """Расчёт инсоляции четырёх фасадов здания на 22 марта.
+
+    Нормативный минимум определяется широтой (КМК 2.04.01-2017):
+    - φ < 48°: 2.0 ч (южная зона — Алматы, Шымкент)
+    - 48–58°:  2.5 ч (центральная — Астана, Актобе)
+    - φ ≥ 58°: 3.0 ч (северная)
+    """
+    from ..validators.insolation import check_insolation
+
+    report = check_insolation(latitude=latitude, building_azimuth=building_azimuth)
+    return InsolationValidationResponse(
+        latitude=report.latitude,
+        building_azimuth=report.building_azimuth,
+        required_hours=report.required_hours,
+        lat_zone=report.lat_zone,
+        facades=[
+            FacadeInsolationItem(
+                name=f.name,
+                azimuth_deg=f.azimuth_deg,
+                hours=f.hours,
+                required=f.required,
+                compliant=f.compliant,
+            )
+            for f in report.facades
+        ],
+        compliant=report.compliant,
     )
 
 
