@@ -1,29 +1,18 @@
 """IFC-генератор плана этажа из доменной модели Project.
 
-Закрывает ТЗ-пункт 2.8 / 5.4 «Экспорт в BIM». Параллельный пайплайн рядом
-с DXF-builder'ом (`cad/floorplan_dxf.py`): берёт `Project`, выдаёт IFC4
-байты, готовые к открытию в Revit / ArchiCAD / BIMcollab / SimpleBIM.
-
 Структура IFC:
     IfcProject
-      └── IfcSite (без геометрии — контейнер участка)
-          └── IfcBuilding (один на каждое здание Project.buildings)
-              └── IfcBuildingStorey × N (с правильным Elevation)
-                  ├── IfcWall × M  (периметр пятна, по сегментам exterior)
-                  └── IfcSpace × 1 (placeholder пятна — заполнится в P5
-                                    реальными apartments/rooms)
+      └── IfcSite
+          └── IfcBuilding
+              └── IfcBuildingStorey × N
+                  ├── IfcSlab          — перекрытие этажа (200 мм)
+                  ├── IfcWall ×M       — периметр (400 мм несущие)
+                  ├── IfcWall ×S       — противопожарные стены между секциями
+                  ├── IfcWall × core   — стены ядра (лифты + лестница) в каждой секции
+                  ├── IfcWall × corr   — коридорные стены (север / юг)
+                  └── IfcSpace × apt   — пространства квартир (прямоугольные зоны)
 
-Единицы: METERS (SI default ifcopenshell). Координаты в метрах в локальной
-системе участка (origin (0,0) — нижний-левый угол).
-
-GUID-ы генерируются автоматически через `ifcopenshell.api.root.create_entity`.
-
-Ограничения текущей версии:
-    • Footprint предполагается замкнутым полигоном (rectangular из bridge —
-      рабочий случай). Если придёт сложная геометрия с островами или
-      MultiPolygon — работает только по exterior первого полигона.
-    • Стены — простой extruded box без дверных / оконных проёмов.
-    • IfcSpace — голый placeholder без зон комнат. Расширится в P5.
+Единицы: METERS (SI).
 """
 
 from __future__ import annotations
@@ -39,20 +28,23 @@ from ..domain import Building, Project
 
 # ── константы ─────────────────────────────────────────────────────────────
 
-
-_WALL_THICKNESS_M = 0.4         # несущая стена 400 мм (соответствует DXF builder)
-_DEFAULT_STOREY_HEIGHT_M = 3.0  # типовая высота этажа жилого здания РК
+_WALL_BEAR_T     = 0.40   # несущая стена 400 мм
+_WALL_FIRE_T     = 0.40   # противопожарная стена REI-60 400 мм
+_WALL_PART_T     = 0.12   # перегородка 120 мм
+_SLAB_T          = 0.20   # перекрытие 200 мм
+_DEFAULT_H       = 3.00   # высота этажа по умолчанию
+_CORE_H_LIFT_P   = 1.50   # пассажирский лифт  1.5×1.5 м
+_CORE_H_LIFT_F   = 2.10   # грузовой лифт      2.1×2.1 м
+_CORE_STAIR_W    = 2.10   # лестничная клетка  2.1×5.5 м
+_CORE_STAIR_D    = 5.50
+_CORRIDOR_MIN    = 1.40   # минимальная ширина коридора
 
 
 # ── публичная точка входа ─────────────────────────────────────────────────
 
 
 def build_floorplan_ifc(project: Project, *, schema: str = "IFC4") -> bytes:
-    """Сериализовать `Project` в IFC4-байты.
-
-    Бросает `RuntimeError` если ifcopenshell не установлен или внутри
-    случилось что-то непредвиденное.
-    """
+    """Сериализовать Project в IFC4-байты."""
     try:
         import ifcopenshell
         import ifcopenshell.api.aggregate
@@ -62,217 +54,429 @@ def build_floorplan_ifc(project: Project, *, schema: str = "IFC4") -> bytes:
         import ifcopenshell.api.root
         import ifcopenshell.api.spatial
         import ifcopenshell.api.unit
-    except ImportError as e:  # pragma: no cover
-        raise RuntimeError(
-            "ifcopenshell не установлен — добавь его в pyproject.toml"
-        ) from e
+    except ImportError as e:
+        raise RuntimeError("ifcopenshell не установлен") from e
 
     model = ifcopenshell.api.project.create_file(version=schema)
 
-    # 1. Корневой проект + единицы + представления.
     ifc_project = ifcopenshell.api.root.create_entity(
         model, ifc_class="IfcProject", name="plana-generated",
     )
-    length_unit = ifcopenshell.api.unit.add_si_unit(
-        model, unit_type="LENGTHUNIT",
-    )
-    area_unit = ifcopenshell.api.unit.add_si_unit(
-        model, unit_type="AREAUNIT",
-    )
-    volume_unit = ifcopenshell.api.unit.add_si_unit(
-        model, unit_type="VOLUMEUNIT",
-    )
-    ifcopenshell.api.unit.assign_unit(
-        model, units=[length_unit, area_unit, volume_unit],
-    )
+    ifcopenshell.api.unit.assign_unit(model, units=[
+        ifcopenshell.api.unit.add_si_unit(model, unit_type="LENGTHUNIT"),
+        ifcopenshell.api.unit.add_si_unit(model, unit_type="AREAUNIT"),
+        ifcopenshell.api.unit.add_si_unit(model, unit_type="VOLUMEUNIT"),
+    ])
 
-    model_ctx = ifcopenshell.api.context.add_context(
+    model_ctx = ifcopenshell.api.context.add_context(model, context_type="Model")
+    body_ctx  = ifcopenshell.api.context.add_context(
         model, context_type="Model",
-    )
-    body_ctx = ifcopenshell.api.context.add_context(
-        model,
-        context_type="Model",
-        context_identifier="Body",
-        target_view="MODEL_VIEW",
-        parent=model_ctx,
+        context_identifier="Body", target_view="MODEL_VIEW", parent=model_ctx,
     )
 
-    # 2. Site — один на проект.
-    site = ifcopenshell.api.root.create_entity(
-        model, ifc_class="IfcSite", name="Site",
-    )
+    site = ifcopenshell.api.root.create_entity(model, ifc_class="IfcSite", name="Site")
     ifcopenshell.api.aggregate.assign_object(
         model, relating_object=ifc_project, products=[site],
     )
 
-    # 3. Buildings, Storeys, Walls, Spaces.
     for bi, building in enumerate(project.buildings):
         _emit_building(
-            model=model,
-            ifc=ifcopenshell,
-            site=site,
-            body_ctx=body_ctx,
-            building=building,
-            index=bi,
+            model=model, ifc=ifcopenshell, site=site, body_ctx=body_ctx,
+            building=building, index=bi,
         )
 
-    # 4. Сериализация в bytes.
     return model.wrapped_data.to_string().encode("utf-8")
 
 
-# ── builder helpers ───────────────────────────────────────────────────────
+# ── building ──────────────────────────────────────────────────────────────
 
 
 def _emit_building(
-    *,
-    model: Any,
-    ifc: Any,
-    site: Any,
-    body_ctx: Any,
-    building: Building,
-    index: int,
+    *, model: Any, ifc: Any, site: Any, body_ctx: Any,
+    building: Building, index: int,
 ) -> None:
-    """Создать IfcBuilding + N storeys + по 4+ стены и 1 space на каждый."""
     bldg = ifc.api.root.create_entity(
         model, ifc_class="IfcBuilding", name=f"Building {index + 1}",
     )
-    ifc.api.aggregate.assign_object(
-        model, relating_object=site, products=[bldg],
-    )
+    ifc.api.aggregate.assign_object(model, relating_object=site, products=[bldg])
 
-    n_floors = max(1, building.floors_count)
-    total_height = building.height_m or (n_floors * _DEFAULT_STOREY_HEIGHT_M)
-    storey_h = total_height / n_floors if n_floors > 0 else _DEFAULT_STOREY_HEIGHT_M
+    n_floors  = max(1, building.floors_count)
+    total_h   = building.height_m or (n_floors * _DEFAULT_H)
+    storey_h  = total_h / n_floors
+    n_sect    = max(1, building.sections_count)
 
     footprint = building.footprint
     if not isinstance(footprint, ShPolygon) or footprint.is_empty:
         return
 
-    # Берём exterior без замыкающей точки (shapely дублирует первую в конце).
-    exterior_coords = list(footprint.exterior.coords)
-    if len(exterior_coords) < 4:
+    bbox = footprint.bounds          # (minx, miny, maxx, maxy)
+    W    = bbox[2] - bbox[0]
+    D    = bbox[3] - bbox[1]
+
+    exterior = list(footprint.exterior.coords)
+    if exterior[0] == exterior[-1]:
+        exterior = exterior[:-1]
+    if len(exterior) < 3:
         return
-    if exterior_coords[0] == exterior_coords[-1]:
-        exterior_coords = exterior_coords[:-1]
 
     for floor_idx in range(n_floors):
         z = floor_idx * storey_h
         storey = ifc.api.root.create_entity(
             model, ifc_class="IfcBuildingStorey",
-            name=f"Floor {floor_idx + 1}",
+            name=f"Этаж {floor_idx + 1}",
         )
-        # Устанавливаем Elevation атрибут (numeric).
         storey.Elevation = float(z)
-
-        ifc.api.aggregate.assign_object(
-            model, relating_object=bldg, products=[storey],
-        )
-
-        # Перенос storey на высоту z — все потомки наследуют placement.
+        ifc.api.aggregate.assign_object(model, relating_object=bldg, products=[storey])
         ifc.api.geometry.edit_object_placement(
-            model, product=storey,
-            matrix=_translation_matrix(0.0, 0.0, z),
+            model, product=storey, matrix=_translation(0, 0, z),
         )
 
-        # 4+ периметральные стены.
-        walls = _emit_perimeter_walls(
-            model=model, ifc=ifc, body_ctx=body_ctx,
-            exterior_coords=exterior_coords,
-            height=storey_h,
-            thickness=_WALL_THICKNESS_M,
-            storey_index=floor_idx,
+        products: list[Any] = []
+        spaces:   list[Any] = []
+
+        # 1. Перекрытие этажа
+        slab = _make_slab(model, ifc, body_ctx, W, D, _SLAB_T, floor_idx)
+        products.append(slab)
+
+        # 2. Периметральные несущие стены
+        products.extend(_make_perimeter_walls(
+            model, ifc, body_ctx, exterior, storey_h, _WALL_BEAR_T, floor_idx,
+        ))
+
+        # 3. Противопожарные стены между секциями
+        section_w = W / n_sect
+        for s in range(1, n_sect):
+            x = s * section_w
+            products.extend(_make_fire_wall(
+                model, ifc, body_ctx, x, D, storey_h, _WALL_FIRE_T, floor_idx, s,
+            ))
+
+        # 4. Ядра (лифты + лестница) в каждой секции
+        for s in range(n_sect):
+            cx = section_w / 2 + s * section_w
+            cy = D / 2
+            products.extend(_make_core_walls(
+                model, ifc, body_ctx, cx, cy, storey_h, floor_idx, s,
+            ))
+
+        # 5. Коридорные стены (только если есть место)
+        corr_walls = _make_corridor_walls(
+            model, ifc, body_ctx, D, section_w, n_sect,
+            storey_h, floor_idx,
         )
-        if walls:
+        products.extend(corr_walls)
+
+        # 6. Пространства квартир
+        spaces.extend(_make_apartment_spaces(
+            model, ifc, body_ctx, storey,
+            D, section_w, n_sect,
+        ))
+
+        if products:
             ifc.api.spatial.assign_container(
-                model, relating_structure=storey, products=walls,
+                model, relating_structure=storey, products=products,
             )
 
-        # Space placeholder (вся площадь этажа).
-        space = ifc.api.root.create_entity(
-            model, ifc_class="IfcSpace",
-            name=f"Floor {floor_idx + 1} space",
-        )
-        ifc.api.aggregate.assign_object(
-            model, relating_object=storey, products=[space],
-        )
+
+# ── slab ──────────────────────────────────────────────────────────────────
 
 
-def _emit_perimeter_walls(
-    *,
-    model: Any,
-    ifc: Any,
-    body_ctx: Any,
-    exterior_coords: list[tuple[float, float]],
-    height: float,
-    thickness: float,
-    storey_index: int,
+def _make_slab(
+    model: Any, ifc: Any, body_ctx: Any,
+    W: float, D: float, thickness: float, floor_idx: int,
+) -> Any:
+    slab = ifc.api.root.create_entity(
+        model, ifc_class="IfcSlab",
+        name=f"Slab-{floor_idx + 1}",
+    )
+    ifc.api.geometry.edit_object_placement(
+        model, product=slab, matrix=_translation(0, 0, -thickness),
+    )
+    shape = _rect_extrusion(model, body_ctx, [(0, 0), (W, 0), (W, D), (0, D)], thickness)
+    ifc.api.geometry.assign_representation(model, product=slab, representation=shape)
+    return slab
+
+
+# ── perimeter walls ────────────────────────────────────────────────────────
+
+
+def _make_perimeter_walls(
+    model: Any, ifc: Any, body_ctx: Any,
+    exterior: list[tuple[float, float]],
+    height: float, thickness: float, floor_idx: int,
 ) -> list[Any]:
-    """Создать стены по сегментам exterior.
-
-    Каждый сегмент = одна IfcWall, размещённая в (x0, y0, z) с поворотом
-    по yaw-углу сегмента. Локальная ось X стены идёт вдоль сегмента,
-    длина = расстоянию между точками.
-    """
     walls: list[Any] = []
-    n = len(exterior_coords)
+    n = len(exterior)
     for i in range(n):
-        x0, y0 = exterior_coords[i]
-        x1, y1 = exterior_coords[(i + 1) % n]
-        dx = x1 - x0
-        dy = y1 - y0
-        length = math.hypot(dx, dy)
+        x0, y0 = exterior[i]
+        x1, y1 = exterior[(i + 1) % n]
+        dx, dy  = x1 - x0, y1 - y0
+        length  = math.hypot(dx, dy)
         if length < 0.1:
             continue
         yaw = math.atan2(dy, dx)
-
         wall = ifc.api.root.create_entity(
             model, ifc_class="IfcWall",
-            name=f"W-{storey_index + 1}-{i + 1}",
+            name=f"W-{floor_idx + 1}-{i + 1}",
         )
-
         ifc.api.geometry.edit_object_placement(
-            model, product=wall,
-            matrix=_placement_matrix(x0, y0, 0.0, yaw),
+            model, product=wall, matrix=_placement(x0, y0, 0, yaw),
         )
-
-        wall_repr = ifc.api.geometry.add_wall_representation(
-            model,
-            context=body_ctx,
-            length=float(length),
-            height=float(height),
-            thickness=float(thickness),
+        repr_ = ifc.api.geometry.add_wall_representation(
+            model, context=body_ctx,
+            length=float(length), height=float(height), thickness=float(thickness),
         )
-        ifc.api.geometry.assign_representation(
-            model, product=wall, representation=wall_repr,
-        )
-
+        ifc.api.geometry.assign_representation(model, product=wall, representation=repr_)
         walls.append(wall)
     return walls
+
+
+# ── fire walls ────────────────────────────────────────────────────────────
+
+
+def _make_fire_wall(
+    model: Any, ifc: Any, body_ctx: Any,
+    x: float, D: float, height: float, thickness: float,
+    floor_idx: int, sect_idx: int,
+) -> list[Any]:
+    """Вертикальная противопожарная стена на x, вдоль оси Y."""
+    wall = ifc.api.root.create_entity(
+        model, ifc_class="IfcWall",
+        name=f"FW-{floor_idx + 1}-{sect_idx}",
+    )
+    # стена идёт вдоль Y → угол π/2
+    ifc.api.geometry.edit_object_placement(
+        model, product=wall,
+        matrix=_placement(x - thickness / 2, 0, 0, math.pi / 2),
+    )
+    repr_ = ifc.api.geometry.add_wall_representation(
+        model, context=body_ctx,
+        length=float(D), height=float(height), thickness=float(thickness),
+    )
+    ifc.api.geometry.assign_representation(model, product=wall, representation=repr_)
+    return [wall]
+
+
+# ── core walls ────────────────────────────────────────────────────────────
+
+
+def _make_core_walls(
+    model: Any, ifc: Any, body_ctx: Any,
+    cx: float, cy: float,
+    height: float, floor_idx: int, sect_idx: int,
+) -> list[Any]:
+    """Ящик ядра (пассажирский лифт + лестница + грузовой лифт) в виде 4 IfcWall."""
+    # Размеры суммарного ядра
+    core_w = _CORE_H_LIFT_P + _CORE_H_LIFT_F + _CORE_STAIR_W + 0.8  # ~6.5 м
+    core_d = max(_CORE_STAIR_D, _CORE_H_LIFT_F)                      # ~5.5 м
+    t = _WALL_BEAR_T
+
+    x0 = cx - core_w / 2
+    y0 = cy - core_d / 2
+    x1 = cx + core_w / 2
+    y1 = cy + core_d / 2
+
+    segments = [
+        (x0, y0, x1, y0, 0.0),           # south
+        (x1, y0, x1, y1, math.pi / 2),   # east
+        (x1, y1, x0, y1, math.pi),       # north
+        (x0, y1, x0, y0, -math.pi / 2),  # west
+    ]
+
+    walls: list[Any] = []
+    for si, (ax, ay, bx, by, yaw) in enumerate(segments):
+        length = math.hypot(bx - ax, by - ay)
+        if length < 0.1:
+            continue
+        wall = ifc.api.root.create_entity(
+            model, ifc_class="IfcWall",
+            name=f"Core-{floor_idx + 1}-{sect_idx}-{si}",
+        )
+        ifc.api.geometry.edit_object_placement(
+            model, product=wall, matrix=_placement(ax, ay, 0, yaw),
+        )
+        repr_ = ifc.api.geometry.add_wall_representation(
+            model, context=body_ctx,
+            length=float(length), height=float(height), thickness=float(t),
+        )
+        ifc.api.geometry.assign_representation(model, product=wall, representation=repr_)
+        walls.append(wall)
+
+    return walls
+
+
+# ── corridor walls ────────────────────────────────────────────────────────
+
+
+def _make_corridor_walls(
+    model: Any, ifc: Any, body_ctx: Any,
+    D: float, section_w: float, n_sect: int,
+    height: float, floor_idx: int,
+) -> list[Any]:
+    """Горизонтальные стены, отделяющие коридор от квартир.
+
+    Коридор — в центре секции. Квартиры — с южной и северной стороны.
+    Стены по всей ширине здания (минус зазор у ядра).
+    """
+    core_w   = _CORE_H_LIFT_P + _CORE_H_LIFT_F + _CORE_STAIR_W + 0.8
+    core_d   = max(_CORE_STAIR_D, _CORE_H_LIFT_F)
+    apt_d    = max(4.0, (D - _CORRIDOR_MIN - core_d) / 2)
+    t        = _WALL_PART_T
+
+    y_south = _WALL_BEAR_T + apt_d          # стена между квартирами юга и коридором
+    y_north = D - _WALL_BEAR_T - apt_d      # стена между коридором и квартирами севера
+
+    walls: list[Any] = []
+    for s in range(n_sect):
+        cx = section_w / 2 + s * section_w
+        gap_x0 = cx - core_w / 2 - 0.2
+        gap_x1 = cx + core_w / 2 + 0.2
+        x0_sect = s * section_w + _WALL_BEAR_T
+        x1_sect = (s + 1) * section_w - _WALL_BEAR_T
+
+        for y_corr, name_sfx in [(y_south, "S"), (y_north, "N")]:
+            # Левый сегмент (до ядра)
+            seg_len_l = gap_x0 - x0_sect
+            if seg_len_l > 0.3:
+                w = ifc.api.root.create_entity(
+                    model, ifc_class="IfcWall",
+                    name=f"CW-{floor_idx+1}-{s}-{name_sfx}-L",
+                )
+                ifc.api.geometry.edit_object_placement(
+                    model, product=w, matrix=_placement(x0_sect, y_corr, 0, 0),
+                )
+                repr_ = ifc.api.geometry.add_wall_representation(
+                    model, context=body_ctx,
+                    length=float(seg_len_l), height=float(height), thickness=float(t),
+                )
+                ifc.api.geometry.assign_representation(model, product=w, representation=repr_)
+                walls.append(w)
+
+            # Правый сегмент (после ядра)
+            seg_len_r = x1_sect - gap_x1
+            if seg_len_r > 0.3:
+                w = ifc.api.root.create_entity(
+                    model, ifc_class="IfcWall",
+                    name=f"CW-{floor_idx+1}-{s}-{name_sfx}-R",
+                )
+                ifc.api.geometry.edit_object_placement(
+                    model, product=w, matrix=_placement(gap_x1, y_corr, 0, 0),
+                )
+                repr_ = ifc.api.geometry.add_wall_representation(
+                    model, context=body_ctx,
+                    length=float(seg_len_r), height=float(height), thickness=float(t),
+                )
+                ifc.api.geometry.assign_representation(model, product=w, representation=repr_)
+                walls.append(w)
+
+    return walls
+
+
+# ── apartment spaces ──────────────────────────────────────────────────────
+
+
+def _make_apartment_spaces(
+    model: Any, ifc: Any, body_ctx: Any, storey: Any,
+    D: float, section_w: float, n_sect: int,
+) -> list[Any]:
+    """IfcSpace на каждую квартирную зону (прямоугольная аппроксимация)."""
+    core_d = max(_CORE_STAIR_D, _CORE_H_LIFT_F)
+    apt_d  = max(4.0, (D - _CORRIDOR_MIN - core_d) / 2)
+    t_bear = _WALL_BEAR_T
+
+    spaces: list[Any] = []
+    apt_number = 1
+
+    for s in range(n_sect):
+        x0_sect = s * section_w + t_bear
+        x1_sect = (s + 1) * section_w - t_bear
+        usable_w = x1_sect - x0_sect
+
+        # Сколько квартир с каждой стороны: 1..3 в зависимости от ширины секции
+        n_apts = max(1, round(usable_w / 7.0))  # ~7м на квартиру
+        apt_w  = usable_w / n_apts
+
+        for _, (y_start, y_end) in enumerate([
+            (t_bear,            t_bear + apt_d),               # юг
+            (D - t_bear - apt_d, D - t_bear),                  # север
+        ]):
+            for ai in range(n_apts):
+                xa = x0_sect + ai * apt_w
+                xb = xa + apt_w
+                ya = y_start
+                yb = y_end
+
+                area_m2 = round((xb - xa) * (yb - ya), 1)
+                # Тип по площади
+                if area_m2 < 38:
+                    apt_type = "Ст"
+                elif area_m2 < 55:
+                    apt_type = "1К"
+                elif area_m2 < 75:
+                    apt_type = "2К"
+                else:
+                    apt_type = "3К"
+
+                sp = ifc.api.root.create_entity(
+                    model, ifc_class="IfcSpace",
+                    name=f"Кв. {apt_number} ({apt_type}, {area_m2} м²)",
+                )
+                ifc.api.geometry.edit_object_placement(
+                    model, product=sp, matrix=_translation(xa, ya, 0),
+                )
+                # Геометрия пространства — тонкий объём на высоту этажа
+                shape = _rect_extrusion(
+                    model, body_ctx,
+                    [(0, 0), (xb - xa, 0), (xb - xa, yb - ya), (0, yb - ya)],
+                    height=2.7,  # чистая высота помещения
+                )
+                ifc.api.geometry.assign_representation(model, product=sp, representation=shape)
+                ifc.api.aggregate.assign_object(
+                    model, relating_object=storey, products=[sp],
+                )
+                spaces.append(sp)
+                apt_number += 1
+
+    return spaces
+
+
+# ── geometry helpers ──────────────────────────────────────────────────────
+
+
+def _rect_extrusion(
+    model: Any, body_ctx: Any,
+    pts_2d: list[tuple[float, float]],
+    height: float,
+) -> Any:
+    """IfcProductDefinitionShape из прямоугольника + ExtrudedAreaSolid."""
+    ifc_pts = [model.createIfcCartesianPoint([float(x), float(y)]) for x, y in pts_2d]
+    ifc_pts.append(ifc_pts[0])  # замкнуть
+    polyline  = model.createIfcPolyline(ifc_pts)
+    profile   = model.createIfcArbitraryClosedProfileDef("AREA", None, polyline)
+    direction = model.createIfcDirection([0.0, 0.0, 1.0])
+    placement = model.createIfcAxis2Placement3D(
+        model.createIfcCartesianPoint([0.0, 0.0, 0.0]), None, None,
+    )
+    solid = model.createIfcExtrudedAreaSolid(profile, placement, direction, float(height))
+    shape_repr = model.createIfcShapeRepresentation(body_ctx, "Body", "SweptSolid", [solid])
+    return model.createIfcProductDefinitionShape(None, None, [shape_repr])
 
 
 # ── matrix helpers ────────────────────────────────────────────────────────
 
 
-def _translation_matrix(x: float, y: float, z: float) -> np.ndarray:
-    """4x4 матрица чистого переноса."""
+def _translation(x: float, y: float, z: float) -> np.ndarray:
     m = np.eye(4)
-    m[0, 3] = x
-    m[1, 3] = y
-    m[2, 3] = z
+    m[0, 3] = x; m[1, 3] = y; m[2, 3] = z
     return m
 
 
-def _placement_matrix(x: float, y: float, z: float, yaw_rad: float) -> np.ndarray:
-    """4x4 матрица: перенос + поворот вокруг Z на yaw радиан."""
+def _placement(x: float, y: float, z: float, yaw_rad: float) -> np.ndarray:
     c, s = math.cos(yaw_rad), math.sin(yaw_rad)
     m = np.eye(4)
-    m[0, 0] = c
-    m[0, 1] = -s
-    m[1, 0] = s
-    m[1, 1] = c
-    m[0, 3] = x
-    m[1, 3] = y
-    m[2, 3] = z
+    m[0, 0] = c;  m[0, 1] = -s
+    m[1, 0] = s;  m[1, 1] =  c
+    m[0, 3] = x;  m[1, 3] = y; m[2, 3] = z
     return m
 
 
