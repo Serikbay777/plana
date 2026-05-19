@@ -87,6 +87,14 @@ type AiPlanVariant = {
   enhancerUsed: string;
 };
 
+const VARIANT_LABEL: Record<string, string> = {
+  max_useful_area: "Макс. жилая площадь",
+  max_apt_count:   "Макс. кол-во квартир",
+  balanced_mix:    "Классическая секция",
+  max_insolation:  "Инсоляция (юг)",
+  open_plan:       "Евроформат",
+};
+
 type AiPlansBag = {
   state: GenState;
   variants: AiPlanVariant[];
@@ -233,6 +241,9 @@ export default function AppPage() {
   const [siteBldFile, setSiteBldFile] = useState<File | null>(null);
   const [siteBldPreview, setSiteBldPreview] = useState<string | null>(null);
 
+  // Prevents form-change effect from clearing bags during project/history restore
+  const restoringRef = useRef(false);
+
   // ---- auth gate
   useEffect(() => {
     const s = getSession();
@@ -252,6 +263,7 @@ export default function AppPage() {
     const pid = new URLSearchParams(window.location.search).get("project");
     if (!pid || !authChecked) return;
     getProject(pid).then((p) => {
+      restoringRef.current = true;
       setProjectId(p.id);
       setProjectName(p.name);
       setForm({ ...DEFAULT_PROMPT_FORM, ...(p.params as PromptFormState) });
@@ -262,7 +274,7 @@ export default function AppPage() {
         p.assets.filter((a) => a.tab === "ai_plans").forEach((a) => {
           const fl = a.floor ?? 1;
           if (!byFloor[fl]) byFloor[fl] = [];
-          byFloor[fl].push({ key: a.variant_key, label: a.variant_key, imageUrl: a.url, modelUsed: a.model_used ?? "", enhancerUsed: "" });
+          byFloor[fl].push({ key: a.variant_key, label: VARIANT_LABEL[a.variant_key] ?? a.variant_key, imageUrl: a.url, modelUsed: a.model_used ?? "", enhancerUsed: "" });
         });
         if (Object.keys(byFloor).length > 0) {
           const bags: Record<number, AiPlansBag> = {};
@@ -278,6 +290,7 @@ export default function AppPage() {
         const site = p.assets.find((a) => a.tab === "site");
         if (site) setSiteBag({ state: "ready", imageUrl: site.url, modelUsed: site.model_used, enhancerUsed: null, errorMessage: null });
       }
+      setTimeout(() => { restoringRef.current = false; }, 50);
     }).catch(() => { /* проект не найден — просто игнорируем */ });
   }, [authChecked]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -360,6 +373,7 @@ export default function AppPage() {
   // сбрасываем результаты при изменении формы
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      if (restoringRef.current) return;
       setSiteBag(b => b.state === "ready" ? { ...b, state: "idle" } : b);
       setVizExtBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
       setVizFloorBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
@@ -625,7 +639,7 @@ export default function AppPage() {
     if (run.tab === "ai_plans") {
       const variants: AiPlanVariant[] = run.assets.map((a) => ({
         key: a.variant_key,
-        label: a.variant_key,
+        label: VARIANT_LABEL[a.variant_key] ?? a.variant_key,
         imageUrl: a.url,
         modelUsed: a.model_used ?? "",
         enhancerUsed: "",
