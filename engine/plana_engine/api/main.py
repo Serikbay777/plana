@@ -757,6 +757,115 @@ def visualize_floor_variants(req: VisualizeFromInputsRequest) -> FloorVariantsRe
 
 
 # ---------------------------------------------------------------------------
+# Поэтажные схемы: 5 вариантов для конкретного этажа здания (P1.3)
+# ---------------------------------------------------------------------------
+
+_FLOOR_LEVEL_SUFFIXES: dict[str, str] = {
+    "ground": (
+        "\n\n═══ ТИП ЭТАЖА: ПЕРВЫЙ / ЦОКОЛЬНЫЙ (LOBBY FLOOR) ═══\n"
+        "Это ПЕРВЫЙ этаж здания — вестибюль и общественные зоны, НЕ жилые квартиры.\n"
+        "Обязательные элементы: парадный вестибюль (lobby) с пунктом консьержа, "
+        "почтовые ящики секций, велосипедное хранилище, колясочная, "
+        "мусорокамера, электрощитовая/ИТП, пандус въезда в подземный паркинг. "
+        "Если commercial_pct > 0 — торговые помещения вдоль уличного фасада. "
+        "Высота потолков 4–5 м. Крупные витражные входные группы. "
+        "Нет жилых квартир — только общедомовые помещения и нежилой фонд."
+    ),
+    "typical": (
+        "\n\n═══ ТИП ЭТАЖА: ТИПОВОЙ ЖИЛОЙ ЭТАЖ ═══\n"
+        "Стандартный жилой этаж здания. Максимальное число квартир на секцию. "
+        "Все квартиры рабочие: студии, 1-комн., 2-комн., 3-комн. согласно mix-у. "
+        "Двусторонний коридор с лифтами и лестницей в ядре. "
+        "Стандартная высота потолков 2.8–3.0 м."
+    ),
+    "penthouse": (
+        "\n\n═══ ТИП ЭТАЖА: ПОСЛЕДНИЙ ЭТАЖ (PENTHOUSE / ТЕХНИЧЕСКИЙ) ═══\n"
+        "Последний этаж здания. Комбинация: крупные пентхаус-квартиры с террасами "
+        "и возможными высокими потолками (4–5 м), плюс технический машинный зал "
+        "для лифтов в ядре, выход на кровлю. "
+        "Меньше единиц, зато большие премиальные планировки с панорамными террасами. "
+        "Техпомещения: лифтовая машинная комната, АХУ, вентцентр."
+    ),
+}
+
+
+class FloorByLevelRequest(VisualizeFromInputsRequest):
+    floor_number: int = 1
+
+
+@app.post("/visualize/floor-by-level", response_model=FloorVariantsResponse)
+def visualize_floor_by_level(req: FloorByLevelRequest) -> FloorVariantsResponse:
+    """5 PNG-вариантов планировки для конкретного этажа (lobby / typical / penthouse)."""
+    import base64 as _b64
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+    _validate_quality(req.quality)
+
+    # определяем тип этажа
+    if req.floor_number == 1:
+        level_type = "ground"
+    elif req.floor_number >= req.floors:
+        level_type = "penthouse"
+    else:
+        level_type = "typical"
+
+    level_suffix = _FLOOR_LEVEL_SUFFIXES[level_type]
+
+    inputs = _inputs_from_req(req)
+    base_prompt = build_marketing_prompt(inputs)
+    enh = enhance_with_kz_norms(base_prompt, inputs)
+    enhanced_base = enh.enhanced_prompt
+    enhancer_source = f"agent-kz-norms:{enh.source}"
+
+    opts = GenerationOptions(quality=req.quality)  # type: ignore[arg-type]
+
+    def _one(idx: int, variant: dict) -> tuple[int, FloorVariantItem]:
+        prompt = enhanced_base + level_suffix + variant["suffix"]
+        result = generate_image_with_meta(prompt, opts, use_cache=True)
+        return idx, FloorVariantItem(
+            key=variant["key"],
+            label=variant["label"],
+            model_used=result.model_used,
+            enhancer_used=enhancer_source,
+            image_b64=_b64.b64encode(result.png).decode(),
+        )
+
+    t0 = time.time()
+    ordered: list[FloorVariantItem | None] = [None] * len(_FLOOR_VARIANTS)
+    last_exc: Exception | None = None
+
+    try:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {
+                pool.submit(_one, i, v): i
+                for i, v in enumerate(_FLOOR_VARIANTS)
+            }
+            for fut in _as_completed(futures):
+                try:
+                    idx, item = fut.result()
+                    ordered[idx] = item
+                except (MissingAPIKey, OpenAIError):
+                    raise
+                except Exception as e:
+                    last_exc = e
+    except MissingAPIKey as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except OpenAIError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    results = [v for v in ordered if v is not None]
+    if not results:
+        detail = f"All variants failed: {last_exc}" if last_exc else "No variants generated"
+        raise HTTPException(status_code=502, detail=detail)
+
+    return FloorVariantsResponse(
+        variants=results,
+        elapsed_ms=round((time.time() - t0) * 1000, 1),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Интерьер-галерея: 1 рендер на уникальный тип квартиры
 # ---------------------------------------------------------------------------
 

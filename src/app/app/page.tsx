@@ -19,6 +19,7 @@ import {
   visualizeFloorplanFurniture,
   visualizeSitePlacement,
   visualizeFloorVariants,
+  visualizeFloorByLevel,
   visualizeSitePlacementVariants,
   visualizeInteriorGallery,
   editAiPlan,
@@ -195,8 +196,9 @@ export default function AppPage() {
   const [vizIntBag,     setVizIntBag]     = useState<ImageBag>(EMPTY_IMAGE_BAG);      // fallback single image
   const [vizIntGallery, setVizIntGallery] = useState<InteriorGalleryBag>(EMPTY_INT_GALLERY);
   const [vizMode, setVizMode] = useState<VizMode>("exterior");
-  // Tab 4
-  const [aiPlansBag, setAiPlansBag] = useState<AiPlansBag>(EMPTY_AI_PLANS);
+  // Tab 4 — per-floor bags
+  const [floorBags, setFloorBags] = useState<Record<number, AiPlansBag>>({});
+  const [currentFloor, setCurrentFloor] = useState(1);
   // Tab 5
   const [placementBag, setPlacementBag] = useState<PlacementBag>(EMPTY_PLACEMENT);
   const [placementSiteFile,     setPlacementSiteFile]     = useState<File | null>(null);
@@ -228,14 +230,24 @@ export default function AppPage() {
       setForm(p.params as PromptFormState);
       // восстанавливаем изображения из ассетов
       if (p.assets) {
-        const aiVariants = p.assets
-          .filter((a) => a.tab === "ai_plans")
-          .map((a) => ({ key: a.variant_key, label: a.variant_key, imageUrl: a.url, modelUsed: a.model_used ?? "", enhancerUsed: "" }));
-        if (aiVariants.length) setAiPlansBag({ state: "ready", variants: aiVariants, elapsedMs: null, errorMessage: null });
+        // AI-чертежи группируем по этажу
+        const byFloor: Record<number, AiPlanVariant[]> = {};
+        p.assets.filter((a) => a.tab === "ai_plans").forEach((a) => {
+          const fl = a.floor ?? 1;
+          if (!byFloor[fl]) byFloor[fl] = [];
+          byFloor[fl].push({ key: a.variant_key, label: a.variant_key, imageUrl: a.url, modelUsed: a.model_used ?? "", enhancerUsed: "" });
+        });
+        if (Object.keys(byFloor).length > 0) {
+          const bags: Record<number, AiPlansBag> = {};
+          Object.entries(byFloor).forEach(([f, variants]) => {
+            bags[Number(f)] = { state: "ready", variants, elapsedMs: null, errorMessage: null };
+          });
+          setFloorBags(bags);
+        }
         const ext = p.assets.find((a) => a.tab === "viz_exterior");
         if (ext) setVizExtBag({ state: "ready", imageUrl: ext.url, modelUsed: ext.model_used, enhancerUsed: null, errorMessage: null });
-        const floor = p.assets.find((a) => a.tab === "viz_floor");
-        if (floor) setVizFloorBag({ state: "ready", imageUrl: floor.url, modelUsed: floor.model_used, enhancerUsed: null, errorMessage: null });
+        const floorViz = p.assets.find((a) => a.tab === "viz_floor");
+        if (floorViz) setVizFloorBag({ state: "ready", imageUrl: floorViz.url, modelUsed: floorViz.model_used, enhancerUsed: null, errorMessage: null });
         const site = p.assets.find((a) => a.tab === "site");
         if (site) setSiteBag({ state: "ready", imageUrl: site.url, modelUsed: site.model_used, enhancerUsed: null, errorMessage: null });
       }
@@ -259,8 +271,13 @@ export default function AppPage() {
       }
       // сохраняем сгенерированные изображения
       const uploads: Promise<unknown>[] = [];
-      aiPlansBag.variants.forEach((v) => {
-        uploads.push(uploadAsset(pid!, "ai_plans", v.key, v.imageUrl, v.modelUsed).catch(() => {}));
+      Object.entries(floorBags).forEach(([floorStr, bag]) => {
+        const fl = Number(floorStr);
+        if (bag.state === "ready") {
+          bag.variants.forEach((v) => {
+            uploads.push(uploadAsset(pid!, "ai_plans", v.key, v.imageUrl, v.modelUsed, fl).catch(() => {}));
+          });
+        }
       });
       if (vizExtBag.imageUrl)   uploads.push(uploadAsset(pid!, "viz_exterior", "exterior",  vizExtBag.imageUrl,   vizExtBag.modelUsed ?? undefined).catch(() => {}));
       if (vizFloorBag.imageUrl) uploads.push(uploadAsset(pid!, "viz_floor",    "floor",     vizFloorBag.imageUrl, vizFloorBag.modelUsed ?? undefined).catch(() => {}));
@@ -271,7 +288,7 @@ export default function AppPage() {
     } catch { /* ignore */ } finally {
       setSaving(false);
     }
-  }, [saving, projectId, projectName, form, aiPlansBag, vizExtBag, vizFloorBag, siteBag]);
+  }, [saving, projectId, projectName, form, floorBags, vizExtBag, vizFloorBag, siteBag]);
 
   // сбрасываем результаты при изменении формы
   useEffect(() => {
@@ -281,7 +298,11 @@ export default function AppPage() {
       setVizFloorBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
       setVizIntBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
       setVizIntGallery(b => b.state === "ready" ? EMPTY_INT_GALLERY : b);
-      setAiPlansBag(b => b.state === "ready" ? EMPTY_AI_PLANS : b);
+      setFloorBags(prev => {
+        const next: Record<number, AiPlansBag> = {};
+        Object.entries(prev).forEach(([k, b]) => { next[Number(k)] = b.state === "ready" ? EMPTY_AI_PLANS : b; });
+        return next;
+      });
     }, 0);
     return () => window.clearTimeout(timer);
   }, [form]);
@@ -465,9 +486,10 @@ export default function AppPage() {
   };
 
   const generateAiPlans = async () => {
-    setAiPlansBag({ ...EMPTY_AI_PLANS, state: "loading" });
+    const fl = currentFloor;
+    setFloorBags(prev => ({ ...prev, [fl]: { ...EMPTY_AI_PLANS, state: "loading" } }));
     try {
-      const res = await visualizeFloorVariants(buildVisReq(form));
+      const res = await visualizeFloorByLevel({ ...buildVisReq(form), floor_number: fl });
       const variants: AiPlanVariant[] = res.variants.map((v) => ({
         key: v.key,
         label: v.label,
@@ -475,9 +497,9 @@ export default function AppPage() {
         enhancerUsed: v.enhancer_used,
         imageUrl: `data:image/png;base64,${v.image_b64}`,
       }));
-      setAiPlansBag({ state: "ready", variants, elapsedMs: res.elapsed_ms, errorMessage: null });
+      setFloorBags(prev => ({ ...prev, [fl]: { state: "ready", variants, elapsedMs: res.elapsed_ms, errorMessage: null } }));
     } catch (e) {
-      setAiPlansBag({ ...EMPTY_AI_PLANS, state: "error", errorMessage: (e as Error).message });
+      setFloorBags(prev => ({ ...prev, [fl]: { ...EMPTY_AI_PLANS, state: "error", errorMessage: (e as Error).message } }));
     }
   };
 
@@ -511,7 +533,7 @@ export default function AppPage() {
       form,
       gpzu: gpzuLastResult,
       contour: contourResult,
-      aiPlans: aiPlansBag.state === "ready" ? aiPlansBag.variants : [],
+      aiPlans: currentFloorBag.state === "ready" ? currentFloorBag.variants : [],
       placement: placementBag.state === "ready" ? placementBag.variants : [],
       exteriorUrl: vizExtBag.state === "ready" ? vizExtBag.imageUrl : null,
       floorplanFurnitureUrl: vizFloorBag.state === "ready" ? vizFloorBag.imageUrl : null,
@@ -556,9 +578,10 @@ export default function AppPage() {
 
   // active state для индикатора loading в кнопке
   const vizAnyLoading = vizExtBag.state === "loading" || vizFloorBag.state === "loading" || vizIntBag.state === "loading" || vizIntGallery.state === "loading";
+  const currentFloorBag = floorBags[currentFloor] ?? EMPTY_AI_PLANS;
   const isLoading =
     tab === "site"        ? siteBag.state === "loading"
-    : tab === "ai_plans"  ? aiPlansBag.state === "loading"
+    : tab === "ai_plans"  ? currentFloorBag.state === "loading"
     : tab === "placement" ? placementBag.state === "loading"
     : vizAnyLoading;
 
@@ -636,7 +659,11 @@ export default function AppPage() {
           )}
           {tab === "ai_plans" && (
             <AiPlansTab
-              bag={aiPlansBag}
+              bag={currentFloorBag}
+              currentFloor={currentFloor}
+              totalFloors={form.floors}
+              onChangeFloor={setCurrentFloor}
+              floorBags={floorBags}
               onGenerate={generateAiPlans}
               onGoToViz={goToVizAndGenerateAll}
               dxfImportLoading={dxfImportLoading}
@@ -663,7 +690,8 @@ export default function AppPage() {
                 placementBag.state === "ready" ||
                 vizExtBag.state === "ready" ||
                 vizFloorBag.state === "ready" ||
-                vizIntGallery.state === "ready"
+                vizIntGallery.state === "ready" ||
+                Object.values(floorBags).some(b => b.state === "ready")
               }
             />
           )}
@@ -2091,13 +2119,18 @@ function PlacementTab({
 // ---------------------------------------------------------------------------
 
 function AiPlansTab({
-  bag, onGenerate, onGoToViz, onExportDxf, onExportIfc, cadExportLoading,
+  bag, currentFloor, totalFloors, onChangeFloor, floorBags,
+  onGenerate, onGoToViz, onExportDxf, onExportIfc, cadExportLoading,
   dxfImportLoading, dxfImportResult, dxfImportError, onDxfImport, onClearDxfImport, onApplyDxfBounds,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
   onExportFullReport, hasExtraSections,
 }: {
   bag: AiPlansBag;
+  currentFloor: number;
+  totalFloors: number;
+  onChangeFloor: (f: number) => void;
+  floorBags: Record<number, AiPlansBag>;
   onGenerate: () => void;
   onGoToViz: () => void;
   onExportDxf: () => Promise<void>;
@@ -2342,16 +2375,16 @@ function AiPlansTab({
       )}
 
       {/* Header strip */}
-      <div className="px-5 pt-4 pb-3 border-b border-white/[0.04] flex items-center gap-3 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <Sparkles size={14} className="text-violet-300" />
-          <span className="text-[13px] font-medium text-white/85">AI Чертежи планировки</span>
-        </div>
-        <span className="text-[11.5px] text-white/40">
-          Параметры → Gemma 4 → gpt-image × 5 вариантов параллельно
-        </span>
-
-        <div className="ml-auto flex items-center gap-2">
+      <div className="px-5 pt-4 pb-3 border-b border-white/[0.04] flex-shrink-0">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <Sparkles size={14} className="text-violet-300" />
+            <span className="text-[13px] font-medium text-white/85">AI Чертежи планировки</span>
+          </div>
+          <span className="text-[11.5px] text-white/40">
+            Параметры → Gemma 4 → gpt-image × 5 вариантов параллельно
+          </span>
+          <div className="ml-auto flex items-center gap-2">
           <input
             ref={dxfInputRef}
             type="file"
@@ -2408,7 +2441,39 @@ function AiPlansTab({
               {(bag.elapsedMs / 1000).toFixed(1)} сек
             </div>
           )}
+          </div>
         </div>
+
+        {/* Floor navigator */}
+        {totalFloors > 1 && (
+          <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+            <span className="text-[11px] text-white/35 mr-1">Этаж:</span>
+            {Array.from({ length: totalFloors }, (_, i) => i + 1).map((fl) => {
+              const state = floorBags[fl]?.state ?? "idle";
+              const label = fl === 1 ? "1 (лобби)" : fl === totalFloors ? `${fl} (верх)` : String(fl);
+              return (
+                <button
+                  key={fl}
+                  onClick={() => onChangeFloor(fl)}
+                  className={[
+                    "h-7 px-2.5 rounded-lg text-[11.5px] transition border relative",
+                    currentFloor === fl
+                      ? "bg-violet-500/25 border-violet-400/40 text-violet-100 font-medium"
+                      : "border-white/[0.07] text-white/55 hover:text-white/85 hover:bg-white/[0.04]",
+                  ].join(" ")}
+                >
+                  {label}
+                  {state === "ready" && (
+                    <span className="absolute -top-1 -right-1 size-2 rounded-full bg-emerald-400" />
+                  )}
+                  {state === "loading" && (
+                    <span className="absolute -top-1 -right-1 size-2 rounded-full border border-white/40 border-t-white/80 animate-spin" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* DXF import result/error banner */}

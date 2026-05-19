@@ -101,6 +101,7 @@ async def upload_asset(
     request: Request,
     tab: str = Form(...),
     variant_key: str = Form(...),
+    floor: int = Form(1),
     model_used: str = Form(""),
     image: UploadFile = File(...),
 ) -> dict:
@@ -110,6 +111,6 @@ async def upload_asset(
         raise HTTPException(status_code=404, detail="Проект не найден")
 
     image_bytes = await image.read()
-    file_path = save_asset(project_id, tab, variant_key, image_bytes)
-    asset = create_asset(project_id, tab, variant_key, file_path, model_used or None)
+    file_path = save_asset(project_id, tab, variant_key, image_bytes, floor)
+    asset = create_asset(project_id, tab, variant_key, file_path, model_used or None, floor)
     return {**asset, "url": _asset_url(file_path)}

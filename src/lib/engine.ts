@@ -395,6 +395,15 @@ export async function visualizeFloorVariants(
   });
 }
 
+export async function visualizeFloorByLevel(
+  req: VisualizeFromInputsRequest & { floor_number: number },
+): Promise<FloorVariantsResponse> {
+  return request("/visualize/floor-by-level", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Размещение ЖК на участке — 3 варианта посадки (image-edit × 3)
 // ---------------------------------------------------------------------------

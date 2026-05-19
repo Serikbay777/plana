@@ -42,12 +42,20 @@ def init_db() -> None:
                 project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                 tab         TEXT NOT NULL,
                 variant_key TEXT NOT NULL,
+                floor       INTEGER NOT NULL DEFAULT 1,
                 file_path   TEXT NOT NULL,
                 model_used  TEXT,
                 created_at  TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
         c.commit()
+    # migration: add floor column to existing tables
+    with _conn() as c:
+        try:
+            c.execute("ALTER TABLE project_assets ADD COLUMN floor INTEGER NOT NULL DEFAULT 1")
+            c.commit()
+        except Exception:
+            pass  # column already exists
 
     # Автоматически создаём seed-пользователя при старте, если задан в env.
     # Это позволяет Render пересоздавать пользователя после каждого редеплоя.
@@ -152,17 +160,19 @@ def delete_project(project_id: str, user_id: str) -> bool:
 # Project assets
 # ---------------------------------------------------------------------------
 
-def create_asset(project_id: str, tab: str, variant_key: str, file_path: str, model_used: str | None) -> dict:
+def create_asset(
+    project_id: str, tab: str, variant_key: str, file_path: str,
+    model_used: str | None, floor: int = 1,
+) -> dict:
     asset_id = str(uuid.uuid4())
     with _conn() as c:
         c.execute(
-            "INSERT INTO project_assets (id, project_id, tab, variant_key, file_path, model_used) VALUES (?, ?, ?, ?, ?, ?)",
-            (asset_id, project_id, tab, variant_key, file_path, model_used),
+            "INSERT INTO project_assets (id, project_id, tab, variant_key, floor, file_path, model_used) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (asset_id, project_id, tab, variant_key, floor, file_path, model_used),
         )
-        # обновляем updated_at проекта
         c.execute("UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (project_id,))
         c.commit()
-    return {"id": asset_id, "project_id": project_id, "tab": tab, "variant_key": variant_key, "file_path": file_path}
+    return {"id": asset_id, "project_id": project_id, "tab": tab, "variant_key": variant_key, "floor": floor, "file_path": file_path}
 
 
 def list_assets(project_id: str) -> list[dict]:

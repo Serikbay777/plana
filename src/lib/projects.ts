@@ -44,6 +44,7 @@ export type ProjectAsset = {
   project_id: string;
   tab: string;
   variant_key: string;
+  floor: number;
   url: string;
   model_used: string | null;
   created_at: string;
@@ -98,12 +99,14 @@ export async function uploadAsset(
   variantKey: string,
   imageUrl: string,
   modelUsed?: string,
+  floor: number = 1,
 ): Promise<ProjectAsset> {
   // imageUrl может быть data:URL (base64) или blob:URL
   const blob = await fetch(imageUrl).then((r) => r.blob());
   const fd = new FormData();
   fd.append("tab", tab);
   fd.append("variant_key", variantKey);
+  fd.append("floor", String(floor));
   fd.append("model_used", modelUsed ?? "");
   fd.append("image", blob, "asset.png");
 
