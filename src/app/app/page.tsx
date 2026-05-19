@@ -135,6 +135,7 @@ function buildVisReq(form: PromptFormState): VisualizeFromInputsRequest {
     max_coverage_pct: form.max_coverage_pct,
     max_height_m: form.max_height_m,
     quality: "medium",
+    site_polygon: form.site_polygon ?? null,
   };
 }
 

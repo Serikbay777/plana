@@ -38,14 +38,18 @@ def _rect(x: float, y: float, w: float, h: float) -> ShPolygon:
 def marketing_to_project(inputs: MarketingInputs) -> Project:
     """Собрать `Project` из формы.
 
-    Контур участка — прямоугольник W×D, origin в (0,0).
-    Пятно застройки — внутренний прямоугольник после отступов.
-    Если отступы съели всё (inner ≤ 0) — пятно совпадает с участком.
+    Контур участка — прямоугольник W×D или свободный полигон из inputs.site_polygon.
+    Пятно застройки — inner rect после отступов внутри bbox полигона.
     """
-    W = max(0.0, inputs.site_width_m)
-    D = max(0.0, inputs.site_depth_m)
-
-    site_boundary = _rect(0.0, 0.0, W, D)
+    if inputs.site_polygon and len(inputs.site_polygon) >= 3:
+        site_boundary = ShPolygon([(x, y) for x, y in inputs.site_polygon])
+        bbox = site_boundary.bounds  # (minx, miny, maxx, maxy)
+        W = bbox[2] - bbox[0]
+        D = bbox[3] - bbox[1]
+    else:
+        W = max(0.0, inputs.site_width_m)
+        D = max(0.0, inputs.site_depth_m)
+        site_boundary = _rect(0.0, 0.0, W, D)
 
     # Пятно застройки после отступов. Стороны:
     #   front = настлой, сторона y=0 (низ листа)

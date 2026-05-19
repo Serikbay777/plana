@@ -77,9 +77,15 @@ class FloorPlanDxfBuilder:
 
     def __init__(self, inputs: MarketingInputs) -> None:
         self.inputs = inputs
-        # Геометрия (используем footprint напрямую, setbacks=0 в новой форме)
-        self.W = inputs.site_width_m
-        self.H = inputs.site_depth_m
+        # Геометрия: если задан свободный полигон — берём bbox, иначе W×H из формы
+        if inputs.site_polygon and len(inputs.site_polygon) >= 3:
+            xs = [p[0] for p in inputs.site_polygon]
+            ys = [p[1] for p in inputs.site_polygon]
+            self.W = max(xs) - min(xs)
+            self.H = max(ys) - min(ys)
+        else:
+            self.W = inputs.site_width_m
+            self.H = inputs.site_depth_m
         self.sections = max(1, inputs.sections)
         self.section_w = self.W / self.sections
 

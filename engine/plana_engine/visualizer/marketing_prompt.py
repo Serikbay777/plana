@@ -56,6 +56,9 @@ class MarketingInputs:
     max_coverage_pct: float = 50.0
     max_height_m: float = 30.0
 
+    # Свободный контур участка [[x, y], ...] в метрах. None = прямоугольник W×D.
+    site_polygon: tuple[tuple[float, float], ...] | None = None
+
 
 # ---------------------------------------------------------------------------
 # Универсальные хелперы

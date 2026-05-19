@@ -178,6 +178,8 @@ class VisualizeFromInputsRequest(BaseModel):
     max_height_m: float = 30.0
     # рендер
     quality: str = "medium"
+    # свободный контур участка [[x, y], ...] в метрах. None = прямоугольник.
+    site_polygon: list[list[float]] | None = None
 
 
 def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
@@ -205,6 +207,7 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         insolation_min_hours=req.insolation_min_hours,
         max_coverage_pct=req.max_coverage_pct,
         max_height_m=req.max_height_m,
+        site_polygon=tuple(tuple(p) for p in req.site_polygon) if req.site_polygon else None,
     )
 
 

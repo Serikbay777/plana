@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Sparkles, Home, Briefcase, Building2, Hotel,
-  Minus, Plus,
+  Minus, Plus, PenLine, Square,
 } from "lucide-react";
+import { SitePolygonEditor, type Pt } from "@/components/SitePolygonEditor";
 
 // ---------------------------------------------------------------------------
 // Тип формы — минимум essential полей для среза этажа.
@@ -20,6 +21,9 @@ export type PromptFormState = {
   /** Габариты пятна застройки (footprint здания, а не участка). */
   building_width_m: number;
   building_depth_m: number;
+
+  /** Свободный контур участка [[x_m, y_m], ...]. null = прямоугольник. */
+  site_polygon: Pt[] | null;
 
   floors: number;
 
@@ -61,6 +65,7 @@ export const DEFAULT_PROMPT_FORM: PromptFormState = {
   purpose: "residential",
   building_width_m: 60,
   building_depth_m: 40,
+  site_polygon: null,
   floors: 9,
   studio_pct: 25,
   k1_pct: 35,
@@ -191,34 +196,84 @@ export function PromptForm({ value, onChange, onGenerate, generating }: Props) {
 
       {/* ─── Пятно застройки ─── */}
       <Section icon="📐" title="Пятно застройки">
-        <FootprintVisualizer
-          width={local.building_width_m}
-          depth={local.building_depth_m}
-        />
-        <div className="grid grid-cols-2 gap-2 mt-3">
-          <NumField
-            label="Длина"
-            suffix="м"
-            value={local.building_width_m}
-            min={8}
-            max={150}
-            onChange={(v) => update("building_width_m", v)}
-          />
-          <NumField
-            label="Ширина"
-            suffix="м"
-            value={local.building_depth_m}
-            min={8}
-            max={150}
-            onChange={(v) => update("building_depth_m", v)}
-          />
+        {/* Переключатель: прямоугольник / свободный контур */}
+        <div className="inline-flex bg-white/[0.04] border border-white/[0.07] rounded-lg p-0.5 mb-3">
+          <button
+            onClick={() => { update("site_polygon", null); }}
+            className={[
+              "h-6 px-2.5 rounded-md text-[11px] transition flex items-center gap-1",
+              !local.site_polygon ? "bg-white/15 text-white font-medium" : "text-white/45 hover:text-white",
+            ].join(" ")}
+          >
+            <Square size={10} /> Прямоугольник
+          </button>
+          <button
+            onClick={() => { if (!local.site_polygon) update("site_polygon", local.site_polygon); }}
+            className={[
+              "h-6 px-2.5 rounded-md text-[11px] transition flex items-center gap-1",
+              local.site_polygon ? "bg-violet-500/30 text-violet-100 font-medium" : "text-white/45 hover:text-white",
+            ].join(" ")}
+          >
+            <PenLine size={10} /> Свободный контур
+          </button>
         </div>
-        <div className="flex items-center justify-between text-[11px] text-white/45 mt-2.5 pt-2.5 border-t border-white/[0.04]">
-          <span>Площадь этажа</span>
-          <span className="tabular text-white/85 font-medium">
-            {(local.building_width_m * local.building_depth_m).toLocaleString("ru-RU")} м²
-          </span>
-        </div>
+
+        {!local.site_polygon ? (
+          <>
+            <FootprintVisualizer
+              width={local.building_width_m}
+              depth={local.building_depth_m}
+            />
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <NumField
+                label="Длина"
+                suffix="м"
+                value={local.building_width_m}
+                min={8}
+                max={150}
+                onChange={(v) => update("building_width_m", v)}
+              />
+              <NumField
+                label="Ширина"
+                suffix="м"
+                value={local.building_depth_m}
+                min={8}
+                max={150}
+                onChange={(v) => update("building_depth_m", v)}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-white/45 mt-2.5 pt-2.5 border-t border-white/[0.04]">
+              <span>Площадь этажа</span>
+              <span className="tabular text-white/85 font-medium">
+                {(local.building_width_m * local.building_depth_m).toLocaleString("ru-RU")} м²
+              </span>
+            </div>
+          </>
+        ) : (
+          <SitePolygonEditor
+            value={local.site_polygon}
+            onChange={(pts) => {
+              if (pts && pts.length >= 3) {
+                const xs = pts.map(p => p[0]);
+                const ys = pts.map(p => p[1]);
+                const w = Math.max(...xs) - Math.min(...xs);
+                const d = Math.max(...ys) - Math.min(...ys);
+                const next = {
+                  ...local,
+                  site_polygon: pts,
+                  building_width_m: Math.round(w),
+                  building_depth_m: Math.round(d),
+                  site_width_m: Math.round(w),
+                  site_depth_m: Math.round(d),
+                };
+                setLocal(next);
+                onChange(next);
+              } else {
+                update("site_polygon", pts);
+              }
+            }}
+          />
+        )}
       </Section>
 
       {/* ─── Этажность ─── */}

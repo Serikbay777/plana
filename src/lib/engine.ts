@@ -246,6 +246,8 @@ export type VisualizeFromInputsRequest = {
   max_coverage_pct?: number;
   max_height_m?: number;
   quality?: "low" | "medium" | "high";
+  // свободный контур участка [[x_m, y_m], ...]
+  site_polygon?: [number, number][] | null;
 };
 
 export type VisualizeResult = {
