@@ -27,6 +27,7 @@ import {
   exportFloorplanDxf,
   exportFloorplanIfc,
   getFloorplanMetrics,
+  visualizeParking,
   type DxfImportResult,
   type GpzuExtraction,
   type ContourAnalysis,
@@ -202,6 +203,9 @@ export default function AppPage() {
   // Tab 4 — per-floor bags
   const [floorBags, setFloorBags] = useState<Record<number, AiPlansBag>>({});
   const [currentFloor, setCurrentFloor] = useState(1);
+  // Паркинг
+  const [parkingBag, setParkingBag] = useState<ImageBag>(EMPTY_IMAGE_BAG);
+  const [parkingLevel, setParkingLevel] = useState(1);
   // Tab 5
   const [placementBag, setPlacementBag] = useState<PlacementBag>(EMPTY_PLACEMENT);
   const [placementSiteFile,     setPlacementSiteFile]     = useState<File | null>(null);
@@ -306,6 +310,7 @@ export default function AppPage() {
         Object.entries(prev).forEach(([k, b]) => { next[Number(k)] = b.state === "ready" ? EMPTY_AI_PLANS : b; });
         return next;
       });
+      setParkingBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [form]);
@@ -506,6 +511,9 @@ export default function AppPage() {
     }
   };
 
+  const generateParking = () =>
+    wrapImageGen(setParkingBag, () => visualizeParking({ ...buildVisReq(form), parking_level: parkingLevel }));
+
   const generatePlacement = async () => {
     if (!placementSiteFile || !placementBldFile) {
       setPlacementBag({ ...EMPTY_PLACEMENT, state: "error", errorMessage: "Загрузите оба изображения: аэрофото участка и фото ЖК" });
@@ -689,6 +697,11 @@ export default function AppPage() {
               onContourAnalyze={handleContourAnalyze}
               onClearContour={() => { setContourResult(null); setContourError(null); }}
               onGetMetrics={() => getFloorplanMetrics(buildVisReq(form))}
+              parkingBag={parkingBag}
+              parkingLevel={parkingLevel}
+              parkingLevelsTotal={form.parking_underground_levels}
+              onParkingLevel={setParkingLevel}
+              onGenerateParking={generateParking}
               onExportFullReport={handleExportFullReport}
               hasExtraSections={
                 placementBag.state === "ready" ||
@@ -2128,7 +2141,8 @@ function AiPlansTab({
   dxfImportLoading, dxfImportResult, dxfImportError, onDxfImport, onClearDxfImport, onApplyDxfBounds,
   gpzuLoading, gpzuLastResult, gpzuError, onGpzuImport, onClearGpzu,
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour,
-  onGetMetrics, onExportFullReport, hasExtraSections,
+  onGetMetrics, parkingBag, parkingLevel, parkingLevelsTotal, onParkingLevel, onGenerateParking,
+  onExportFullReport, hasExtraSections,
 }: {
   bag: AiPlansBag;
   currentFloor: number;
@@ -2157,6 +2171,11 @@ function AiPlansTab({
   onContourAnalyze: (f: File) => void;
   onClearContour: () => void;
   onGetMetrics: () => Promise<FloorPlanMetrics>;
+  parkingBag: ImageBag;
+  parkingLevel: number;
+  parkingLevelsTotal: number;
+  onParkingLevel: (l: number) => void;
+  onGenerateParking: () => void;
   onExportFullReport: () => Promise<void>;
   hasExtraSections: boolean;
 }) {
@@ -2724,6 +2743,17 @@ function AiPlansTab({
         )}
       </div>
 
+      {/* Паркинг — секция под вариантами */}
+      {parkingLevelsTotal > 0 && (bag.state === "ready" || parkingBag.state !== "idle") && (
+        <ParkingSection
+          bag={parkingBag}
+          level={parkingLevel}
+          levelsTotal={parkingLevelsTotal}
+          onLevel={onParkingLevel}
+          onGenerate={onGenerateParking}
+        />
+      )}
+
       {/* Bottom bar */}
       {bag.state === "ready" && (
         <div className="border-t border-white/[0.05] px-5 py-3 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
@@ -2905,6 +2935,97 @@ function MetricChip({ label, value, accent }: { label: string; value: string; ac
     <div className="flex items-baseline gap-1.5">
       <span className="text-[10.5px] text-white/40">{label}:</span>
       <span className={["text-[13px] font-semibold", accent ? "text-emerald-300" : "text-white/85"].join(" ")}>{value}</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// P2.2 — Секция паркинга в AI Plans
+// ---------------------------------------------------------------------------
+
+function ParkingSection({
+  bag, level, levelsTotal, onLevel, onGenerate,
+}: {
+  bag: ImageBag;
+  level: number;
+  levelsTotal: number;
+  onLevel: (l: number) => void;
+  onGenerate: () => void;
+}) {
+  const [open, setOpen] = useState(bag.state !== "idle");
+  return (
+    <div className="border-t border-white/[0.05] flex-shrink-0">
+      {/* Заголовок-accordion */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full px-5 py-3 flex items-center gap-2.5 hover:bg-white/[0.02] transition text-left"
+      >
+        <DoorOpen size={13} className="text-cyan-300 flex-shrink-0" />
+        <span className="text-[12.5px] font-medium text-white/80">Подземный паркинг</span>
+        <span className="text-[11px] text-white/35 ml-1">{levelsTotal} ур.</span>
+        {bag.state === "ready" && <CheckCircle2 size={12} className="text-emerald-400 ml-1" />}
+        {bag.state === "loading" && <Loader2 size={12} className="animate-spin text-white/40 ml-1" />}
+        <span className="ml-auto text-[11px] text-white/30">{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div className="px-5 pb-4 flex flex-col gap-3">
+          {/* Выбор уровня + кнопка */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11.5px] text-white/45">Уровень:</span>
+            {Array.from({ length: levelsTotal }, (_, i) => i + 1).map((l) => (
+              <button
+                key={l}
+                onClick={() => onLevel(l)}
+                className={[
+                  "h-7 px-2.5 rounded-lg text-[11.5px] transition border",
+                  level === l
+                    ? "bg-cyan-500/20 border-cyan-400/40 text-cyan-100 font-medium"
+                    : "border-white/[0.07] text-white/50 hover:text-white/80 hover:bg-white/[0.04]",
+                ].join(" ")}
+              >
+                Б{l}
+              </button>
+            ))}
+            <button
+              onClick={onGenerate}
+              disabled={bag.state === "loading"}
+              className="ml-auto h-8 px-3.5 rounded-full btn-apple text-[12px] flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {bag.state === "loading" ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+              {bag.state === "loading" ? "Генерируем…" : bag.state === "ready" ? "Перегенерировать" : "Сгенерировать план"}
+            </button>
+          </div>
+
+          {/* Результат */}
+          {bag.state === "ready" && bag.imageUrl && (
+            <div className="relative rounded-xl overflow-hidden group">
+              <img src={bag.imageUrl} alt="План паркинга" className="w-full rounded-xl" />
+              <div className="absolute bottom-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                <a
+                  href={bag.imageUrl}
+                  download="plana-parking.png"
+                  className="h-8 px-3 rounded-full bg-black/70 backdrop-blur text-[11.5px] text-white flex items-center gap-1.5 hover:bg-black/90 transition"
+                >
+                  <Download size={11} /> PNG
+                </a>
+              </div>
+            </div>
+          )}
+
+          {bag.state === "error" && (
+            <div className="flex items-center gap-2 text-[12px] text-rose-300">
+              <AlertCircle size={13} /> {bag.errorMessage}
+            </div>
+          )}
+
+          {bag.state === "idle" && (
+            <div className="text-[11.5px] text-white/30 text-center py-4">
+              Нажми «Сгенерировать план» — AI нарисует план паркинга в стиле CAD
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

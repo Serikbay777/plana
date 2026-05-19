@@ -866,6 +866,72 @@ def visualize_floor_by_level(req: FloorByLevelRequest) -> FloorVariantsResponse:
 
 
 # ---------------------------------------------------------------------------
+# P2.2 — Подземный паркинг: план одного уровня (text-to-image)
+# ---------------------------------------------------------------------------
+
+def _build_parking_prompt(inputs: MarketingInputs, level: int, total_levels: int) -> str:
+    from ..cad import compute_floorplan_metrics
+    m = compute_floorplan_metrics(inputs)
+    total_spaces = max(1, round(m.apartments_count * inputs.parking_spaces_per_apt))
+    spaces_per_level = max(1, round(total_spaces / max(1, total_levels)))
+    col_count = max(2, round((inputs.site_width_m - 6) / 8))
+    row_count = max(2, round((inputs.site_depth_m - 6) / 8))
+    disabled = max(1, round(spaces_per_level * 0.03))
+
+    return (
+        f"AutoCAD-style underground parking plan. Top-down orthographic view, white background, "
+        f"thin black ink lines on white. Scale 1:200. Cyrillic labels.\n\n"
+        f"SUBJECT: Underground parking level {level} of {total_levels}. "
+        f"Building footprint {inputs.site_width_m:.0f}×{inputs.site_depth_m:.0f} m. "
+        f"Capacity: {spaces_per_level} car spaces on this level ({total_spaces} total in {total_levels} levels).\n\n"
+        f"COLUMN GRID: {col_count}×{row_count} columns, 8.0×8.0 m spacing. "
+        f"Columns shown as solid squares 400×400 mm, labelled A–{chr(65+col_count-1)} horizontally and 1–{row_count} vertically.\n\n"
+        f"CAR SPACES: 2.5×5.0 m each, 90° herringbone layout. Dashed outlines. "
+        f"Numbered sequentially. {disabled} disabled spaces near elevators (wheelchair symbol ♿).\n\n"
+        f"DRIVE AISLES: 6.0 m wide two-way central aisle + 5.5 m one-way perimeter aisles. "
+        f"Traffic direction arrows.\n\n"
+        f"RAMP: 5.5 m wide, gradient 15%, located at south-west corner. "
+        f"Ramp direction arrows + ВЪЕЗД / ВЫЕЗД labels.\n\n"
+        f"UTILITIES: 2 pedestrian stair/elevator cores marked ЛЕСТН/ЛИФТ. "
+        f"Fire hydrant symbols every 30 m. Ventilation shaft hatched areas.\n\n"
+        f"DIMENSIONS: Dimension chains on all walls, aisles, ramp. Overall building perimeter dimensions.\n\n"
+        f"TITLE BLOCK bottom-right: «ПОДЗЕМНЫЙ ПАРКИНГ Б{level}», scale 1:200, north arrow top-right.\n\n"
+        f"NEGATIVE: no 3D, no perspective, no photorealism, no colour fills, no shadows."
+    )
+
+
+class ParkingRequest(VisualizeFromInputsRequest):
+    parking_level: int = 1
+
+
+@app.post("/visualize/parking")
+def visualize_parking(req: ParkingRequest) -> Response:
+    """Plan of one underground parking level (text-to-image, CAD style)."""
+    _validate_quality(req.quality)
+    inputs = _inputs_from_req(req)
+    level = max(1, min(req.parking_level, req.parking_underground_levels or 1))
+    prompt = _build_parking_prompt(inputs, level, req.parking_underground_levels or 1)
+    enhanced, enhancer_source = enhance_prompt(prompt)
+    try:
+        result = generate_image_with_meta(enhanced, GenerationOptions(quality=req.quality))  # type: ignore[arg-type]
+    except MissingAPIKey as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except OpenAIError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return Response(
+        content=result.png,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Model-Used": result.model_used,
+            "X-Enhancer-Used": enhancer_source,
+            "X-Parking-Level": str(level),
+            "Access-Control-Expose-Headers": "X-Model-Used, X-Enhancer-Used, X-Parking-Level",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Интерьер-галерея: 1 рендер на уникальный тип квартиры
 # ---------------------------------------------------------------------------
 

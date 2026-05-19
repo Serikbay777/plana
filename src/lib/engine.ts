@@ -404,6 +404,27 @@ export async function visualizeFloorByLevel(
   });
 }
 
+export async function visualizeParking(
+  req: VisualizeFromInputsRequest & { parking_level?: number },
+): Promise<VisualizeResult> {
+  const res = await fetch(`${ENGINE_URL}/visualize/parking`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const b = await res.json(); detail = b.detail ?? detail; } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  const blob = await res.blob();
+  return {
+    blob,
+    modelUsed: res.headers.get("X-Model-Used") ?? "",
+    enhancerUsed: res.headers.get("X-Enhancer-Used") ?? null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Размещение ЖК на участке — 3 варианта посадки (image-edit × 3)
 // ---------------------------------------------------------------------------
