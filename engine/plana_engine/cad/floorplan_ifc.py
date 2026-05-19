@@ -24,6 +24,7 @@ import numpy as np
 from shapely.geometry import Polygon as ShPolygon
 
 from ..domain import Building, Project
+from .layout_schema import LayoutFloor
 
 
 # ── константы ─────────────────────────────────────────────────────────────
@@ -480,4 +481,167 @@ def _placement(x: float, y: float, z: float, yaw_rad: float) -> np.ndarray:
     return m
 
 
-__all__ = ["build_floorplan_ifc"]
+# ── IFC из структурированной планировки (AI-generated layout) ─────────────
+
+
+def build_ifc_from_layout(
+    layout: LayoutFloor,
+    *,
+    n_floors: int = 1,
+    storey_h: float = 3.0,
+    schema: str = "IFC4",
+) -> bytes:
+    """Построить IFC4 из LayoutFloor (structured GPT-4o output).
+
+    В отличие от build_floorplan_ifc (параметрическая модель) здесь каждая
+    комната — отдельный IfcSpace с реальными координатами и типом.
+    """
+    try:
+        import ifcopenshell
+        import ifcopenshell.api.aggregate
+        import ifcopenshell.api.context
+        import ifcopenshell.api.geometry
+        import ifcopenshell.api.project
+        import ifcopenshell.api.root
+        import ifcopenshell.api.spatial
+        import ifcopenshell.api.unit
+    except ImportError as e:
+        raise RuntimeError("ifcopenshell не установлен") from e
+
+    W = layout.width_m
+    D = layout.depth_m
+
+    model = ifcopenshell.api.project.create_file(version=schema)
+    ifc_project = ifcopenshell.api.root.create_entity(
+        model, ifc_class="IfcProject", name="plana-generated",
+    )
+    ifcopenshell.api.unit.assign_unit(model, units=[
+        ifcopenshell.api.unit.add_si_unit(model, unit_type="LENGTHUNIT"),
+        ifcopenshell.api.unit.add_si_unit(model, unit_type="AREAUNIT"),
+        ifcopenshell.api.unit.add_si_unit(model, unit_type="VOLUMEUNIT"),
+    ])
+
+    model_ctx = ifcopenshell.api.context.add_context(model, context_type="Model")
+    body_ctx  = ifcopenshell.api.context.add_context(
+        model, context_type="Model",
+        context_identifier="Body", target_view="MODEL_VIEW", parent=model_ctx,
+    )
+
+    site = ifcopenshell.api.root.create_entity(model, ifc_class="IfcSite", name="Site")
+    ifcopenshell.api.aggregate.assign_object(
+        model, relating_object=ifc_project, products=[site],
+    )
+    bldg = ifcopenshell.api.root.create_entity(
+        model, ifc_class="IfcBuilding", name="Building 1",
+    )
+    ifcopenshell.api.aggregate.assign_object(
+        model, relating_object=site, products=[bldg],
+    )
+
+    _CORE_LABEL = {
+        "lift_passenger": "Лифт пасс.",
+        "lift_freight":   "Лифт груз.",
+        "stair":          "Лестница",
+    }
+
+    for floor_idx in range(n_floors):
+        z = floor_idx * storey_h
+        storey = ifcopenshell.api.root.create_entity(
+            model, ifc_class="IfcBuildingStorey",
+            name=f"Этаж {floor_idx + 1}",
+        )
+        storey.Elevation = float(z)
+        ifcopenshell.api.aggregate.assign_object(
+            model, relating_object=bldg, products=[storey],
+        )
+        ifcopenshell.api.geometry.edit_object_placement(
+            model, product=storey, matrix=_translation(0, 0, z),
+        )
+
+        structural: list[Any] = []
+
+        # 1. Перекрытие
+        slab = _make_slab(model, ifcopenshell, body_ctx, W, D, _SLAB_T, floor_idx)
+        structural.append(slab)
+
+        # 2. Периметральные несущие стены
+        exterior = [(0.0, 0.0), (W, 0.0), (W, D), (0.0, D)]
+        structural.extend(_make_perimeter_walls(
+            model, ifcopenshell, body_ctx, exterior, storey_h, _WALL_BEAR_T, floor_idx,
+        ))
+
+        # 3. Противопожарные стены между секциями
+        for sect in layout.sections:
+            if sect.index > 0:
+                structural.extend(_make_fire_wall(
+                    model, ifcopenshell, body_ctx,
+                    sect.x_start, D, storey_h, _WALL_FIRE_T,
+                    floor_idx, sect.index,
+                ))
+
+        ifcopenshell.api.spatial.assign_container(
+            model, relating_structure=storey, products=structural,
+        )
+
+        # 4. Пространства (агрегируем в этаж)
+        for sect in layout.sections:
+            # Коридор
+            corr_sp = _make_space_rect(
+                model, ifcopenshell, body_ctx,
+                f"Коридор {floor_idx + 1}-{sect.index + 1}",
+                sect.x_start, sect.corridor_y,
+                sect.width, sect.corridor_d, 2.4,
+            )
+            ifcopenshell.api.aggregate.assign_object(
+                model, relating_object=storey, products=[corr_sp],
+            )
+
+            # Ядро (лифты + лестница)
+            for core in sect.cores:
+                label = f"{_CORE_LABEL.get(core.kind, 'Ядро')} {floor_idx + 1}-{sect.index + 1}"
+                core_sp = _make_space_rect(
+                    model, ifcopenshell, body_ctx,
+                    label, core.x, core.y, core.w, core.d, storey_h,
+                )
+                ifcopenshell.api.aggregate.assign_object(
+                    model, relating_object=storey, products=[core_sp],
+                )
+
+            # Комнаты квартир
+            for apt in sect.apartments:
+                apt_label = {
+                    "studio": "Студия", "1k": "1К", "2k": "2К", "3k": "3К",
+                }.get(apt.type_code, apt.type_code.upper())
+                for room in apt.rooms:
+                    room_sp = _make_space_rect(
+                        model, ifcopenshell, body_ctx,
+                        f"{room.name_ru} (кв.{apt.number} {apt_label})",
+                        apt.x + room.x, apt.y + room.y,
+                        room.w, room.d, 2.7,
+                    )
+                    ifcopenshell.api.aggregate.assign_object(
+                        model, relating_object=storey, products=[room_sp],
+                    )
+
+    return model.wrapped_data.to_string().encode("utf-8")
+
+
+# ── space helper ──────────────────────────────────────────────────────────
+
+
+def _make_space_rect(
+    model: Any, ifc: Any, body_ctx: Any,
+    name: str,
+    x: float, y: float, w: float, d: float,
+    height: float,
+) -> Any:
+    sp = ifc.api.root.create_entity(model, ifc_class="IfcSpace", name=name)
+    ifc.api.geometry.edit_object_placement(
+        model, product=sp, matrix=_translation(x, y, 0),
+    )
+    shape = _rect_extrusion(model, body_ctx, [(0, 0), (w, 0), (w, d), (0, d)], height)
+    ifc.api.geometry.assign_representation(model, product=sp, representation=shape)
+    return sp
+
+
+__all__ = ["build_floorplan_ifc", "build_ifc_from_layout"]

@@ -30,6 +30,7 @@ import {
   inpaintAiPlan,
   exportFloorplanDxf,
   exportFloorplanIfc,
+  generateFloorLayout,
   getFloorplanMetrics,
   visualizeParking,
   type DxfImportResult,
@@ -703,7 +704,9 @@ export default function AppPage() {
     if (cadExportLoading !== null) return;
     setCadExportLoading("ifc");
     try {
-      const { blob, filename, projectHeaders } = await exportFloorplanIfc(buildVisReq(form));
+      const visReq = buildVisReq(form);
+      const layout = await generateFloorLayout(visReq);
+      const { blob, filename, projectHeaders } = await exportFloorplanIfc(visReq, layout);
       downloadBlob(blob, filename);
       console.log("IFC project:", projectHeaders);
     } catch (e) {

@@ -40,6 +40,8 @@ from ..cad import (
     build_floorplan_dxf, build_floorplan_ifc, compute_floorplan_metrics,
     FloorPlanDxfBuilder,
 )
+from ..cad.layout_schema import LayoutFloor
+from ..cad.floorplan_ifc import build_ifc_from_layout
 from ..types import BuildingPurpose
 from ..visualizer import (
     GenerationOptions, MarketingInputs, build_exterior_prompt,
@@ -180,6 +182,11 @@ class VisualizeFromInputsRequest(BaseModel):
     quality: str = "medium"
     # свободный контур участка [[x, y], ...] в метрах. None = прямоугольник.
     site_polygon: list[list[float]] | None = None
+
+
+class ExportIfcRequest(VisualizeFromInputsRequest):
+    """Расширение для /export/floorplan-ifc: опциональная AI-планировка."""
+    layout: LayoutFloor | None = None
 
 
 def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
@@ -1677,6 +1684,22 @@ class FloorPlanMetricsResponse(BaseModel):
     efficiency_pct: float
 
 
+@app.post("/generate/floor-layout")
+def generate_floor_layout_endpoint(req: VisualizeFromInputsRequest) -> LayoutFloor:
+    """Сгенерировать структурированную планировку этажа (параметрически + AI).
+
+    Возвращает LayoutFloor JSON с точными координатами секций, ядер, коридоров
+    и комнат каждой квартиры. Используется фронтендом перед скачиванием IFC/DXF
+    чтобы передать реальную геометрию в экспортный эндпоинт.
+    """
+    from ..visualizer.layout_generator import generate_floor_layout
+    inputs = _inputs_from_req(req)
+    try:
+        return generate_floor_layout(inputs)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Layout generation failed: {e}")
+
+
 @app.post("/export/floorplan-dxf")
 def export_floorplan_dxf(req: VisualizeFromInputsRequest) -> Response:
     """Сгенерировать DXF плана типового этажа (для AutoCAD/ArchiCAD/Revit).
@@ -1713,24 +1736,28 @@ def export_floorplan_dxf(req: VisualizeFromInputsRequest) -> Response:
 
 
 @app.post("/export/floorplan-ifc")
-def export_floorplan_ifc(req: VisualizeFromInputsRequest) -> Response:
+def export_floorplan_ifc(req: ExportIfcRequest) -> Response:
     """Сгенерировать IFC4 плана этажа (для Revit / ArchiCAD / BIMcollab).
 
-    BIM-параллель к /export/floorplan-dxf: формируется реальная иерархия
-    IfcProject → IfcSite → IfcBuilding → IfcBuildingStorey (N) с
-    периметральными IfcWall и placeholder IfcSpace на каждом этаже.
-
-    Координаты в метрах, схема IFC4. Расширится в P5 (apartments/rooms)
-    когда AI-генератор начнёт писать реальную этажную геометрию.
+    Если в запросе передан layout (из /generate/floor-layout), используется
+    build_ifc_from_layout() — каждая комната становится отдельным IfcSpace
+    с реальными координатами. Без layout — параметрическая модель (fallback).
     """
     from ..domain import marketing_to_project
 
     inputs = _inputs_from_req(req)
-    project = marketing_to_project(inputs)
-    try:
-        ifc_bytes = build_floorplan_ifc(project)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"IFC build failed: {e}")
+
+    if req.layout is not None:
+        try:
+            ifc_bytes = build_ifc_from_layout(req.layout, n_floors=inputs.floors)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"IFC from layout failed: {e}")
+    else:
+        project = marketing_to_project(inputs)
+        try:
+            ifc_bytes = build_floorplan_ifc(project)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"IFC build failed: {e}")
 
     return Response(
         content=ifc_bytes,

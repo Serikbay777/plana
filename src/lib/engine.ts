@@ -625,6 +625,57 @@ export type FloorPlanMetrics = {
   efficiency_pct: number;
 };
 
+// ---------------------------------------------------------------------------
+// Floor layout (structured GPT-4o output — basis for rich IFC/DXF)
+// ---------------------------------------------------------------------------
+
+export type LayoutRoom = {
+  kind: string;
+  name_ru: string;
+  x: number; y: number; w: number; d: number;
+};
+
+export type LayoutApartment = {
+  type_code: "studio" | "1k" | "2k" | "3k";
+  number: number;
+  x: number; y: number; w: number; d: number;
+  rooms: LayoutRoom[];
+};
+
+export type LayoutCore = {
+  kind: "lift_passenger" | "lift_freight" | "stair";
+  x: number; y: number; w: number; d: number;
+};
+
+export type LayoutSection = {
+  index: number;
+  x_start: number;
+  width: number;
+  corridor_y: number;
+  corridor_d: number;
+  cores: LayoutCore[];
+  apartments: LayoutApartment[];
+};
+
+export type LayoutFloor = {
+  width_m: number;
+  depth_m: number;
+  sections: LayoutSection[];
+};
+
+/**
+ * Генерировать структурированную планировку этажа (параметрически + AI).
+ * Используется перед скачиванием IFC чтобы передать реальную геометрию.
+ */
+export async function generateFloorLayout(
+  req: VisualizeFromInputsRequest,
+): Promise<LayoutFloor> {
+  return request("/generate/floor-layout", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 /**
  * Скачать DXF плана типового этажа (для AutoCAD/ArchiCAD/Revit).
  *
@@ -662,11 +713,13 @@ export async function exportFloorplanDxf(
  */
 export async function exportFloorplanIfc(
   req: VisualizeFromInputsRequest,
+  layout?: LayoutFloor,
 ): Promise<{ blob: Blob; filename: string; projectHeaders: Record<string, string> }> {
+  const body = layout ? { ...req, layout } : req;
   const res = await fetch(`${ENGINE_URL}/export/floorplan-ifc`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(req),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new EngineError(res.status, await res.text());
 
