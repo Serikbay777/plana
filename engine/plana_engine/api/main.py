@@ -2141,14 +2141,15 @@ def visualize_sheet(req: VisualizeSheetRequest) -> Response:
     except OpenAIError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
+    # HTTP-заголовки должны быть latin-1; русский label сюда класть нельзя —
+    # фронт берёт его из /sheet-types по ключу X-Sheet-Type.
     headers = {
         "Cache-Control": "public, max-age=86400",
         "X-Model-Used": result.model_used,
         "X-Sheet-Type": tpl.key,
-        "X-Sheet-Label": tpl.label,
         "X-Sheet-Mode": mode,
         "Access-Control-Expose-Headers":
-            "X-Model-Used, X-Sheet-Type, X-Sheet-Label, X-Sheet-Mode, X-Sheet-Context",
+            "X-Model-Used, X-Sheet-Type, X-Sheet-Mode, X-Sheet-Context",
     }
     if context_used:
         # ASCII-safe: вырезаем переносы и режем длину для заголовка
