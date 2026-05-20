@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import {
   History, ChevronRight, RotateCcw, Layers, Home,
   LayoutGrid, MapPin, Image as ImageIcon, Loader2, X, Building2,
+  FileText,
 } from "lucide-react";
 import { listRuns, type GenerationRun } from "@/lib/projects";
 import type { PromptFormState } from "@/components/PromptForm";
@@ -12,13 +13,14 @@ import type { PromptFormState } from "@/components/PromptForm";
 // Config
 // ---------------------------------------------------------------------------
 
-type HistoryTab = "ai_plans" | "viz" | "site" | "placement";
+type HistoryTab = "ai_plans" | "viz" | "site" | "placement" | "pdf_viz";
 
 const HISTORY_TABS: { key: HistoryTab; label: string; icon: React.ReactNode; tabs: string[] }[] = [
   { key: "ai_plans",   label: "Чертежи",      icon: <LayoutGrid size={11} />, tabs: ["ai_plans"] },
   { key: "viz",        label: "Визуализация",  icon: <ImageIcon  size={11} />, tabs: ["viz_exterior", "viz_floor", "viz_interior"] },
   { key: "site",       label: "Посадка",       icon: <MapPin     size={11} />, tabs: ["site"] },
   { key: "placement",  label: "Размещение ЖК", icon: <Building2  size={11} />, tabs: ["placement"] },
+  { key: "pdf_viz",    label: "PDF",           icon: <FileText   size={11} />, tabs: ["pdf_viz"] },
 ];
 
 const VIZ_TAB_LABEL: Record<string, string> = {

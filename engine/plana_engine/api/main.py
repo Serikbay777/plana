@@ -1947,3 +1947,253 @@ def export_floorplan_metrics(req: VisualizeFromInputsRequest) -> FloorPlanMetric
         living_area_estimate_m2=m.living_area_estimate_m2,
         efficiency_pct=m.efficiency_pct,
     )
+
+
+# ---------------------------------------------------------------------------
+# PDF Визуализация (фича «загрузил альбом → получил красивый рендер»)
+#
+# Три эндпоинта работают вместе:
+#   GET  /sheet-types         — справочник типов листов для UI
+#   POST /pdf/render-pages    — PDF → массив превью-страниц (JPEG base64)
+#   POST /visualize/sheet     — sheet_type → gpt-image (режим A, text-to-image)
+# ---------------------------------------------------------------------------
+
+
+class SheetTypeOut(BaseModel):
+    key: str
+    label: str
+    aspect: str
+
+
+class SheetTypesResponse(BaseModel):
+    types: list[SheetTypeOut]
+
+
+@app.get("/sheet-types", response_model=SheetTypesResponse)
+def get_sheet_types() -> SheetTypesResponse:
+    """Список доступных типов архитектурных листов для PDF-визуализации."""
+    from ..visualizer.sheet_prompts import list_sheet_types
+    return SheetTypesResponse(
+        types=[
+            SheetTypeOut(key=t.key, label=t.label, aspect=t.aspect)
+            for t in list_sheet_types()
+        ],
+    )
+
+
+class PdfPagePreview(BaseModel):
+    index: int            # 0-based
+    jpeg_b64: str         # data: безпрефиксный base64
+    width: int
+    height: int
+
+
+class PdfRenderPagesResponse(BaseModel):
+    pages: list[PdfPagePreview]
+    truncated: bool       # True если в PDF было больше страниц, чем мы отрендерили
+
+
+_PDF_RENDER_PAGE_LIMIT = 64    # защита от 200-страничных PDF
+
+
+@app.post("/pdf/render-pages", response_model=PdfRenderPagesResponse)
+async def pdf_render_pages(
+    file: UploadFile = File(...),
+    dpi: int = Form(110),
+) -> PdfRenderPagesResponse:
+    """Отрендерить страницы загруженного PDF в JPEG-превью.
+
+    DPI 110 даёт ~1280px по длинной стороне для A4 — достаточно для UI-карточки
+    и для последующей классификации/анализа через Vision.
+    """
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="only .pdf is supported")
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="empty PDF")
+
+    if dpi < 50 or dpi > 300:
+        raise HTTPException(status_code=400, detail="dpi must be 50..300")
+
+    # Считаем сначала общее число страниц — чтобы корректно вернуть truncated
+    try:
+        import pypdfium2 as pdfium  # type: ignore[import-untyped]
+    except ImportError as e:
+        raise HTTPException(status_code=503, detail=f"pypdfium2 missing: {e}")
+
+    import base64 as _b64
+    import io as _io
+
+    try:
+        pdf = pdfium.PdfDocument(pdf_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"PDF parse error: {e}")
+
+    try:
+        total_pages = len(pdf)
+        n = min(total_pages, _PDF_RENDER_PAGE_LIMIT)
+        scale = dpi / 72.0
+        pages_out: list[PdfPagePreview] = []
+        for i in range(n):
+            page = pdf[i]
+            try:
+                bitmap = page.render(scale=scale, rotation=0)
+                try:
+                    pil = bitmap.to_pil().convert("RGB")
+                    buf = _io.BytesIO()
+                    pil.save(buf, format="JPEG", quality=82, optimize=True)
+                    pages_out.append(PdfPagePreview(
+                        index=i,
+                        jpeg_b64=_b64.b64encode(buf.getvalue()).decode("ascii"),
+                        width=pil.width,
+                        height=pil.height,
+                    ))
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
+    finally:
+        pdf.close()
+
+    return PdfRenderPagesResponse(
+        pages=pages_out,
+        truncated=total_pages > _PDF_RENDER_PAGE_LIMIT,
+    )
+
+
+class VisualizeSheetRequest(BaseModel):
+    sheet_type: str               # ключ из /sheet-types
+    quality: str = "medium"       # low | medium | high
+    hint: str = ""                # опциональная пользовательская заметка
+    mode: str = "A"               # "A" — text-to-image по типу
+                                  # "B" — image-to-image edit с самой страницей как референсом
+                                  # "C" — Vision-extract контекста → инжект в промпт → text-to-image
+    page_jpeg_b64: str = ""       # обязательно для режимов B/C (base64 без data:-префикса)
+
+
+@app.post("/visualize/sheet")
+def visualize_sheet(req: VisualizeSheetRequest) -> Response:
+    """Сгенерировать рендер для одной страницы PDF-альбома.
+
+    Режимы:
+      A — text-to-image по фиксированному шаблону из ``sheet_prompts.py``
+          (быстро, дёшево, никак не связано с самим чертежом юзера)
+      B — gpt-image edit: страница идёт как референс + промпт
+          (сохраняет композицию, но текст и мелкие детали плывут)
+      C — Vision-extract: gpt-4.1 читает страницу, возвращает 3–5 предложений
+          с реальными параметрами здания, они добавляются в промпт →
+          text-to-image. Результат соответствует исходному чертежу.
+    """
+    _validate_quality(req.quality)
+    mode = (req.mode or "A").upper()
+    if mode not in ("A", "B", "C"):
+        raise HTTPException(status_code=400, detail="mode must be A, B or C")
+
+    from ..visualizer.sheet_prompts import get_sheet_template
+
+    tpl = get_sheet_template(req.sheet_type)
+    prompt = tpl.prompt
+    hint = (req.hint or "").strip()
+    if hint:
+        prompt = f"{prompt}\n\nUser hint: {hint}"
+
+    # Декодируем страницу один раз — нужна и для B, и для C
+    page_bytes: bytes = b""
+    if mode in ("B", "C"):
+        if not req.page_jpeg_b64:
+            raise HTTPException(
+                status_code=400,
+                detail=f"mode {mode} requires page_jpeg_b64",
+            )
+        import base64 as _b64
+        try:
+            page_bytes = _b64.b64decode(req.page_jpeg_b64)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"bad page_jpeg_b64: {e}")
+        if not page_bytes:
+            raise HTTPException(status_code=400, detail="page_jpeg_b64 is empty")
+
+    context_used = ""    # для X-Sheet-Context header (отладка)
+
+    # Режим C — Vision-extract до основной генерации
+    if mode == "C":
+        from ..visualizer.sheet_vision import extract_sheet_context
+        context_used = extract_sheet_context(page_bytes)
+        if context_used:
+            prompt = f"{prompt}\n\nReal building context from source sheet: {context_used}"
+
+    try:
+        if mode == "B":
+            result = generate_image_edit_with_meta(
+                prompt,
+                page_bytes,
+                GenerationOptions(quality=req.quality),  # type: ignore[arg-type]
+            )
+        else:
+            # A и C — text-to-image (разница только в промпте)
+            result = generate_image_with_meta(
+                prompt,
+                GenerationOptions(quality=req.quality),  # type: ignore[arg-type]
+            )
+    except MissingAPIKey as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except OpenAIError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    headers = {
+        "Cache-Control": "public, max-age=86400",
+        "X-Model-Used": result.model_used,
+        "X-Sheet-Type": tpl.key,
+        "X-Sheet-Label": tpl.label,
+        "X-Sheet-Mode": mode,
+        "Access-Control-Expose-Headers":
+            "X-Model-Used, X-Sheet-Type, X-Sheet-Label, X-Sheet-Mode, X-Sheet-Context",
+    }
+    if context_used:
+        # ASCII-safe: вырезаем переносы и режем длину для заголовка
+        safe_ctx = " ".join(context_used.split())[:512]
+        try:
+            safe_ctx.encode("latin-1")
+            headers["X-Sheet-Context"] = safe_ctx
+        except UnicodeEncodeError:
+            # context может содержать не-ASCII — не пихаем в header
+            pass
+
+    return Response(
+        content=result.png,
+        media_type="image/png",
+        headers=headers,
+    )
+
+
+class ClassifySheetRequest(BaseModel):
+    page_jpeg_b64: str
+
+
+class ClassifySheetResponse(BaseModel):
+    sheet_type: str
+    confidence: str
+
+
+@app.post("/pdf/classify-page", response_model=ClassifySheetResponse)
+def classify_pdf_page(req: ClassifySheetRequest) -> ClassifySheetResponse:
+    """Vision-классификация одной страницы PDF — определить тип листа."""
+    if not req.page_jpeg_b64:
+        raise HTTPException(status_code=400, detail="page_jpeg_b64 is required")
+    import base64 as _b64
+    try:
+        page_bytes = _b64.b64decode(req.page_jpeg_b64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"bad page_jpeg_b64: {e}")
+
+    from ..visualizer.sheet_vision import SheetVisionError, classify_sheet
+    try:
+        cls = classify_sheet(page_bytes)
+    except SheetVisionError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return ClassifySheetResponse(
+        sheet_type=cls.sheet_type,
+        confidence=cls.confidence,
+    )

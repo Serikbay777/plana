@@ -861,5 +861,108 @@ export async function validateInsolation(
   );
 }
 
+// ---------------------------------------------------------------------------
+// PDF Визуализация (фича «загрузил альбом → получил красивый рендер»)
+// ---------------------------------------------------------------------------
+
+export type SheetType = {
+  key: string;
+  label: string;
+  aspect: string;
+};
+
+export async function getSheetTypes(): Promise<SheetType[]> {
+  const res = await request<{ types: SheetType[] }>("/sheet-types");
+  return res.types;
+}
+
+export type PdfPagePreview = {
+  index: number;       // 0-based
+  jpeg_b64: string;    // base64 без data:-префикса
+  width: number;
+  height: number;
+};
+
+export type PdfRenderPagesResponse = {
+  pages: PdfPagePreview[];
+  truncated: boolean;
+};
+
+export async function renderPdfPages(
+  file: File,
+  dpi: number = 110,
+): Promise<PdfRenderPagesResponse> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("dpi", String(dpi));
+  const res = await fetch(`${ENGINE_URL}/pdf/render-pages`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  return res.json() as Promise<PdfRenderPagesResponse>;
+}
+
+export type SheetVizMode = "A" | "B" | "C";
+
+export type VisualizeSheetRequest = {
+  sheet_type: string;
+  quality?: "low" | "medium" | "high";
+  hint?: string;
+  mode?: SheetVizMode;
+  page_jpeg_b64?: string;
+};
+
+export type VisualizeSheetResult = {
+  blob: Blob;
+  modelUsed: string | null;
+  sheetType: string | null;
+  sheetLabel: string | null;
+  sheetMode: string | null;
+  sheetContext: string | null;
+};
+
+export async function visualizeSheet(
+  req: VisualizeSheetRequest,
+): Promise<VisualizeSheetResult> {
+  const res = await fetch(`${ENGINE_URL}/visualize/sheet`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  return {
+    blob: await res.blob(),
+    modelUsed: res.headers.get("X-Model-Used"),
+    sheetType: res.headers.get("X-Sheet-Type"),
+    sheetLabel: res.headers.get("X-Sheet-Label"),
+    sheetMode: res.headers.get("X-Sheet-Mode"),
+    sheetContext: res.headers.get("X-Sheet-Context"),
+  };
+}
+
+export type ClassifySheetResult = {
+  sheet_type: string;
+  confidence: "high" | "medium" | "low";
+};
+
+export async function classifyPdfPage(
+  pageJpegB64: string,
+): Promise<ClassifySheetResult> {
+  return request("/pdf/classify-page", {
+    method: "POST",
+    body: JSON.stringify({ page_jpeg_b64: pageJpegB64 }),
+  });
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;

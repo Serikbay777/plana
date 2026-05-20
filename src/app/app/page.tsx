@@ -7,7 +7,7 @@ import {
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, ArrowRight, Wand2, Loader2, ScanSearch, Compass, Ruler,
   Trees, Flame, DoorOpen, Network, Save, FolderOpen, Check,
-  LayoutGrid, List, History, ChevronDown, Plus,
+  LayoutGrid, List, History, ChevronDown, Plus, FileText,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { ValidationPanel } from "@/components/ValidationPanel";
@@ -46,6 +46,7 @@ import {
 import { getSession, signOut, type Session } from "@/lib/auth";
 import { createProject, updateProject, uploadAsset, getProject, createRun, listProjects, type GenerationRun, type Project as ProjectType } from "@/lib/projects";
 import HistoryPanel from "@/components/HistoryPanel";
+import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -53,7 +54,7 @@ import HistoryPanel from "@/components/HistoryPanel";
 
 type GenState = "idle" | "loading" | "ready" | "error";
 type CadExportKind = "dxf" | "ifc";
-type TopTab = "site" | "viz" | "ai_plans" | "placement";
+type TopTab = "site" | "viz" | "ai_plans" | "placement" | "pdf_viz";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
 
 // Tab 2/3 — AI картинки
@@ -229,6 +230,8 @@ export default function AppPage() {
   // Паркинг
   const [parkingBag, setParkingBag] = useState<ImageBag>(EMPTY_IMAGE_BAG);
   const [parkingLevel, setParkingLevel] = useState(1);
+  // PDF Визуализация (lift state up для exportFullReportPdf)
+  const [pdfVizResults, setPdfVizResults] = useState<PdfVizResult[]>([]);
   // Tab 5
   const [placementBag, setPlacementBag] = useState<PlacementBag>(EMPTY_PLACEMENT);
   const [placementSiteFile,     setPlacementSiteFile]     = useState<File | null>(null);
@@ -676,6 +679,7 @@ export default function AppPage() {
       exteriorUrl: vizExtBag.state === "ready" ? vizExtBag.imageUrl : null,
       floorplanFurnitureUrl: vizFloorBag.state === "ready" ? vizFloorBag.imageUrl : null,
       interiors: vizIntGallery.state === "ready" ? vizIntGallery.items : [],
+      pdfViz: pdfVizResults,
     });
   };
 
@@ -704,6 +708,10 @@ export default function AppPage() {
     } else if (run.tab === "site" && run.assets[0]) {
       setSiteBag({ state: "ready", imageUrl: run.assets[0].url, modelUsed: run.assets[0].model_used, enhancerUsed: null, errorMessage: null });
       setTab("site");
+    } else if (run.tab === "pdf_viz") {
+      // Полноценный restore PDF-альбома требовал бы хранить исходный PDF —
+      // в MVP просто переключаем таб; превью сохранённых ассетов остаётся в Истории.
+      setTab("pdf_viz");
     }
   }, []);
 
@@ -816,10 +824,10 @@ export default function AppPage() {
 
       <main
         className="flex-1 px-6 pb-6 pt-4 grid gap-4"
-        style={{ gridTemplateColumns: (tab === "placement" || tab === "site") ? "1fr" : "300px minmax(0, 1fr)" }}
+        style={{ gridTemplateColumns: (tab === "placement" || tab === "site" || tab === "pdf_viz") ? "1fr" : "300px minmax(0, 1fr)" }}
       >
         {/* LEFT — форма + панель валидации (скрыто на фото-табах) */}
-        {tab !== "placement" && tab !== "site" && (
+        {tab !== "placement" && tab !== "site" && tab !== "pdf_viz" && (
           <div className="flex flex-col gap-3 min-h-0">
             <PromptForm
               value={form}
@@ -924,6 +932,14 @@ export default function AppPage() {
               onSiteFile={(f) => { if (placementSitePreview) URL.revokeObjectURL(placementSitePreview); setPlacementSiteFile(f); setPlacementSitePreview(f ? URL.createObjectURL(f) : null); }}
               onBldFile={(f)  => { if (placementBldPreview)  URL.revokeObjectURL(placementBldPreview);  setPlacementBldFile(f);  setPlacementBldPreview(f  ? URL.createObjectURL(f)  : null); }}
               onGenerate={generatePlacement}
+            />
+          )}
+          {tab === "pdf_viz" && (
+            <PdfVizTab
+              onAutoSave={(pageIndex, asset) => {
+                autoSaveGeneration("pdf_viz", pageIndex, [asset], form);
+              }}
+              onResultsChange={setPdfVizResults}
             />
           )}
         </section>
@@ -1110,6 +1126,7 @@ function TabStrip({
     { key: "viz",       label: "Визуализации",         icon: <ImageIcon size={13} /> },
     { key: "site",      label: "Посадка на участок",  icon: <MapIcon size={13} /> },
     { key: "placement", label: "Размещение ЖК",        icon: <Building2 size={13} /> },
+    { key: "pdf_viz",   label: "PDF Визуализация",     icon: <FileText size={13} /> },
   ];
   return (
     <div className="px-6 pt-3 pb-1 border-b border-white/[0.04] flex items-center justify-between gap-3 flex-wrap">

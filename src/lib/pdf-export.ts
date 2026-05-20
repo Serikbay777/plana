@@ -105,6 +105,15 @@ export async function exportAiPlansPdf(
 // Полный отчёт по проекту (Этап 5 ТЗ — «Экспорт готового решения»)
 // ---------------------------------------------------------------------------
 
+export type PdfVizSheet = {
+  pageIndex: number;
+  sheetType: string;
+  sheetLabel: string;
+  mode: "A" | "B" | "C";
+  imageUrl: string;
+  modelUsed: string | null;
+};
+
 export type FullReportInput = {
   form: PromptFormState;
   gpzu?: GpzuExtraction | null;
@@ -114,6 +123,7 @@ export type FullReportInput = {
   exteriorUrl?: string | null;            // object URL или data URL
   floorplanFurnitureUrl?: string | null;
   interiors: InteriorGalleryItem[];       // base64 в `image_b64`
+  pdfViz?: PdfVizSheet[];                 // результаты PDF-Визуализации
   filename?: string;
 };
 
@@ -190,6 +200,27 @@ export async function exportFullReportPdf(opts: FullReportInput): Promise<void> 
     drawFooter(doc, PW, PH, PAD, FOOTER_H, [
       it.model_used && `Модель: ${it.model_used}`,
       it.enhancer_used && it.enhancer_used !== "fallback" && `Промпт: ${it.enhancer_used}`,
+    ]);
+  }
+
+  // ─── PDF Визуализация (страницы альбома, перерисованные AI) ──────────────
+  const pdfViz = (opts.pdfViz ?? [])
+    .slice()
+    .sort((a, b) => a.pageIndex - b.pageIndex);
+  for (let i = 0; i < pdfViz.length; i++) {
+    const s = pdfViz[i];
+    doc.addPage("a4", "landscape");
+    drawHeader(doc, PW, HEADER_H, PAD,
+      "PDF Визуализация",
+      `Стр. ${s.pageIndex + 1} · ${s.sheetLabel} · режим ${s.mode}`,
+      `${i + 1} / ${pdfViz.length}`,
+    );
+    const imgY = HEADER_H + 3;
+    const imgH = PH - HEADER_H - FOOTER_H - 6;
+    await drawImageInBox(doc, s.imageUrl, PAD, imgY, PW - PAD * 2, imgH);
+    drawFooter(doc, PW, PH, PAD, FOOTER_H, [
+      s.modelUsed && `Модель: ${s.modelUsed}`,
+      `Тип: ${s.sheetType}`,
     ]);
   }
 
