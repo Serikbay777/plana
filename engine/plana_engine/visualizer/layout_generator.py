@@ -124,28 +124,47 @@ def _apt_type_from_area(area_m2: float) -> str:
 # ── Параметрическая генерация планировки ──────────────────────────────────
 
 
+# Минимальная глубина для двухсторонней секции:
+# юг 4 + коридор 1.4 + север 4 + 2 несущие стены 0.8 ≈ 10.2.
+# С запасом на нормальные квартиры берём 12 м как переход в галерейный режим.
+_GALLERY_THRESHOLD_M = 12.0
+
+
 def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     """Сгенерировать планировку этажа — параметрически + GPT-4o для типов квартир.
 
     Структура здания (ядра, коридоры, границы секций) вычисляется детерминированно.
     GPT-4o используется для назначения типов квартир согласно заданному миксу
     и для структурированного вывода в виде LayoutFloor.
+
+    Два режима:
+      • секционный (depth ≥ 12 м) — квартиры с двух сторон коридора по центру
+      • галерейный (depth < 12 м) — коридор у северной стены, квартиры только
+        с южной стороны (лучшая инсоляция). Используется для общежитий,
+        апарт-отелей, узких корпусов социального жилья.
     """
     inner_w = max(6.0, inputs.site_width_m - 2 * inputs.setback_side_m)
     inner_d = max(6.0, inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m)
     n_sect  = max(1, inputs.sections)
     sect_w  = inner_w / n_sect
 
-    # Коридор по центру здания
-    corr_d = max(_CORR_MIN_D, round(inner_d * 0.12, 2))
-    corr_y = round((inner_d - corr_d) / 2, 3)
+    gallery_mode = inner_d < _GALLERY_THRESHOLD_M
 
-    # Глубина квартир с каждой стороны
-    apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
-    apt_d_n = max(4.0, round(inner_d - corr_y - corr_d - _BEAR_T, 3))
+    if gallery_mode:
+        # Коридор у северной стены, квартиры с юга
+        corr_d = max(_CORR_MIN_D, 1.4)
+        corr_y = round(inner_d - corr_d - _BEAR_T, 3)
+        apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+        apt_d_n = 0.0   # квартир с севера нет
+    else:
+        # Двухсторонняя секция: коридор по центру
+        corr_d = max(_CORR_MIN_D, round(inner_d * 0.12, 2))
+        corr_y = round((inner_d - corr_d) / 2, 3)
+        apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+        apt_d_n = max(4.0, round(inner_d - corr_y - corr_d - _BEAR_T, 3))
 
     # Целевой микс квартир
-    mix = _resolve_mix(inputs, n_sect, sect_w, apt_d_s, apt_d_n)
+    mix = _resolve_mix(inputs, n_sect, sect_w, apt_d_s, apt_d_n, sides=1 if gallery_mode else 2)
 
     sections: list[LayoutSection] = []
     apt_num = 1
@@ -160,21 +179,35 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
         apt_x1 = x0 + sect_w - wall_r
         usable_w = apt_x1 - apt_x0
 
-        # Ядро в центре секции
+        # Ядро в секции. В галерейном — у северной стены, прислонено к коридору.
+        # В секционном — по центру.
         core_cx = x0 + sect_w / 2
         core_x = round(core_cx - _CORE_W / 2, 3)
-        core_y = round((inner_d - _CORE_D) / 2, 3)
-        cores = _make_cores(core_x, core_y, inputs.lifts_passenger, inputs.lifts_freight)
+        if gallery_mode:
+            core_d = min(_CORE_D, corr_y)
+            core_y = round(corr_y - core_d, 3)
+        else:
+            core_d = _CORE_D
+            core_y = round((inner_d - core_d) / 2, 3)
+        cores = _make_cores(core_x, core_y, inputs.lifts_passenger, inputs.lifts_freight, core_d=core_d)
 
         # Количество квартир по фасаду
         n_apts = max(1, round(usable_w / 7.5))
         apt_w  = usable_w / n_apts
 
+        # Какие стороны застраиваем
+        if gallery_mode:
+            apt_sides: list[tuple[float, float]] = [
+                (round(_BEAR_T, 3), apt_d_s),   # только юг
+            ]
+        else:
+            apt_sides = [
+                (round(_BEAR_T, 3),         apt_d_s),   # юг
+                (round(corr_y + corr_d, 3), apt_d_n),   # север
+            ]
+
         apartments: list[LayoutApartment] = []
-        for side_y, apt_d in [
-            (round(_BEAR_T, 3),                          apt_d_s),   # юг
-            (round(corr_y + corr_d, 3),                  apt_d_n),   # север
-        ]:
+        for side_y, apt_d in apt_sides:
             for ai in range(n_apts):
                 ax = round(apt_x0 + ai * apt_w, 3)
                 aw = round(apt_w, 3)
@@ -211,22 +244,29 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
 # ── Вспомогательные функции ───────────────────────────────────────────────
 
 
-def _make_cores(core_x: float, core_y: float, n_pass: int, n_freight: int) -> list[LayoutCore]:
+def _make_cores(
+    core_x: float, core_y: float,
+    n_pass: int, n_freight: int,
+    *,
+    core_d: float = _CORE_D,
+) -> list[LayoutCore]:
     cores: list[LayoutCore] = []
     x = core_x
     lift_p_w = 1.5
     lift_f_w = 2.1
     stair_w  = 2.1
+    lift_d = min(1.5, core_d)
+    freight_d = min(lift_f_w, core_d)
 
     for _ in range(max(1, n_pass)):
-        cores.append(LayoutCore(kind="lift_passenger", x=round(x, 3), y=core_y, w=lift_p_w, d=1.5))
+        cores.append(LayoutCore(kind="lift_passenger", x=round(x, 3), y=core_y, w=lift_p_w, d=lift_d))
         x += lift_p_w
 
-    cores.append(LayoutCore(kind="stair", x=round(x, 3), y=core_y, w=stair_w, d=_CORE_D))
+    cores.append(LayoutCore(kind="stair", x=round(x, 3), y=core_y, w=stair_w, d=core_d))
     x += stair_w
 
     for _ in range(max(1, n_freight)):
-        cores.append(LayoutCore(kind="lift_freight", x=round(x, 3), y=core_y, w=lift_f_w, d=lift_f_w))
+        cores.append(LayoutCore(kind="lift_freight", x=round(x, 3), y=core_y, w=lift_f_w, d=freight_d))
         x += lift_f_w
 
     return cores
@@ -238,12 +278,22 @@ def _resolve_mix(
     sect_w: float,
     apt_d_s: float,
     apt_d_n: float,
+    *,
+    sides: int = 2,
 ) -> list[str]:
-    """Строит список типов квартир (ordered) исходя из процентного микса."""
+    """Строит список типов квартир (ordered) исходя из процентного микса.
+
+    ``sides`` = 2 для секционного, 1 для галерейного типа.
+    apt_d_s / apt_d_n зарезервированы для будущей логики «крупные квартиры
+    идут на более глубокую сторону» — сейчас неиспользуются, но сигнатура
+    сохранена для обратной совместимости.
+    """
+    del apt_d_s, apt_d_n   # currently unused — reserved for future weighting
+
     # Общее кол-во квартир (оценка)
     usable_w_per_sect = sect_w - _BEAR_T * 2
     n_per_side = max(1, round(usable_w_per_sect / 7.5))
-    total = n_sect * n_per_side * 2
+    total = n_sect * n_per_side * max(1, sides)
 
     pcts = {
         "studio": inputs.studio_pct,

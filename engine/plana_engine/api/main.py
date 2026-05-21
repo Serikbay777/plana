@@ -1722,6 +1722,10 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
 
     Возвращает (request, used_defaults) — список полей, для которых
     GPT не нашёл значение в ТЗ и мы подставили дефолт.
+
+    Дефолты подобраны так, чтобы дать жизнеспособное здание: 24×14 м
+    с отступами 3 м даёт внутренний контур 18×8 м — норм для секционного
+    дома средней этажности.
     """
     used: list[str] = []
 
@@ -1740,23 +1744,76 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
     if purpose_raw is None:
         used.append("purpose")
 
+    # Если GPT не дал процентного микса вообще — ставим разумный по умолчанию
+    # (25/40/25/10 = студии/1к/2к/3к). Если дал хотя бы одно — уважаем выбор.
+    mix_given = any(v is not None for v in (b.studio_pct, b.k1_pct, b.k2_pct, b.k3_pct))
+    if not mix_given:
+        used.extend(["studio_pct", "k1_pct", "k2_pct", "k3_pct"])
+        studio_pct, k1_pct, k2_pct, k3_pct = 25.0, 40.0, 25.0, 10.0
+    else:
+        studio_pct = b.studio_pct or 0.0
+        k1_pct     = b.k1_pct     or 0.0
+        k2_pct     = b.k2_pct     or 0.0
+        k3_pct     = b.k3_pct     or 0.0
+
     return VisualizeFromInputsRequest(
-        site_width_m=    _or(b.site_width_m,    30.0, "site_width_m"),
-        site_depth_m=    _or(b.site_depth_m,    16.0, "site_depth_m"),
-        setback_front_m= _or(b.setback_front_m, 5.0,  "setback_front_m"),
-        setback_side_m=  _or(b.setback_side_m,  5.0,  "setback_side_m"),
-        setback_rear_m=  _or(b.setback_rear_m,  5.0,  "setback_rear_m"),
+        site_width_m=    _or(b.site_width_m,    24.0, "site_width_m"),
+        site_depth_m=    _or(b.site_depth_m,    14.0, "site_depth_m"),
+        setback_front_m= _or(b.setback_front_m, 3.0,  "setback_front_m"),
+        setback_side_m=  _or(b.setback_side_m,  3.0,  "setback_side_m"),
+        setback_rear_m=  _or(b.setback_rear_m,  3.0,  "setback_rear_m"),
         floors=          _or(b.floors,          4,    "floors"),
         purpose=         purpose,
         sections=        _or(b.sections,        1,    "sections"),
-        studio_pct=      _or(b.studio_pct,      0.0,  "studio_pct"),
-        k1_pct=          _or(b.k1_pct,          25.0, "k1_pct"),
-        k2_pct=          _or(b.k2_pct,          50.0, "k2_pct"),
-        k3_pct=          _or(b.k3_pct,          25.0, "k3_pct"),
+        studio_pct=      studio_pct,
+        k1_pct=          k1_pct,
+        k2_pct=          k2_pct,
+        k3_pct=          k3_pct,
         lifts_passenger= _or(b.lifts_passenger, 1,    "lifts_passenger"),
         lifts_freight=   _or(b.lifts_freight,   0,    "lifts_freight"),
         max_height_m=    _or(b.max_height_m,    30.0, "max_height_m"),
     ), used
+
+
+def _validate_layout_feasibility(req: VisualizeFromInputsRequest) -> None:
+    """Sanity-check: достаточно ли места внутри отступов для нормального плана.
+
+    Два режима:
+      depth >= 12 м → секционный (квартиры с двух сторон коридора)
+      depth >= 7 м  → галерейный (квартиры только с одной стороны)
+      depth < 7 м   → 400, слишком узко даже для галереи.
+
+    Алгоритм сам выбирает режим по глубине; здесь только грубая защита.
+    """
+    inner_w = req.site_width_m - 2 * req.setback_side_m
+    inner_d = req.site_depth_m - req.setback_front_m - req.setback_rear_m
+
+    if inner_w < 8:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Внутренняя ширина {inner_w:.1f} м < 8 м — слишком тесно "
+                f"даже для одной квартиры. Увеличь site_width_m или уменьши "
+                f"setback_side_m."
+            ),
+        )
+    if inner_d < 7:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Внутренняя глубина {inner_d:.1f} м < 7 м — недостаточно даже "
+                f"для галерейного корпуса (коридор 1.4 + квартиры 4.0 + стены 0.8). "
+                f"Увеличь site_depth_m или уменьши setback_front_m + setback_rear_m."
+            ),
+        )
+    if inner_w * inner_d < 70:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Полезная площадь этажа {inner_w * inner_d:.0f} м² < 70 м² — "
+                f"мало для жилой секции. Уточни габариты здания."
+            ),
+        )
 
 
 @app.post("/generate/layout-from-brief", response_model=BriefLayoutResponse)
@@ -1779,6 +1836,10 @@ def generate_layout_from_brief_endpoint(req: BriefRequest) -> BriefLayoutRespons
         raise HTTPException(status_code=502, detail=str(e))
 
     inputs_req, used_defaults = _request_from_brief_inputs(derived)
+
+    # Sanity-check: не пускаем явно вырожденную геометрию в генератор
+    _validate_layout_feasibility(inputs_req)
+
     marketing_inputs = _inputs_from_req(inputs_req)
 
     try:
