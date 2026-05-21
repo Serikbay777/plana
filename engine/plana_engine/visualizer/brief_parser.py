@@ -46,6 +46,12 @@ class BriefDerivedInputs:
     setback_rear_m:  float | None
     floors:          int | None
     purpose:         str | None       # residential / commercial / mixed_use / hotel
+    # Тип здания: single_family (частный дом / коттедж) vs multi_family
+    # (секционная многоквартирная застройка) vs commercial / mixed.
+    # Влияет на генерацию: для single_family НЕ создаются ядра (лифт/
+    # лестница подъезда) и нет общего коридора секции — одна квартира на
+    # весь этаж.
+    building_type:   str | None       # single_family / multi_family / commercial / mixed
     sections:        int | None
     studio_pct:      float | None
     k1_pct:          float | None
@@ -114,15 +120,35 @@ CRITICAL RULES — read carefully:
 
 6. purpose: "residential" by default.
 
-7. lifts_passenger / lifts_freight: integers. Default 1 / 0.
+7. building_type — ВАЖНО, определяет всю типологию плана:
+   • "single_family" — частный дом / коттедж / индивидуальное жильё.
+     Маркеры: «частный дом», «коттедж», «дом для семьи», «ИЖС»,
+     «загородный дом», «дача», «1-2 этажный дом», «таунхаус на одну
+     семью», небольшая площадь (до ~300 м²) + ≤2-3 этажа.
+     БЕЗ лифтов и БЕЗ межквартирной лестницы — это одна квартира
+     на этаже.
+   • "multi_family" — секционная многоквартирная застройка
+     (подъезды, лифты, КВ-1, КВ-2, …). Маркеры: «жилой дом N
+     этажей», «секция», «подъезд», «N лифтов», «микс квартир»,
+     «многоквартирный», ≥3 этажей с микс-квартирами.
+   • "commercial" — офис / ритейл / общественное здание.
+   • "mixed" — mixed-use (первые этажи коммерция + верхние жильё).
 
-8. max_height_m: number in meters. Default 30.
+   Default: если явных маркеров нет, но floors ≤2 И площадь
+   ≤300 м² И в ТЗ слова «дом», «семейный», «коттедж» — это
+   single_family. Иначе multi_family.
 
-9. NEVER guess wildly. If the brief literally says nothing about a value
-   AND no reasonable derivation is possible — return null. The backend
-   has its own sane defaults.
+8. lifts_passenger / lifts_freight: integers. Default 1 / 0.
+   Для single_family ОБЯ́ЗАТЕЛЬНО ставь 0 / 0 (в частном доме
+   нет лифтов).
 
-10. notes: brief 1-2 sentence summary in Russian of what you did and
+9. max_height_m: number in meters. Default 30.
+
+10. NEVER guess wildly. If the brief literally says nothing about a value
+    AND no reasonable derivation is possible — return null. The backend
+    has its own sane defaults.
+
+11. notes: brief 1-2 sentence summary in Russian of what you did and
     what assumptions you had to make.
 
 For mix percentages: return numbers 0..100 (e.g. 30, not 0.30).
@@ -164,6 +190,10 @@ _SCHEMA: dict[str, Any] = {
                 "type": ["string", "null"],
                 "enum": ["residential", "commercial", "mixed_use", "hotel", None],
             },
+            "building_type":    {
+                "type": ["string", "null"],
+                "enum": ["single_family", "multi_family", "commercial", "mixed", None],
+            },
             "sections":         {"type": ["integer", "null"]},
             "studio_pct":       {"type": ["number", "null"]},
             "k1_pct":           {"type": ["number", "null"]},
@@ -178,7 +208,7 @@ _SCHEMA: dict[str, Any] = {
             "site_width_m", "site_depth_m",
             "building_width_m", "building_depth_m",
             "setback_front_m", "setback_side_m", "setback_rear_m",
-            "floors", "purpose", "sections",
+            "floors", "purpose", "building_type", "sections",
             "studio_pct", "k1_pct", "k2_pct", "k3_pct",
             "lifts_passenger", "lifts_freight",
             "max_height_m", "notes",
@@ -231,6 +261,7 @@ def parse_brief(brief: str, *, model: str = "gpt-4.1") -> BriefDerivedInputs:
         setback_rear_m=  data.get("setback_rear_m"),
         floors=          data.get("floors"),
         purpose=         data.get("purpose"),
+        building_type=   data.get("building_type"),
         sections=        data.get("sections"),
         studio_pct=      data.get("studio_pct"),
         k1_pct=          data.get("k1_pct"),

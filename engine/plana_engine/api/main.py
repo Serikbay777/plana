@@ -155,6 +155,9 @@ class VisualizeFromInputsRequest(BaseModel):
     # объект
     floors: int = 1
     purpose: BuildingPurpose = BuildingPurpose.RESIDENTIAL
+    # Типология здания: single_family (без подъезда/лифтов/коридора) /
+    # multi_family (секционка, default — старое поведение) / commercial / mixed.
+    building_type: str = "multi_family"
     # квартирография
     studio_pct: float = 0.0
     k1_pct: float = 0.0
@@ -198,6 +201,7 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         setback_rear_m=req.setback_rear_m,
         floors=req.floors,
         purpose=req.purpose.value,
+        building_type=req.building_type,
         studio_pct=req.studio_pct,
         k1_pct=req.k1_pct,
         k2_pct=req.k2_pct,
@@ -1801,6 +1805,22 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
     if purpose_raw is None:
         used.append("purpose")
 
+    # building_type: GPT обязан вернуть, но добавляем sane fallback.
+    bt_raw = getattr(b, "building_type", None)
+    if bt_raw in ("single_family", "multi_family", "commercial", "mixed"):
+        building_type = bt_raw
+    else:
+        # Эвристика: ≤2 этажа + площадь застройки < 300 м² → частный дом
+        floors_v = b.floors or 4
+        bw = b.building_width_m
+        bd = b.building_depth_m
+        area = (bw or 0) * (bd or 0)
+        if floors_v <= 2 and 0 < area < 300:
+            building_type = "single_family"
+        else:
+            building_type = "multi_family"
+        used.append("building_type")
+
     # Если GPT не дал процентного микса вообще — ставим разумный по умолчанию
     # (25/40/25/10 = студии/1к/2к/3к). Если дал хотя бы одно — уважаем выбор.
     mix_given = any(v is not None for v in (b.studio_pct, b.k1_pct, b.k2_pct, b.k3_pct))
@@ -1831,6 +1851,17 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
         site_w = _or(b.site_width_m, 24.0 + 2 * setback_side,                 "site_width_m")
         site_d = _or(b.site_depth_m, 14.0 + setback_front + setback_rear,     "site_depth_m")
 
+    # Для single_family жёстко зануляем подъездные параметры — даже если
+    # GPT ошибся и поставил >0 лифтов или >1 секции.
+    if building_type == "single_family":
+        lifts_p = 0
+        lifts_f = 0
+        n_sections = 1
+    else:
+        lifts_p = _or(b.lifts_passenger, 1, "lifts_passenger")
+        lifts_f = _or(b.lifts_freight,   0, "lifts_freight")
+        n_sections = _or(b.sections,     1, "sections")
+
     return VisualizeFromInputsRequest(
         site_width_m=    site_w,
         site_depth_m=    site_d,
@@ -1839,13 +1870,14 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
         setback_rear_m=  setback_rear,
         floors=          _or(b.floors,          4,    "floors"),
         purpose=         purpose,
-        sections=        _or(b.sections,        1,    "sections"),
+        building_type=   building_type,
+        sections=        n_sections,
         studio_pct=      studio_pct,
         k1_pct=          k1_pct,
         k2_pct=          k2_pct,
         k3_pct=          k3_pct,
-        lifts_passenger= _or(b.lifts_passenger, 1,    "lifts_passenger"),
-        lifts_freight=   _or(b.lifts_freight,   0,    "lifts_freight"),
+        lifts_passenger= lifts_p,
+        lifts_freight=   lifts_f,
         max_height_m=    _or(b.max_height_m,    30.0, "max_height_m"),
     ), used
 

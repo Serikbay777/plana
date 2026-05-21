@@ -1160,9 +1160,29 @@ const ROOM_RU: Record<RoomReqKind, [string, string]> = {
   storage:  ["кладовка", "кладовок"],
 };
 
+/** Маппинг ProjectType wizard'а → building_type для backend-парсера. */
+const PROJECT_TYPE_TO_BUILDING_TYPE: Record<ProjectType, string> = {
+  residential_sfh:   "single_family",
+  residential_multi: "multi_family",
+  commercial:        "commercial",
+  mixed:             "mixed",
+};
+
 /** Собрать textual brief из wizard-параметров для existing brief-endpoint. */
 export function briefFromWizard(w: WizardInputs): string {
   const parts: string[] = [];
+
+  // ⚡ Явный hint для парсера — иначе GPT угадает тип и backend может
+  // вставить ядра подъезда в одноквартирном доме.
+  const bt = PROJECT_TYPE_TO_BUILDING_TYPE[w.projectType];
+  parts.push(`Тип здания: ${bt}.`);
+  if (bt === "single_family") {
+    parts.push(
+      "Это ЧАСТНЫЙ ДОМ / коттедж — БЕЗ лифтов, БЕЗ межквартирной лестницы," +
+      " БЕЗ общего коридора подъезда. Одна семья на весь этаж.",
+    );
+  }
+
   parts.push(`${PROJECT_TYPE_RU[w.projectType]}. ${w.floors}-этажный.`);
   parts.push(`Габариты ${w.buildingWidth.toFixed(1)}×${w.buildingDepth.toFixed(1)} м.`);
   parts.push(`Общая площадь ${w.totalAreaM2.toFixed(0)} м².`);

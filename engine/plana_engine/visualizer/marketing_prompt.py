@@ -31,6 +31,12 @@ class MarketingInputs:
 
     floors: int = 1
     purpose: str = "residential"
+    # Тип здания. Влияет на типологию плана в layout_generator:
+    # • "single_family" — частный дом / коттедж, БЕЗ ядер и БЕЗ
+    #   коридора подъезда, одна «квартира» на весь этаж.
+    # • "multi_family" — секционная застройка (default — старое
+    #   поведение).
+    building_type: str = "multi_family"
 
     studio_pct: float = 0.0
     k1_pct: float = 0.0

@@ -133,6 +133,64 @@ def _apt_type_from_area(area_m2: float) -> str:
 _GALLERY_THRESHOLD_M = 12.0
 
 
+def _generate_single_family_floor(inner_w: float, inner_d: float) -> LayoutFloor:
+    """Layout для частного дома — одна квартира на весь этаж.
+
+    Без ядер (нет лифта/лестницы подъезда — частный дом, лестница
+    внутри квартиры моделируется отдельно при многоэтажности),
+    без коридора секции, без выделения «КВ.1». Раскладка комнат
+    подбирается по площади:
+       • < 60 м²  → studio
+       • 60-100   → 1k
+       • 100-180  → 2k
+       • > 180    → 3k (3 спальни + 2 с/у)
+    """
+    area = inner_w * inner_d
+    if area < 60:
+        apt_type = "studio"
+    elif area < 100:
+        apt_type = "1k"
+    elif area < 180:
+        apt_type = "2k"
+    else:
+        apt_type = "3k"
+
+    rooms_raw = _ROOM_BUILDERS[apt_type](inner_w, inner_d)
+    rooms = [LayoutRoom(**r) for r in rooms_raw]
+
+    # Окна по периметру (юг — главный фасад), вход с юга.
+    _add_apertures(rooms, inner_d, exterior_side="S", interior_side="N")
+    for room in rooms:
+        _add_furniture(room, exterior_side="S")
+
+    apartment = LayoutApartment(
+        type_code=apt_type,
+        number=1,
+        x=0.0, y=0.0,
+        w=round(inner_w, 3),
+        d=round(inner_d, 3),
+        rooms=rooms,
+    )
+
+    # «Фейковая» секция-обёртка: без коридора, без ядер. Существующий
+    # фронт всегда ожидает массив sections.
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(inner_w, 3),
+        # Коридор «за пределами» этажа — фронт ничего не нарисует
+        corridor_y=round(inner_d + 1.0, 3),
+        corridor_d=0.0,
+        cores=[],            # ⚡ Главная фишка: пустой список → никакого ЛИФТА/ЛЕСТНИЦЫ
+        apartments=[apartment],
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+    )
+
+
 def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     """Сгенерировать планировку этажа — параметрически + GPT-4o для типов квартир.
 
@@ -140,14 +198,24 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     GPT-4o используется для назначения типов квартир согласно заданному миксу
     и для структурированного вывода в виде LayoutFloor.
 
-    Два режима:
-      • секционный (depth ≥ 12 м) — квартиры с двух сторон коридора по центру
-      • галерейный (depth < 12 м) — коридор у северной стены, квартиры только
-        с южной стороны (лучшая инсоляция). Используется для общежитий,
-        апарт-отелей, узких корпусов социального жилья.
+    Три режима:
+      • single_family (inputs.building_type == "single_family") — частный
+        дом / коттедж. Без ядер, без коридора подъезда, одна «квартира»
+        на весь этаж с типовой раскладкой комнат.
+      • секционный (depth ≥ 12 м, multi_family) — квартиры с двух сторон
+        коридора по центру.
+      • галерейный (depth < 12 м, multi_family) — коридор у северной
+        стены, квартиры только с южной стороны (лучшая инсоляция).
+        Используется для общежитий, апарт-отелей, узких корпусов
+        социального жилья.
     """
     inner_w = max(6.0, inputs.site_width_m - 2 * inputs.setback_side_m)
     inner_d = max(6.0, inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m)
+
+    # ── Single-family режим: одна квартира на этаж, без подъезда ──
+    if getattr(inputs, "building_type", "multi_family") == "single_family":
+        return _generate_single_family_floor(inner_w, inner_d)
+
     n_sect  = max(1, inputs.sections)
     sect_w  = inner_w / n_sect
 
