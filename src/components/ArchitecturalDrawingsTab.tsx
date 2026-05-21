@@ -42,6 +42,10 @@ import { SnapControls } from "@/components/editor/SnapControls";
 import { HotkeysHelp } from "@/components/editor/HotkeysHelp";
 import { VariantsGrid, type VariantItem } from "@/components/editor/VariantsGrid";
 import { NewProjectWizard } from "@/components/wizard/NewProjectWizard";
+import { ExportModal } from "@/components/export/ExportModal";
+import { downloadProjectJson } from "@/lib/export/toJson";
+import { downloadSvgAsPng } from "@/lib/export/toPng";
+import { downloadSvgAsPdf } from "@/lib/export/toPdf";
 import { matchHotkey } from "@/lib/hotkeys";
 
 type Status = "idle" | "loading" | "ready" | "error";
@@ -301,6 +305,39 @@ export function ArchitecturalDrawingsTab({
     setVariantSelectedIdx(idx >= 0 ? idx : null);
   };
 
+  // ── Export (Sprint 6) ───────────────────────────────────────────────
+  const [exportOpen, setExportOpen] = useState(false);
+  const getMainSvg = (): SVGSVGElement => {
+    const el = document.querySelector<SVGSVGElement>("[data-plana-canvas=\"main\"]");
+    if (!el) throw new Error("Не нашли активный canvas с планом");
+    return el;
+  };
+  const handleExportPdf = async () => {
+    const svg = getMainSvg();
+    const name = project?.name || "Проект";
+    const floorLabel = project?.floors[project.activeFloorIdx]?.label;
+    await downloadSvgAsPdf(svg, `${name}.pdf`, { projectName: name, floorLabel });
+  };
+  const handleExportPng = async () => {
+    const svg = getMainSvg();
+    const name = project?.name || "plan";
+    await downloadSvgAsPng(svg, `${name}.png`);
+  };
+  const handleExportJson = async () => {
+    if (!project) throw new Error("Нет активного проекта");
+    downloadProjectJson(project, `${project.name || "project"}.plana.json`);
+  };
+  const handleExportDxfModal = async () => {
+    if (!result) throw new Error("Сначала сгенерируй план");
+    setExportBusy("dxf");
+    try {
+      const { blob, filename } = await exportFloorplanDxf(result.inputs);
+      downloadBlob(blob, filename);
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
   // ── Wizard (Sprint 4) ───────────────────────────────────────────────
   const [wizardOpen, setWizardOpen] = useState(false);
   const handleWizardComplete = async (inputs: WizardInputs) => {
@@ -460,6 +497,14 @@ export function ArchitecturalDrawingsTab({
                 )}
               </>
             )}
+            <button
+              onClick={() => setExportOpen(true)}
+              disabled={!project || exportBusy !== null}
+              title="Экспорт: PDF / DXF / PNG / JSON / Share"
+              className="h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-emerald-400/30 text-emerald-200/90 hover:bg-emerald-500/15 transition disabled:opacity-40"
+            >
+              <Download size={11} /> Экспорт
+            </button>
             <button
               onClick={handleExportDxf}
               disabled={exportBusy !== null}
@@ -807,6 +852,14 @@ export function ArchitecturalDrawingsTab({
         onClose={() => setWizardOpen(false)}
         onComplete={handleWizardComplete}
       />
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        onPdf={handleExportPdf}
+        onPng={handleExportPng}
+        onJson={handleExportJson}
+        onDxf={handleExportDxfModal}
+      />
     </>
   );
 }
@@ -1075,6 +1128,7 @@ export function FloorPlanSvg({
     >
     <svg
       ref={svgRef}
+      data-plana-canvas={editMode || !!onMoveRoom ? "main" : "thumb"}
       viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
       preserveAspectRatio="xMidYMid meet"
       style={{
