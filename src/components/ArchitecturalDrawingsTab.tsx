@@ -299,23 +299,45 @@ export function ArchitecturalDrawingsTab({
 
 // ---------------------------------------------------------------------------
 // FloorPlanSvg — рендерер LayoutFloor в SVG
+//
+// Стиль вдохновлён maket.ai: тяжёлые чёрные внешние стены, бежевый фон комнат
+// без цветовых различий, толстые перегородки между комнатами (визуально
+// симулируют реальную толщину стен), UPPERCASE-подписи. Технический эстетик.
 // ---------------------------------------------------------------------------
 
-const ROOM_COLOR: Record<string, string> = {
-  living:   "#fef3c7",   // светло-жёлтый (бежевый)
-  bedroom:  "#dbeafe",   // светло-голубой
-  kitchen:  "#fed7aa",   // тёплый оранжевый
-  bathroom: "#e9d5ff",   // лавандовый
-  toilet:   "#e9d5ff",
-  hallway:  "#e5e7eb",   // светло-серый
-  loggia:   "#d1fae5",   // мятный
-  storage:  "#d4d4d8",   // серый
+// Бежевая палитра (тон листа архитектурного чертежа)
+const CANVAS_BG    = "#FAF5E6";   // фон всего SVG
+const ROOM_FILL    = "#F0E8D2";   // заливка комнат
+const CORRIDOR_FILL = "#E8DFC4";  // коридор — чуть темнее
+const CORE_FILL    = "#222426";   // ядра (лифты, лестница) — почти чёрные
+const CORE_TEXT    = "#FAF5E6";   // надписи на ядрах
+const WALL_COLOR   = "#1a1a1a";   // основной цвет стен
+const LABEL_COLOR  = "#2d2d2d";   // подписи комнат
+const AREA_COLOR   = "#7a6a4a";   // подписи площадей
+
+// Толщины стен в метрах SVG-единиц (соответствует реальной толщине).
+const WALL_EXTERIOR = 0.35;   // внешние стены здания
+const WALL_PARTITION = 0.15;  // внутренние перегородки между комнатами
+const WALL_CORE     = 0.10;   // ядра — тонкий контур (т.к. заливка тёмная)
+const WALL_SECTION  = 0.25;   // межсекционная противопожарная стена
+
+const CORE_LABEL_RU: Record<string, string> = {
+  lift_passenger: "ЛИФТ",
+  lift_freight:   "ГРУЗ",
+  stair:          "ЛЕСТН.",
 };
 
-const CORE_LABEL: Record<string, string> = {
-  lift_passenger: "ЛП",
-  lift_freight:   "ЛГ",
-  stair:          "ЛК",
+// Перевод kind на UPPERCASE-русский для подписи. Если в name_ru уже стоит
+// конкретное название («Спальня 1») — используем его, просто в UPPERCASE.
+const ROOM_LABEL_FALLBACK_RU: Record<string, string> = {
+  living:   "ГОСТИНАЯ",
+  bedroom:  "СПАЛЬНЯ",
+  kitchen:  "КУХНЯ",
+  bathroom: "С/У",
+  toilet:   "С/У",
+  hallway:  "ПРИХОЖАЯ",
+  loggia:   "ЛОДЖИЯ",
+  storage:  "КЛАДОВАЯ",
 };
 
 
@@ -328,174 +350,262 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
   const viewBoxH = D + PAD * 2;
 
   // Архитектурные координаты Y: 0 внизу, растут вверх (юг → север).
-  // SVG Y: 0 сверху, растёт вниз. Чтобы не отражать текст глобальным flip'ом —
-  // инвертируем Y-координаты на месте: rectY = D - archY - height, textY = D - archY.
+  // SVG Y: 0 сверху, растёт вниз. Инвертируем на месте.
   const ry = (archY: number, h: number = 0) => D - archY - h;
 
-  // Сделаем шрифты больше читаемыми (в метровых единицах SVG)
   const fontFamily = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+  // Уникальный id для точечной сетки на фоне
+  const gridId = `dot-grid-${Math.random().toString(36).slice(2, 8)}`;
 
   return (
     <svg
       viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
       preserveAspectRatio="xMidYMid meet"
       className="w-full h-full"
-      style={{ background: "#fafafa" }}
+      style={{ background: CANVAS_BG }}
       fontFamily={fontFamily}
     >
+      {/* Точечная сетка на фоне — как в maket.ai */}
+      <defs>
+        <pattern id={gridId} width={1} height={1} patternUnits="userSpaceOnUse">
+          <circle cx={0.5} cy={0.5} r={0.025} fill="#b8a878" opacity={0.5} />
+        </pattern>
+      </defs>
+      <rect x={0} y={0} width={viewBoxW} height={viewBoxH} fill={`url(#${gridId})`} />
+
       <g transform={`translate(${PAD}, ${PAD})`}>
-        {/* Внешний контур здания */}
-        <rect
-          x={0} y={0} width={W} height={D}
-          fill="#ffffff" stroke="#1f2937" strokeWidth={0.18}
-        />
+        {/* ── Заливка всех комнат и коридора единым бежевым ────────────── */}
+        {/* Сначала рисуем заливку всего внутреннего пространства,
+            потом сверху — стены толстыми чёрными линиями. */}
 
-        {/* Секции */}
         {layout.sections.map((section) => (
-          <g key={section.index}>
-            {/* Граница секции (если их > 1) */}
-            {layout.sections.length > 1 && section.index > 0 && (
-              <line
-                x1={section.x_start} y1={0}
-                x2={section.x_start} y2={D}
-                stroke="#374151" strokeWidth={0.12} strokeDasharray="0.2 0.15"
-              />
-            )}
-
-            {/* Коридор */}
+          <g key={`fill-${section.index}`}>
+            {/* Коридор — чуть темнее общего бежевого */}
             <rect
               x={section.x_start}
               y={ry(section.corridor_y, section.corridor_d)}
               width={section.width} height={section.corridor_d}
-              fill="#f3f4f6" stroke="#9ca3af" strokeWidth={0.04}
+              fill={CORRIDOR_FILL}
             />
 
-            {/* Ядра (лифты/лестница) */}
-            {section.cores.map((core, ci) => (
-              <g key={ci}>
-                <rect
-                  x={core.x} y={ry(core.y, core.d)}
-                  width={core.w} height={core.d}
-                  fill="#374151" stroke="#1f2937" strokeWidth={0.05}
-                />
-                <text
-                  x={core.x + core.w / 2}
-                  y={ry(core.y + core.d / 2)}
-                  textAnchor="middle" dominantBaseline="central"
-                  fill="#f9fafb"
-                  fontSize={Math.min(0.55, core.w * 0.28, core.d * 0.22)}
-                  fontWeight={600}
-                >
-                  {CORE_LABEL[core.kind] ?? "?"}
-                </text>
-              </g>
-            ))}
-
-            {/* Квартиры → комнаты */}
+            {/* Квартиры — заливаем по комнатам единым тоном */}
             {section.apartments.map((apt) => (
-              <g key={apt.number}>
-                {/* Контур квартиры */}
-                <rect
-                  x={apt.x} y={ry(apt.y, apt.d)}
-                  width={apt.w} height={apt.d}
-                  fill="none" stroke="#6b7280" strokeWidth={0.06}
-                />
-
-                {/* Комнаты внутри */}
+              <g key={`apt-fill-${apt.number}`}>
                 {apt.rooms.map((room, rIdx) => {
                   const rx = apt.x + room.x;
                   const archY = apt.y + room.y;
-                  const fontSize = Math.min(0.36, room.w * 0.08, room.d * 0.14);
-                  const areaFontSize = Math.min(0.28, room.w * 0.06, room.d * 0.11);
+                  return (
+                    <rect
+                      key={rIdx}
+                      x={rx} y={ry(archY, room.d)}
+                      width={room.w} height={room.d}
+                      fill={ROOM_FILL}
+                    />
+                  );
+                })}
+              </g>
+            ))}
+          </g>
+        ))}
+
+        {/* ── Внутренние перегородки между комнатами ───────────────────── */}
+        {/* Рисуем серединные линии внутри здания — это даст «толщину» стен
+            визуально, без фактического вычитания их из геометрии комнат. */}
+        {layout.sections.map((section) => (
+          <g key={`partitions-${section.index}`} stroke={WALL_COLOR} strokeLinecap="square">
+            {/* Перегородки между комнатами внутри квартир */}
+            {section.apartments.map((apt) => (
+              <g key={`apt-walls-${apt.number}`}>
+                {apt.rooms.map((room, rIdx) => {
+                  const rx = apt.x + room.x;
+                  const archY = apt.y + room.y;
+                  return (
+                    <rect
+                      key={rIdx}
+                      x={rx} y={ry(archY, room.d)}
+                      width={room.w} height={room.d}
+                      fill="none"
+                      stroke={WALL_COLOR}
+                      strokeWidth={WALL_PARTITION}
+                    />
+                  );
+                })}
+                {/* Контур квартиры — чуть толще для разделения соседних */}
+                <rect
+                  x={apt.x} y={ry(apt.y, apt.d)}
+                  width={apt.w} height={apt.d}
+                  fill="none"
+                  stroke={WALL_COLOR}
+                  strokeWidth={WALL_PARTITION + 0.05}
+                />
+              </g>
+            ))}
+
+            {/* Контур коридора */}
+            <rect
+              x={section.x_start}
+              y={ry(section.corridor_y, section.corridor_d)}
+              width={section.width} height={section.corridor_d}
+              fill="none"
+              stroke={WALL_COLOR}
+              strokeWidth={WALL_PARTITION}
+            />
+
+            {/* Межсекционная стена (если секций > 1) */}
+            {layout.sections.length > 1 && section.index > 0 && (
+              <line
+                x1={section.x_start} y1={0}
+                x2={section.x_start} y2={D}
+                stroke={WALL_COLOR} strokeWidth={WALL_SECTION}
+              />
+            )}
+          </g>
+        ))}
+
+        {/* ── Ядра: лифты и лестницы ──────────────────────────────────── */}
+        {layout.sections.map((section) => (
+          <g key={`cores-${section.index}`}>
+            {section.cores.map((core, ci) => {
+              const labelSize = Math.min(0.42, core.w * 0.22, core.d * 0.18);
+              return (
+                <g key={ci}>
+                  <rect
+                    x={core.x} y={ry(core.y, core.d)}
+                    width={core.w} height={core.d}
+                    fill={CORE_FILL}
+                    stroke={WALL_COLOR}
+                    strokeWidth={WALL_CORE}
+                  />
+                  <text
+                    x={core.x + core.w / 2}
+                    y={ry(core.y + core.d / 2)}
+                    textAnchor="middle" dominantBaseline="central"
+                    fill={CORE_TEXT}
+                    fontSize={labelSize}
+                    fontWeight={700}
+                    letterSpacing={0.02}
+                  >
+                    {CORE_LABEL_RU[core.kind] ?? "?"}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+        ))}
+
+        {/* ── Внешний контур здания — самый толстый ───────────────────── */}
+        <rect
+          x={0} y={0} width={W} height={D}
+          fill="none"
+          stroke={WALL_COLOR}
+          strokeWidth={WALL_EXTERIOR}
+          strokeLinejoin="miter"
+        />
+
+        {/* ── Подписи комнат и номера квартир ─────────────────────────── */}
+        {layout.sections.map((section) => (
+          <g key={`labels-${section.index}`}>
+            {section.apartments.map((apt) => (
+              <g key={`apt-label-${apt.number}`}>
+                {apt.rooms.map((room, rIdx) => {
+                  if (room.w < 1.6 || room.d < 1.0) return null;
+                  const rx = apt.x + room.x;
+                  const archY = apt.y + room.y;
                   const cx = rx + room.w / 2;
+                  // Подпись = название из JSON (если осмысленное) или fallback по kind
+                  const label = upperCaseRoom(room.name_ru, room.kind);
+                  const labelSize = Math.min(0.32, room.w * 0.075, room.d * 0.13);
+                  const areaSize = Math.min(0.26, room.w * 0.058, room.d * 0.10);
                   return (
                     <g key={rIdx}>
-                      <rect
-                        x={rx} y={ry(archY, room.d)}
-                        width={room.w} height={room.d}
-                        fill={ROOM_COLOR[room.kind] ?? "#f3f4f6"}
-                        stroke="#9ca3af" strokeWidth={0.025}
-                      />
-                      {/* Подпись комнаты — имя + площадь снизу */}
-                      {room.w > 1.6 && room.d > 1.0 && (
-                        <>
-                          <text
-                            x={cx}
-                            y={ry(archY + room.d / 2 + 0.15)}
-                            textAnchor="middle" dominantBaseline="central"
-                            fill="#1f2937"
-                            fontSize={fontSize}
-                            fontWeight={500}
-                          >
-                            {room.name_ru}
-                          </text>
-                          <text
-                            x={cx}
-                            y={ry(archY + room.d / 2 - 0.3)}
-                            textAnchor="middle" dominantBaseline="central"
-                            fill="#6b7280"
-                            fontSize={areaFontSize}
-                          >
-                            {(room.w * room.d).toFixed(1)} м²
-                          </text>
-                        </>
-                      )}
+                      <text
+                        x={cx}
+                        y={ry(archY + room.d / 2 + 0.18)}
+                        textAnchor="middle" dominantBaseline="central"
+                        fill={LABEL_COLOR}
+                        fontSize={labelSize}
+                        fontWeight={700}
+                        letterSpacing={0.04}
+                      >
+                        {label}
+                      </text>
+                      <text
+                        x={cx}
+                        y={ry(archY + room.d / 2 - 0.32)}
+                        textAnchor="middle" dominantBaseline="central"
+                        fill={AREA_COLOR}
+                        fontSize={areaSize}
+                        fontWeight={400}
+                      >
+                        {(room.w * room.d).toFixed(1)} м²
+                      </text>
                     </g>
                   );
                 })}
-
-                {/* Номер квартиры в углу — у северной кромки квартиры */}
+                {/* Номер квартиры — в углу, мелко */}
                 <text
-                  x={apt.x + 0.3}
-                  y={ry(apt.y + apt.d - 0.3)}
+                  x={apt.x + 0.25}
+                  y={ry(apt.y + apt.d - 0.25)}
                   textAnchor="start" dominantBaseline="central"
-                  fill="#1f2937"
-                  fontSize={0.45} fontWeight={700}
+                  fill={AREA_COLOR}
+                  fontSize={0.32}
+                  fontWeight={700}
+                  letterSpacing={0.05}
                 >
-                  №{apt.number}
+                  КВ.{apt.number}
                 </text>
               </g>
             ))}
           </g>
         ))}
 
-        {/* Размер по ширине — над зданием (Y отрицательный после ry) */}
+        {/* ── Размер по ширине ─────────────────────────────────────────── */}
         <g>
           <line
-            x1={0} y1={ry(D + 1.5)} x2={W} y2={ry(D + 1.5)}
-            stroke="#1f2937" strokeWidth={0.04}
+            x1={0} y1={ry(D + 1.4)} x2={W} y2={ry(D + 1.4)}
+            stroke={LABEL_COLOR} strokeWidth={0.03}
           />
-          <line x1={0} y1={ry(D + 1.7)} x2={0} y2={ry(D + 1.3)} stroke="#1f2937" strokeWidth={0.04} />
-          <line x1={W} y1={ry(D + 1.7)} x2={W} y2={ry(D + 1.3)} stroke="#1f2937" strokeWidth={0.04} />
+          <line x1={0} y1={ry(D + 1.55)} x2={0} y2={ry(D + 1.25)} stroke={LABEL_COLOR} strokeWidth={0.04} />
+          <line x1={W} y1={ry(D + 1.55)} x2={W} y2={ry(D + 1.25)} stroke={LABEL_COLOR} strokeWidth={0.04} />
           <text
-            x={W / 2} y={ry(D + 2.1)}
+            x={W / 2} y={ry(D + 2.0)}
             textAnchor="middle" dominantBaseline="central"
-            fill="#1f2937" fontSize={0.5} fontWeight={600}
+            fill={LABEL_COLOR} fontSize={0.5} fontWeight={600}
+            letterSpacing={0.04}
           >
-            {W.toFixed(2)} м
+            {W.toFixed(2)} М
           </text>
         </g>
 
-        {/* Размер по высоте — слева от здания */}
+        {/* ── Размер по высоте ─────────────────────────────────────────── */}
         <g>
           <line
-            x1={-1.5} y1={ry(D)} x2={-1.5} y2={ry(0)}
-            stroke="#1f2937" strokeWidth={0.04}
+            x1={-1.4} y1={ry(D)} x2={-1.4} y2={ry(0)}
+            stroke={LABEL_COLOR} strokeWidth={0.03}
           />
-          <line x1={-1.7} y1={ry(D)} x2={-1.3} y2={ry(D)} stroke="#1f2937" strokeWidth={0.04} />
-          <line x1={-1.7} y1={ry(0)} x2={-1.3} y2={ry(0)} stroke="#1f2937" strokeWidth={0.04} />
+          <line x1={-1.55} y1={ry(D)} x2={-1.25} y2={ry(D)} stroke={LABEL_COLOR} strokeWidth={0.04} />
+          <line x1={-1.55} y1={ry(0)} x2={-1.25} y2={ry(0)} stroke={LABEL_COLOR} strokeWidth={0.04} />
           <text
-            x={-2.2} y={ry(D / 2)}
+            x={-2.0} y={ry(D / 2)}
             textAnchor="middle" dominantBaseline="central"
-            fill="#1f2937" fontSize={0.5} fontWeight={600}
-            transform={`rotate(-90, -2.2, ${ry(D / 2)})`}
+            fill={LABEL_COLOR} fontSize={0.5} fontWeight={600}
+            letterSpacing={0.04}
+            transform={`rotate(-90, -2.0, ${ry(D / 2)})`}
           >
-            {D.toFixed(2)} м
+            {D.toFixed(2)} М
           </text>
         </g>
       </g>
     </svg>
   );
+}
+
+
+function upperCaseRoom(nameRu: string, kind: string): string {
+  const trimmed = (nameRu || "").trim();
+  if (trimmed) return trimmed.toUpperCase();
+  return ROOM_LABEL_FALLBACK_RU[kind] ?? kind.toUpperCase();
 }
 
 
