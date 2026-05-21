@@ -252,31 +252,37 @@ export function ArchitecturalDrawingsTab({
 
           {status === "ready" && result && (
             <div className="absolute inset-0 flex flex-col">
-              {/* AI визуализация — overlay поверх SVG */}
-              {vizImageUrl ? (
-                <div className="flex-1 grid grid-rows-2 gap-2 p-2 min-h-0">
-                  <div className="relative bg-white rounded-lg overflow-hidden">
+              {/* Скроллируемая область — пускаем вертикальный скролл */}
+              <div className="flex-1 min-h-0 overflow-y-auto p-2">
+                {vizImageUrl ? (
+                  <div className="flex flex-col gap-2">
+                    {/* План — фиксированная пропорция, чтобы не схлопывался */}
+                    <div className="relative bg-white rounded-lg overflow-hidden">
+                      <div className="absolute top-2 left-2 z-10 h-5 px-1.5 rounded bg-black/55 text-[10px] text-white/85 grid place-items-center">
+                        План
+                      </div>
+                      <div style={{ aspectRatio: `${result.layout.width_m + 6}/${result.layout.depth_m + 6}` }}>
+                        <FloorPlanSvg layout={result.layout} />
+                      </div>
+                    </div>
+                    {/* AI визуализация — natural-height */}
+                    <div className="relative bg-black/30 rounded-lg overflow-hidden">
+                      <div className="absolute top-2 left-2 z-10 h-5 px-1.5 rounded bg-black/55 text-[10px] text-white/85 grid place-items-center">
+                        AI Визуализация
+                      </div>
+                      <img
+                        src={vizImageUrl}
+                        alt="AI визуализация"
+                        className="w-full h-auto block"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-lg" style={{ aspectRatio: `${result.layout.width_m + 6}/${result.layout.depth_m + 6}` }}>
                     <FloorPlanSvg layout={result.layout} />
-                    <div className="absolute top-2 left-2 h-5 px-1.5 rounded bg-black/55 text-[10px] text-white/85 grid place-items-center">
-                      План
-                    </div>
                   </div>
-                  <div className="relative bg-black/30 rounded-lg overflow-hidden grid place-items-center">
-                    <img
-                      src={vizImageUrl}
-                      alt="AI визуализация"
-                      className="max-w-full max-h-full object-contain"
-                    />
-                    <div className="absolute top-2 left-2 h-5 px-1.5 rounded bg-black/55 text-[10px] text-white/85 grid place-items-center">
-                      AI Визуализация
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex-1 bg-white">
-                  <FloorPlanSvg layout={result.layout} />
-                </div>
-              )}
+                )}
+              </div>
               {error && (
                 <div className="px-4 py-2 text-[11px] text-rose-300/85 bg-rose-900/15 border-t border-rose-500/20 flex items-center gap-1.5">
                   <AlertCircle size={12} /> {error}
