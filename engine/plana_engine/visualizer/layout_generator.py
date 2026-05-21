@@ -616,6 +616,11 @@ def _make_cores(
     *,
     core_d: float = _CORE_D,
 ) -> list[LayoutCore]:
+    """Сформировать ядро секции: пассажирские лифты + лестница + грузовые.
+
+    Минимум 1 пассажирский лифт и 1 лестница всегда. Грузовой лифт
+    включается только если n_freight ≥ 1.
+    """
     cores: list[LayoutCore] = []
     x = core_x
     lift_p_w = 1.5
@@ -624,14 +629,17 @@ def _make_cores(
     lift_d = min(1.5, core_d)
     freight_d = min(lift_f_w, core_d)
 
-    for _ in range(max(1, n_pass)):
+    n_pass_eff = max(1, n_pass)
+    n_freight_eff = max(0, n_freight)   # допускаем 0 грузовых
+
+    for _ in range(n_pass_eff):
         cores.append(LayoutCore(kind="lift_passenger", x=round(x, 3), y=core_y, w=lift_p_w, d=lift_d))
         x += lift_p_w
 
     cores.append(LayoutCore(kind="stair", x=round(x, 3), y=core_y, w=stair_w, d=core_d))
     x += stair_w
 
-    for _ in range(max(1, n_freight)):
+    for _ in range(n_freight_eff):
         cores.append(LayoutCore(kind="lift_freight", x=round(x, 3), y=core_y, w=lift_f_w, d=freight_d))
         x += lift_f_w
 

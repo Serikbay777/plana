@@ -1012,38 +1012,46 @@ function FloorPlanSvg({
         ))}
 
         {/* ── Ядра: лифты и лестницы ──────────────────────────────────── */}
-        {layout.sections.map((section) => (
-          <g key={`cores-${section.index}`}>
-            {section.cores.map((core, ci) => {
-              const canShowLabel = core.w >= 1.2 && core.d >= 1.0;
-              return (
-                <g key={ci}>
-                  <rect
-                    x={core.x} y={ry(core.y, core.d)}
-                    width={core.w} height={core.d}
-                    fill={CORE_FILL}
-                    stroke={WALL_COLOR}
-                    strokeWidth={WALL_CORE}
-                  />
-                  {canShowLabel && (
-                    <text
-                      x={core.x + core.w / 2}
-                      y={ry(core.y + core.d / 2)}
-                      textAnchor="middle" dominantBaseline="central"
-                      fill={CORE_TEXT}
-                      fontSize={FONT_CORE_LABEL}
-                      fontWeight={700}
-                      letterSpacing={0.04}
-                      style={{ fontVariantNumeric: "tabular-nums" }}
-                    >
-                      {CORE_LABEL_RU[core.kind] ?? "?"}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-          </g>
-        ))}
+        {/* Подпись пишем только на ПЕРВОМ ядре каждого вида (lift_passenger,
+            lift_freight, stair) — иначе при двух пассажирских лифтах подряд
+            подписи накладываются как «ЛИФТЛИФТ». */}
+        {layout.sections.map((section) => {
+          const labeledKinds = new Set<string>();
+          return (
+            <g key={`cores-${section.index}`}>
+              {section.cores.map((core, ci) => {
+                const canShowLabel = core.w >= 1.2 && core.d >= 1.0;
+                const isFirstOfKind = !labeledKinds.has(core.kind);
+                if (canShowLabel && isFirstOfKind) labeledKinds.add(core.kind);
+                return (
+                  <g key={ci}>
+                    <rect
+                      x={core.x} y={ry(core.y, core.d)}
+                      width={core.w} height={core.d}
+                      fill={CORE_FILL}
+                      stroke={WALL_COLOR}
+                      strokeWidth={WALL_CORE}
+                    />
+                    {canShowLabel && isFirstOfKind && (
+                      <text
+                        x={core.x + core.w / 2}
+                        y={ry(core.y + core.d / 2)}
+                        textAnchor="middle" dominantBaseline="central"
+                        fill={CORE_TEXT}
+                        fontSize={FONT_CORE_LABEL}
+                        fontWeight={700}
+                        letterSpacing={0.04}
+                        style={{ fontVariantNumeric: "tabular-nums" }}
+                      >
+                        {CORE_LABEL_RU[core.kind] ?? "?"}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
 
         {/* ── Внешний контур здания — самый толстый ───────────────────── */}
         <rect
