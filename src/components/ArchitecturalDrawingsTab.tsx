@@ -13,7 +13,7 @@
 import { useState, useRef, useCallback, useEffect, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
-  Pencil, RefreshCw,
+  Pencil, RefreshCw, Undo2, Redo2,
 } from "lucide-react";
 import {
   generateLayoutFromBrief, exportFloorplanDxf, exportFloorplanIfc,
@@ -76,35 +76,102 @@ export function ArchitecturalDrawingsTab({
   const [vizImageUrl, setVizImageUrl] = useState<string | null>(null);
   const [enhancing, setEnhancing] = useState(false);
 
-  // ── Редактор (D-2) ─────────────────────────────────────────────────
+  // ── Редактор (D-2/D-3) ─────────────────────────────────────────────
   // Поднимаем layout наверх как мутируемый стейт. result.layout — исходный
   // (для повторной генерации), editedLayout — текущая редактируемая версия.
   const [editedLayout, setEditedLayout] = useState<LayoutFloor | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [selected, setSelected] = useState<RoomRef | null>(null);
 
+  // История для undo/redo. Каждый снапшот — целый LayoutFloor. Снапшоты
+  // создаются на завершении drag (mouseup) — один drag = одна запись.
+  const [history, setHistory] = useState<LayoutFloor[]>([]);
+  const [hIdx, setHIdx] = useState(-1);
+  const editedLayoutRef = useRef<LayoutFloor | null>(null);
+  useEffect(() => { editedLayoutRef.current = editedLayout; }, [editedLayout]);
+
   useEffect(() => {
-    // Новая генерация — копируем layout в редактируемый стейт, сбрасываем selection.
+    // Новая генерация — копируем layout в редактируемый стейт, сбрасываем selection и историю.
     if (result) {
-      setEditedLayout(cloneLayout(result.layout));
+      const initial = cloneLayout(result.layout);
+      setEditedLayout(initial);
+      setHistory([initial]);
+      setHIdx(0);
       setSelected(null);
       setEditMode(false);
     } else {
       setEditedLayout(null);
+      setHistory([]);
+      setHIdx(-1);
     }
   }, [result]);
 
   const currentLayout = editedLayout ?? result?.layout ?? null;
+  const canUndo = hIdx > 0;
+  const canRedo = hIdx >= 0 && hIdx < history.length - 1;
 
   const handleRoomSelect = (ref: RoomRef | null) => setSelected(ref);
   const handleRoomMove = (ref: RoomRef, newX: number, newY: number) => {
     setEditedLayout((prev) => prev ? moveRoomInLayout(prev, ref, snap(newX), snap(newY)) : prev);
   };
+  const handleRoomMoveCommit = () => {
+    // Push current state in history (одна запись на один drag)
+    const cur = editedLayoutRef.current;
+    if (!cur) return;
+    setHistory((prevHist) => {
+      const trimmed = prevHist.slice(0, hIdx + 1);
+      // Если ничего не изменилось — не пушим лишнюю запись
+      const last = trimmed[trimmed.length - 1];
+      if (last && JSON.stringify(last) === JSON.stringify(cur)) return prevHist;
+      return [...trimmed, cloneLayout(cur)];
+    });
+    setHIdx((prev) => prev + 1);
+  };
   const handleResetEdits = () => {
     if (!result) return;
-    setEditedLayout(cloneLayout(result.layout));
+    const fresh = cloneLayout(result.layout);
+    setEditedLayout(fresh);
+    setHistory([fresh]);
+    setHIdx(0);
     setSelected(null);
   };
+
+  const undo = useCallback(() => {
+    setHIdx((prev) => {
+      if (prev <= 0) return prev;
+      const newIdx = prev - 1;
+      setEditedLayout(cloneLayout(history[newIdx]));
+      return newIdx;
+    });
+  }, [history]);
+
+  const redo = useCallback(() => {
+    setHIdx((prev) => {
+      if (prev >= history.length - 1) return prev;
+      const newIdx = prev + 1;
+      setEditedLayout(cloneLayout(history[newIdx]));
+      return newIdx;
+    });
+  }, [history]);
+
+  // Keyboard shortcuts — Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z
+  useEffect(() => {
+    if (!editMode || !currentLayout) return;
+    const onKey = (e: KeyboardEvent) => {
+      const isMod = e.ctrlKey || e.metaKey;
+      if (!isMod) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((k === "z" && e.shiftKey) || k === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editMode, currentLayout, undo, redo]);
 
   const handleEnhance = async () => {
     if (!brief.trim() || enhancing || status === "loading") return;
@@ -231,14 +298,34 @@ export function ArchitecturalDrawingsTab({
             >
               <Pencil size={11} /> {editMode ? "Редактор вкл." : "Редактор"}
             </button>
-            {editMode && editedLayout && result && (
-              <button
-                onClick={handleResetEdits}
-                title="Откатить все ручные изменения к исходному AI-плану"
-                className="h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-white/15 text-white/65 hover:bg-white/[0.06] transition"
-              >
-                <RefreshCw size={11} /> Сброс
-              </button>
+            {editMode && (
+              <>
+                <button
+                  onClick={undo}
+                  disabled={!canUndo}
+                  title="Отменить (Ctrl+Z)"
+                  className="h-7 w-7 rounded text-[11.5px] flex items-center justify-center border border-white/15 text-white/75 hover:bg-white/[0.06] transition disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Undo2 size={12} />
+                </button>
+                <button
+                  onClick={redo}
+                  disabled={!canRedo}
+                  title="Повторить (Ctrl+Y / Ctrl+Shift+Z)"
+                  className="h-7 w-7 rounded text-[11.5px] flex items-center justify-center border border-white/15 text-white/75 hover:bg-white/[0.06] transition disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Redo2 size={12} />
+                </button>
+                {editedLayout && result && (
+                  <button
+                    onClick={handleResetEdits}
+                    title="Откатить все ручные изменения к исходному AI-плану"
+                    className="h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-white/15 text-white/65 hover:bg-white/[0.06] transition"
+                  >
+                    <RefreshCw size={11} /> Сброс
+                  </button>
+                )}
+              </>
             )}
             <button
               onClick={handleExportDxf}
@@ -376,6 +463,7 @@ export function ArchitecturalDrawingsTab({
                           selected={selected}
                           onSelectRoom={handleRoomSelect}
                           onMoveRoom={handleRoomMove}
+                          onMoveCommit={handleRoomMoveCommit}
                         />
                       </div>
                     </div>
@@ -399,6 +487,7 @@ export function ArchitecturalDrawingsTab({
                       selected={selected}
                       onSelectRoom={handleRoomSelect}
                       onMoveRoom={handleRoomMove}
+                      onMoveCommit={handleRoomMoveCommit}
                     />
                   </div>
                 )}
@@ -484,6 +573,7 @@ type FloorPlanSvgProps = {
   selected?: RoomRef | null;
   onSelectRoom?: (ref: RoomRef | null) => void;
   onMoveRoom?: (ref: RoomRef, newX: number, newY: number) => void;
+  onMoveCommit?: () => void;
 };
 
 
@@ -493,6 +583,7 @@ function FloorPlanSvg({
   selected = null,
   onSelectRoom,
   onMoveRoom,
+  onMoveCommit,
 }: FloorPlanSvgProps) {
   // Padding в метрах вокруг здания (для подписей размеров)
   const PAD = 3;
@@ -544,6 +635,7 @@ function FloorPlanSvg({
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      onMoveCommit?.();
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
