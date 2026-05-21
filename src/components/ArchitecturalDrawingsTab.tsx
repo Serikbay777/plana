@@ -40,6 +40,7 @@ import { ModeTabs } from "@/components/editor/ModeTabs";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { SnapControls } from "@/components/editor/SnapControls";
 import { HotkeysHelp } from "@/components/editor/HotkeysHelp";
+import { VariantsGrid, type VariantItem } from "@/components/editor/VariantsGrid";
 import { NewProjectWizard } from "@/components/wizard/NewProjectWizard";
 import { matchHotkey } from "@/lib/hotkeys";
 
@@ -139,14 +140,22 @@ export function ArchitecturalDrawingsTab({
         case "escape": dispatch({ type: "CLEAR_SELECTION" }); break;
         case "openHelp": setHelpOpen(true); break;
         case "lock":
+          // Sprint 5: hotkey L → toggle lock на primary selected,
+          // если есть multi-selection — заблокировать всех.
+          if (editorState.selection.length > 1) {
+            dispatch({ type: "LOCK_SELECTION" });
+          } else if (editorState.selected) {
+            dispatch({ type: "TOGGLE_LOCK_REF", ref: editorState.selected });
+          }
+          break;
         case "deleteSelected":
-          // TODO Sprint 5
+          // TODO Sprint 6 — delete нужно для удаления комнаты из layout
           break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [project, undo, redo]);
+  }, [project, undo, redo, editorState.selection, editorState.selected]);
 
   // ── Чат-итерация (E) ──────────────────────────────────────────────
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
@@ -174,10 +183,28 @@ export function ArchitecturalDrawingsTab({
     setChatMsgs((prev) => [...prev, userMsg]);
     setChatBusy(true);
     try {
-      const newLayout = await editLayoutWithChat(currentLayout, text);
+      // Sprint 5: Lock-aware prompt. Backend ничего нового не знает —
+      // мы просто prefix'им message человекочитаемой инструкцией с именами
+      // заблокированных комнат. Бэкенд-задача (TODO) — отдельный structured
+      // параметр `locked_refs` и системный промпт-инжекшен.
+      const lockedNames = editorState.lockedRefs
+        .map((ref) => {
+          const apt = currentLayout.sections[ref.sectionIdx]?.apartments[ref.aptIdx];
+          const room = apt?.rooms[ref.roomIdx];
+          if (!room || !apt) return null;
+          return `КВ.${apt.number}/${room.name_ru}`;
+        })
+        .filter((s): s is string => !!s);
+      const augmented = lockedNames.length > 0
+        ? `ВАЖНО: не трогай следующие комнаты — ${lockedNames.join(", ")}. Не меняй их размеры и положение.\n\nЗадание: ${text}`
+        : text;
+      const newLayout = await editLayoutWithChat(currentLayout, augmented);
       // Заменяем активный этаж и пушим в history — Ctrl+Z откатит chat-правку.
       dispatch({ type: "REPLACE_ACTIVE_FLOOR", layout: newLayout, pushHistory: true });
-      setChatMsgs((prev) => [...prev, { role: "ai", text: "Готово ✓", ts: Date.now() }]);
+      const aiText = lockedNames.length > 0
+        ? `Готово ✓ (не трогал: ${lockedNames.join(", ")})`
+        : "Готово ✓";
+      setChatMsgs((prev) => [...prev, { role: "ai", text: aiText, ts: Date.now() }]);
     } catch (e) {
       setChatMsgs((prev) => [
         ...prev,
@@ -213,6 +240,8 @@ export function ArchitecturalDrawingsTab({
     if (!brief.trim() || status === "loading") return;
     setStatus("loading");
     setError(null);
+    setVariants(null);
+    setVariantSelectedIdx(null);
     if (vizImageUrl) { URL.revokeObjectURL(vizImageUrl); setVizImageUrl(null); }
     try {
       const res = await generateLayoutFromBrief(brief);
@@ -222,6 +251,54 @@ export function ArchitecturalDrawingsTab({
       setError((e as Error).message);
       setStatus("error");
     }
+  };
+
+  // ── Multi-variant (Sprint 5) ────────────────────────────────────────
+  // 4 параллельных запроса с одинаковым brief'ом. Backend сам даст разные
+  // варианты благодаря temperature LLM. v1.5 — один endpoint /generate/
+  // layout-variants?n=4, чтобы сэкономить токены и улучшить разнообразие.
+  const [variants, setVariants] = useState<VariantItem[] | null>(null);
+  const [variantSelectedIdx, setVariantSelectedIdx] = useState<number | null>(null);
+
+  const handleGenerateVariants = async () => {
+    if (!brief.trim() || status === "loading") return;
+    const N = 4;
+    setStatus("loading");
+    setError(null);
+    setVariantSelectedIdx(null);
+    if (vizImageUrl) { URL.revokeObjectURL(vizImageUrl); setVizImageUrl(null); }
+    // Сразу показываем все 4 ячейки в pending'е чтобы пользователь видел прогресс
+    setVariants(Array.from({ length: N }, () => ({ status: "pending" as const })));
+
+    // Параллельно — каждый запрос обновляет свою ячейку при готовности
+    await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        generateLayoutFromBrief(brief)
+          .then((res) => {
+            setVariants((prev) => {
+              if (!prev) return prev;
+              const next = [...prev];
+              next[i] = { status: "ready", data: res };
+              return next;
+            });
+          })
+          .catch((e) => {
+            setVariants((prev) => {
+              if (!prev) return prev;
+              const next = [...prev];
+              next[i] = { status: "error", error: (e as Error).message };
+              return next;
+            });
+          }),
+      ),
+    );
+    setStatus("ready");
+  };
+
+  const handleVariantSelect = (variant: BriefLayoutResponse) => {
+    setResult(variant);
+    const idx = variants?.findIndex((v) => v.data === variant) ?? -1;
+    setVariantSelectedIdx(idx >= 0 ? idx : null);
   };
 
   // ── Wizard (Sprint 4) ───────────────────────────────────────────────
@@ -466,6 +543,14 @@ export function ArchitecturalDrawingsTab({
               {status === "loading" ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
               Сгенерировать план
             </button>
+            <button
+              onClick={handleGenerateVariants}
+              disabled={!brief.trim() || status === "loading" || enhancing}
+              title="Сгенерировать 4 варианта параллельно — потом выберешь лучший"
+              className="h-9 px-3 rounded-lg text-[12.5px] flex items-center gap-1.5 border border-violet-400/30 text-violet-200/90 hover:bg-violet-500/15 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Sparkles size={13} /> ×4
+            </button>
           </div>
           {result?.notes && !currentLayout && (
             <div className="text-[10.5px] text-white/45 leading-relaxed">
@@ -636,6 +721,27 @@ export function ArchitecturalDrawingsTab({
             <div className="absolute inset-0 flex flex-col">
               {/* Скроллируемая область — пускаем вертикальный скролл */}
               <div className="flex-1 min-h-0 overflow-y-auto p-2">
+                {variants && (
+                  <div className="mb-3 p-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-[10.5px] uppercase tracking-wider text-white/55">
+                        Варианты планировки
+                      </div>
+                      <button
+                        onClick={() => { setVariants(null); setVariantSelectedIdx(null); }}
+                        className="text-[10.5px] text-white/40 hover:text-white/70"
+                        title="Скрыть варианты"
+                      >
+                        Скрыть
+                      </button>
+                    </div>
+                    <VariantsGrid
+                      variants={variants}
+                      onSelect={handleVariantSelect}
+                      selectedIdx={variantSelectedIdx}
+                    />
+                  </div>
+                )}
                 {vizImageUrl ? (
                   <div className="flex flex-col gap-2">
                     {/* План — фиксированная пропорция, чтобы не схлопывался */}
@@ -649,6 +755,7 @@ export function ArchitecturalDrawingsTab({
                           editMode={editMode}
                           selected={selected}
                           selection={editorState.selection}
+                          lockedRefs={editorState.lockedRefs}
                           layers={editorState.layers}
                           onSelectRoom={handleRoomSelect}
                           onMoveRoom={handleRoomMove}
@@ -675,6 +782,7 @@ export function ArchitecturalDrawingsTab({
                       editMode={editMode}
                       selected={selected}
                       selection={editorState.selection}
+                      lockedRefs={editorState.lockedRefs}
                       layers={editorState.layers}
                       onSelectRoom={handleRoomSelect}
                       onMoveRoom={handleRoomMove}
@@ -779,6 +887,8 @@ type FloorPlanSvgProps = {
   selected?: RoomRef | null;
   /** Полный набор выделений для multi-select. Если не передан — рисуем только primary. */
   selection?: RoomRef[];
+  /** Заблокированные комнаты — золотая обводка + drag отключён (Sprint 5). */
+  lockedRefs?: RoomRef[];
   layers?: LayersState;
   /** При Shift/Ctrl/Meta+click multi=true → toggle вместо replace. */
   onSelectRoom?: (ref: RoomRef | null, multi?: boolean) => void;
@@ -787,11 +897,12 @@ type FloorPlanSvgProps = {
 };
 
 
-function FloorPlanSvg({
+export function FloorPlanSvg({
   layout,
   editMode = false,
   selected = null,
   selection,
+  lockedRefs,
   layers,
   onSelectRoom,
   onMoveRoom,
@@ -800,6 +911,13 @@ function FloorPlanSvg({
   // Helper: видим ли слой? default true для backwards compat.
   const layerVisible = (id: LayerId): boolean =>
     layers ? layers[id].visible : true;
+  // Helper: заблокирована ли комната.
+  const refLocked = (ref: RoomRef): boolean =>
+    !!lockedRefs?.some(
+      (r) => r.sectionIdx === ref.sectionIdx
+          && r.aptIdx === ref.aptIdx
+          && r.roomIdx === ref.roomIdx,
+    );
   // Helper: входит ли ref в multi-selection (или равен primary, если selection не задан).
   const refSelected = (ref: RoomRef): boolean => {
     if (selection) {
@@ -851,6 +969,7 @@ function FloorPlanSvg({
   // Drag комнаты в edit-mode
   const startRoomDrag = (e: React.MouseEvent, ref: RoomRef, room: { x: number; y: number }) => {
     if (!editMode || !onMoveRoom) return;
+    if (refLocked(ref)) return;          // Sprint 5: locked не двигаются
     e.stopPropagation();
     onSelectRoom?.(ref);
 
@@ -1017,6 +1136,7 @@ function FloorPlanSvg({
                     roomIdx: rIdx,
                   };
                   const isSelected = refSelected(ref);
+                  const isLockedRoom = refLocked(ref);
                   return (
                     <rect
                       key={rIdx}
@@ -1031,9 +1151,12 @@ function FloorPlanSvg({
                         const multi = e.shiftKey || e.ctrlKey || e.metaKey;
                         onSelectRoom?.(ref, multi);
                       } : undefined}
-                      style={editMode ? { cursor: "move" } : undefined}
+                      style={editMode
+                        ? { cursor: isLockedRoom ? "not-allowed" : "move" }
+                        : undefined}
                       // outline для выделенной комнаты — добавим overlay в отдельной группе ниже
                       data-selected={isSelected || undefined}
+                      data-locked={isLockedRoom || undefined}
                     />
                   );
                 })}
@@ -1287,6 +1410,45 @@ function FloorPlanSvg({
               strokeDasharray="0.25 0.15"
               pointerEvents="none"
             />
+          );
+        })}
+
+        {/* ── Lock overlay: золотая обводка + замочек (Sprint 5) ────── */}
+        {(lockedRefs ?? []).map((ref) => {
+          const section = layout.sections[ref.sectionIdx];
+          const apt = section?.apartments[ref.aptIdx];
+          const room = apt?.rooms[ref.roomIdx];
+          if (!room || !apt) return null;
+          const rx = apt.x + room.x;
+          const archY = apt.y + room.y;
+          // Замочек рисуется в правом верхнем углу комнаты (если хватает места)
+          const showIcon = room.w >= 0.8 && room.d >= 0.8;
+          return (
+            <g key={`lock-${ref.sectionIdx}-${ref.aptIdx}-${ref.roomIdx}`} pointerEvents="none">
+              <rect
+                x={rx} y={ry(archY, room.d)}
+                width={room.w} height={room.d}
+                fill="none"
+                stroke="#d4a017"
+                strokeWidth={0.13}
+                strokeDasharray="0.4 0.2"
+              />
+              {showIcon && (
+                <g transform={`translate(${rx + room.w - 0.55} ${ry(archY + room.d - 0.55)})`}>
+                  <circle cx={0.2} cy={0.2} r={0.27} fill="#d4a017" />
+                  {/* Замочек — упрощённо как пометка */}
+                  <text
+                    x={0.2} y={0.21}
+                    textAnchor="middle" dominantBaseline="central"
+                    fill="#fff"
+                    fontSize={0.32}
+                    fontWeight={900}
+                  >
+                    ⚿
+                  </text>
+                </g>
+              )}
+            </g>
           );
         })}
 

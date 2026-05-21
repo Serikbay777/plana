@@ -97,6 +97,13 @@ export type EditorState = {
   selected: RoomRef | null;
   /** Полный набор выделенных объектов — Sprint 3+. Содержит primary первым элементом. */
   selection: RoomRef[];
+  /**
+   * Заблокированные комнаты — Sprint 5. Lock как UI-фича, НЕ часть data model
+   * (LayoutRoom на бэке без поля locked, чтобы не ломать существующий контракт).
+   * Drag/MOVE_ROOM игнорирует заблокированные. Передаются в editLayoutWithChat
+   * как hint для prompt-injection (backend должен их уважать — TODO).
+   */
+  lockedRefs: RoomRef[];
   editMode: boolean;
   tool: ToolKind;
   mode: EditorMode;
@@ -111,6 +118,7 @@ export const initialEditorState: EditorState = {
   hIdx: -1,
   selected: null,
   selection: [],
+  lockedRefs: [],
   editMode: false,
   tool: "select",
   mode: "edit",
@@ -145,6 +153,9 @@ export type EditorAction =
   | { type: "SET_LAYER_VISIBLE"; id: LayerId; visible: boolean }
   | { type: "SET_LAYER_LOCKED"; id: LayerId; locked: boolean }
   | { type: "SET_SNAP"; snap: Partial<SnapSettings> }
+  | { type: "TOGGLE_LOCK_REF"; ref: RoomRef }
+  | { type: "LOCK_SELECTION" }
+  | { type: "UNLOCK_ALL" }
   | { type: "CLEAR" };
 
 // ---------------------------------------------------------------------------
@@ -167,6 +178,11 @@ export function sameRef(a: RoomRef, b: RoomRef): boolean {
 /** Входит ли ref в selection. Для рендера outline на canvas. */
 export function isInSelection(selection: RoomRef[], ref: RoomRef): boolean {
   return selection.some((r) => sameRef(r, ref));
+}
+
+/** Заблокирована ли комната. */
+export function isLocked(lockedRefs: RoomRef[], ref: RoomRef): boolean {
+  return lockedRefs.some((r) => sameRef(r, ref));
 }
 
 function cloneProject(p: LayoutProject): LayoutProject {
@@ -235,6 +251,8 @@ export function projectReducer(
 
     case "MOVE_ROOM": {
       if (!state.project) return state;
+      // Заблокированные комнаты не двигаются
+      if (state.lockedRefs.some((r) => sameRef(r, action.ref))) return state;
       const cur = getActiveFloor(state.project);
       const newFloor = moveRoomInFloor(
         cur, action.ref, action.newX, action.newY, state.snap.step,
@@ -442,6 +460,27 @@ export function projectReducer(
 
     case "SET_SNAP":
       return { ...state, snap: { ...state.snap, ...action.snap } };
+
+    case "TOGGLE_LOCK_REF": {
+      const idx = state.lockedRefs.findIndex((r) => sameRef(r, action.ref));
+      const next = idx >= 0
+        ? state.lockedRefs.filter((_, i) => i !== idx)
+        : [...state.lockedRefs, action.ref];
+      return { ...state, lockedRefs: next };
+    }
+
+    case "LOCK_SELECTION": {
+      if (state.selection.length === 0) return state;
+      // Добавляем все выделенные, которые ещё не заблокированы
+      const additions = state.selection.filter(
+        (s) => !state.lockedRefs.some((l) => sameRef(l, s)),
+      );
+      if (additions.length === 0) return state;
+      return { ...state, lockedRefs: [...state.lockedRefs, ...additions] };
+    }
+
+    case "UNLOCK_ALL":
+      return { ...state, lockedRefs: [] };
 
     case "CLEAR":
       // tool/mode/layers сбрасываются вместе с проектом
