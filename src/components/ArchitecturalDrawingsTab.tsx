@@ -346,6 +346,17 @@ const WALL_PARTITION = 0.15;  // внутренние перегородки м�
 const WALL_CORE     = 0.10;   // ядра — тонкий контур (т.к. заливка тёмная)
 const WALL_SECTION  = 0.25;   // межсекционная противопожарная стена
 
+// Типографика — фиксированные размеры (в метрах), без зависимости от размера
+// комнаты. Если комната слишком мала для подписи — она просто не отрисуется.
+const FONT_ROOM_LABEL = 0.42;       // «СПАЛЬНЯ 1», «ГОСТИНАЯ»
+const FONT_ROOM_AREA  = 0.30;       // «12.4 m²»
+const FONT_APT_NUMBER = 0.36;       // «КВ.1» в углу
+const FONT_CORE_LABEL = 0.50;       // «ЛИФТ», «ЛЕСТН.»
+const FONT_DIM_TEXT   = 0.55;       // размерные подписи «24.00 М»
+const MIN_ROOM_LABEL_W = 1.8;       // меньше — подпись не пишем
+const MIN_ROOM_LABEL_D = 1.4;       // меньше — подпись не пишем
+const MIN_ROOM_AREA_W = 1.3;        // площадь скрываем независимо от label
+
 const CORE_LABEL_RU: Record<string, string> = {
   lift_passenger: "ЛИФТ",
   lift_freight:   "ГРУЗ",
@@ -492,7 +503,7 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
         {layout.sections.map((section) => (
           <g key={`cores-${section.index}`}>
             {section.cores.map((core, ci) => {
-              const labelSize = Math.min(0.42, core.w * 0.22, core.d * 0.18);
+              const canShowLabel = core.w >= 1.2 && core.d >= 1.0;
               return (
                 <g key={ci}>
                   <rect
@@ -502,17 +513,20 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
                     stroke={WALL_COLOR}
                     strokeWidth={WALL_CORE}
                   />
-                  <text
-                    x={core.x + core.w / 2}
-                    y={ry(core.y + core.d / 2)}
-                    textAnchor="middle" dominantBaseline="central"
-                    fill={CORE_TEXT}
-                    fontSize={labelSize}
-                    fontWeight={700}
-                    letterSpacing={0.02}
-                  >
-                    {CORE_LABEL_RU[core.kind] ?? "?"}
-                  </text>
+                  {canShowLabel && (
+                    <text
+                      x={core.x + core.w / 2}
+                      y={ry(core.y + core.d / 2)}
+                      textAnchor="middle" dominantBaseline="central"
+                      fill={CORE_TEXT}
+                      fontSize={FONT_CORE_LABEL}
+                      fontWeight={700}
+                      letterSpacing={0.04}
+                      style={{ fontVariantNumeric: "tabular-nums" }}
+                    >
+                      {CORE_LABEL_RU[core.kind] ?? "?"}
+                    </text>
+                  )}
                 </g>
               );
             })}
@@ -534,49 +548,60 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
             {section.apartments.map((apt) => (
               <g key={`apt-label-${apt.number}`}>
                 {apt.rooms.map((room, rIdx) => {
-                  if (room.w < 1.6 || room.d < 1.0) return null;
                   const rx = apt.x + room.x;
                   const archY = apt.y + room.y;
                   const cx = rx + room.w / 2;
-                  // Подпись = название из JSON (если осмысленное) или fallback по kind
+                  const cy = archY + room.d / 2;
+                  const canShowLabel = room.w >= MIN_ROOM_LABEL_W && room.d >= MIN_ROOM_LABEL_D;
+                  const canShowArea  = room.w >= MIN_ROOM_AREA_W && room.d >= 0.9;
+                  if (!canShowLabel && !canShowArea) return null;
                   const label = upperCaseRoom(room.name_ru, room.kind);
-                  const labelSize = Math.min(0.32, room.w * 0.075, room.d * 0.13);
-                  const areaSize = Math.min(0.26, room.w * 0.058, room.d * 0.10);
+                  // «12.4 m²» с латинским m, чтобы Chrome не глючил на «м²»
+                  // в мелком кегле (бывало что superscript-«²» рендерился
+                  // не в той позиции и казалось будто строка перевёрнута).
+                  const areaText = `${(room.w * room.d).toFixed(1)} m²`;
                   return (
                     <g key={rIdx}>
-                      <text
-                        x={cx}
-                        y={ry(archY + room.d / 2 + 0.18)}
-                        textAnchor="middle" dominantBaseline="central"
-                        fill={LABEL_COLOR}
-                        fontSize={labelSize}
-                        fontWeight={700}
-                        letterSpacing={0.04}
-                      >
-                        {label}
-                      </text>
-                      <text
-                        x={cx}
-                        y={ry(archY + room.d / 2 - 0.32)}
-                        textAnchor="middle" dominantBaseline="central"
-                        fill={AREA_COLOR}
-                        fontSize={areaSize}
-                        fontWeight={400}
-                      >
-                        {(room.w * room.d).toFixed(1)} м²
-                      </text>
+                      {canShowLabel && (
+                        <text
+                          x={cx}
+                          y={ry(cy + 0.18)}
+                          textAnchor="middle" dominantBaseline="central"
+                          fill={LABEL_COLOR}
+                          fontSize={FONT_ROOM_LABEL}
+                          fontWeight={700}
+                          letterSpacing={0.04}
+                          style={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {label}
+                        </text>
+                      )}
+                      {canShowArea && (
+                        <text
+                          x={cx}
+                          y={ry(canShowLabel ? cy - 0.32 : cy)}
+                          textAnchor="middle" dominantBaseline="central"
+                          fill={AREA_COLOR}
+                          fontSize={FONT_ROOM_AREA}
+                          fontWeight={500}
+                          style={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {areaText}
+                        </text>
+                      )}
                     </g>
                   );
                 })}
-                {/* Номер квартиры — в углу, мелко */}
+                {/* Номер квартиры — в углу */}
                 <text
                   x={apt.x + 0.25}
                   y={ry(apt.y + apt.d - 0.25)}
                   textAnchor="start" dominantBaseline="central"
                   fill={AREA_COLOR}
-                  fontSize={0.32}
+                  fontSize={FONT_APT_NUMBER}
                   fontWeight={700}
                   letterSpacing={0.05}
+                  style={{ fontVariantNumeric: "tabular-nums" }}
                 >
                   КВ.{apt.number}
                 </text>
@@ -585,44 +610,96 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
           </g>
         ))}
 
-        {/* ── Размер по ширине ─────────────────────────────────────────── */}
-        <g>
-          <line
-            x1={0} y1={ry(D + 1.4)} x2={W} y2={ry(D + 1.4)}
-            stroke={LABEL_COLOR} strokeWidth={0.03}
-          />
-          <line x1={0} y1={ry(D + 1.55)} x2={0} y2={ry(D + 1.25)} stroke={LABEL_COLOR} strokeWidth={0.04} />
-          <line x1={W} y1={ry(D + 1.55)} x2={W} y2={ry(D + 1.25)} stroke={LABEL_COLOR} strokeWidth={0.04} />
-          <text
-            x={W / 2} y={ry(D + 2.0)}
-            textAnchor="middle" dominantBaseline="central"
-            fill={LABEL_COLOR} fontSize={0.5} fontWeight={600}
-            letterSpacing={0.04}
-          >
-            {W.toFixed(2)} М
-          </text>
-        </g>
-
-        {/* ── Размер по высоте ─────────────────────────────────────────── */}
-        <g>
-          <line
-            x1={-1.4} y1={ry(D)} x2={-1.4} y2={ry(0)}
-            stroke={LABEL_COLOR} strokeWidth={0.03}
-          />
-          <line x1={-1.55} y1={ry(D)} x2={-1.25} y2={ry(D)} stroke={LABEL_COLOR} strokeWidth={0.04} />
-          <line x1={-1.55} y1={ry(0)} x2={-1.25} y2={ry(0)} stroke={LABEL_COLOR} strokeWidth={0.04} />
-          <text
-            x={-2.0} y={ry(D / 2)}
-            textAnchor="middle" dominantBaseline="central"
-            fill={LABEL_COLOR} fontSize={0.5} fontWeight={600}
-            letterSpacing={0.04}
-            transform={`rotate(-90, -2.0, ${ry(D / 2)})`}
-          >
-            {D.toFixed(2)} М
-          </text>
-        </g>
+        {/* ── Размерные линии в CAD-стиле (засечки 45° на концах) ─────── */}
+        <DimensionLine
+          orientation="horizontal"
+          x1={0} x2={W} pos={ry(D + 1.5)}
+          label={`${W.toFixed(2)} М`}
+          color={LABEL_COLOR}
+        />
+        <DimensionLine
+          orientation="vertical"
+          y1={ry(D)} y2={ry(0)} pos={-1.5}
+          label={`${D.toFixed(2)} М`}
+          color={LABEL_COLOR}
+        />
       </g>
     </svg>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// CAD-стиль размерная линия с засечками 45° и центрированной подписью.
+// ---------------------------------------------------------------------------
+
+function DimensionLine(props:
+  | {
+      orientation: "horizontal";
+      x1: number; x2: number; pos: number;
+      label: string; color: string;
+    }
+  | {
+      orientation: "vertical";
+      y1: number; y2: number; pos: number;
+      label: string; color: string;
+    }
+) {
+  const tick = 0.22;           // длина засечки 45°
+  const dt = tick / Math.SQRT2;
+  const sw = 0.045;
+
+  if (props.orientation === "horizontal") {
+    const { x1, x2, pos, label, color } = props;
+    return (
+      <g stroke={color} strokeWidth={sw} fill="none">
+        <line x1={x1} y1={pos} x2={x2} y2={pos} />
+        {/* засечки 45° на концах */}
+        <line x1={x1 - dt} y1={pos - dt} x2={x1 + dt} y2={pos + dt} />
+        <line x1={x2 - dt} y1={pos - dt} x2={x2 + dt} y2={pos + dt} />
+        {/* подсечки-extension в сторону объекта */}
+        <line x1={x1} y1={pos + 0.25} x2={x1} y2={pos - 0.25} strokeWidth={sw * 0.6} />
+        <line x1={x2} y1={pos + 0.25} x2={x2} y2={pos - 0.25} strokeWidth={sw * 0.6} />
+        <text
+          x={(x1 + x2) / 2}
+          y={pos - 0.5}
+          textAnchor="middle" dominantBaseline="central"
+          fill={color}
+          fontSize={FONT_DIM_TEXT}
+          fontWeight={600}
+          letterSpacing={0.04}
+          stroke="none"
+          style={{ fontVariantNumeric: "tabular-nums" }}
+        >
+          {label}
+        </text>
+      </g>
+    );
+  }
+
+  const { y1, y2, pos, label, color } = props;
+  return (
+    <g stroke={color} strokeWidth={sw} fill="none">
+      <line x1={pos} y1={y1} x2={pos} y2={y2} />
+      <line x1={pos - dt} y1={y1 - dt} x2={pos + dt} y2={y1 + dt} />
+      <line x1={pos - dt} y1={y2 - dt} x2={pos + dt} y2={y2 + dt} />
+      <line x1={pos - 0.25} y1={y1} x2={pos + 0.25} y2={y1} strokeWidth={sw * 0.6} />
+      <line x1={pos - 0.25} y1={y2} x2={pos + 0.25} y2={y2} strokeWidth={sw * 0.6} />
+      <text
+        x={pos - 0.55}
+        y={(y1 + y2) / 2}
+        textAnchor="middle" dominantBaseline="central"
+        fill={color}
+        fontSize={FONT_DIM_TEXT}
+        fontWeight={600}
+        letterSpacing={0.04}
+        stroke="none"
+        style={{ fontVariantNumeric: "tabular-nums" }}
+        transform={`rotate(-90, ${pos - 0.55}, ${(y1 + y2) / 2})`}
+      >
+        {label}
+      </text>
+    </g>
   );
 }
 
