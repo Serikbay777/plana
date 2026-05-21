@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FileText, Upload, Sparkles, Loader2, X, Check, AlertCircle, Download,
-  ChevronDown, ScanSearch,
+  ScanSearch,
 } from "lucide-react";
 import {
   renderPdfPages, getSheetTypes, visualizeSheet, classifyPdfPage,
@@ -504,8 +504,6 @@ export function PdfVizTab({
               <PageCardView
                 key={card.index}
                 card={card}
-                sheetTypes={sheetTypes}
-                typesLoading={typesLoading}
                 disabled={busy && card.status !== "generating" && card.status !== "classifying"}
                 onChange={(patch) => updatePage(card.index, patch)}
                 onDownload={() => downloadResult(card)}
@@ -523,19 +521,10 @@ export function PdfVizTab({
 // Карточка одной страницы PDF
 // ---------------------------------------------------------------------------
 
-const CONFIDENCE_DOT: Record<string, string> = {
-  high:   "bg-emerald-400/85",
-  medium: "bg-amber-400/85",
-  low:    "bg-white/35",
-};
-
-
 function PageCardView({
-  card, sheetTypes, typesLoading, disabled, onChange, onDownload,
+  card, disabled, onChange, onDownload,
 }: {
   card: PageCard;
-  sheetTypes: SheetType[];
-  typesLoading: boolean;
   disabled: boolean;
   onChange: (patch: Partial<PageCard>) => void;
   onDownload: () => void;
@@ -625,39 +614,6 @@ function PageCardView({
 
       {/* Контролы */}
       <div className="p-3 flex flex-col gap-2 text-[11.5px]">
-        {/* Селектор типа + индикатор confidence */}
-        <label className="block">
-          <span className="text-white/45 text-[10.5px] uppercase tracking-wider flex items-center gap-1.5">
-            Тип листа
-            {card.confidence && (
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${CONFIDENCE_DOT[card.confidence]}`}
-                title={`Vision confidence: ${card.confidence}`}
-              />
-            )}
-          </span>
-          <div className="relative mt-1">
-            <select
-              value={card.sheetType}
-              onChange={(e) => onChange({ sheetType: e.target.value })}
-              disabled={disabled || typesLoading || isBusy || isClassifying}
-              className="w-full h-7 bg-white/[0.06] border border-white/10 rounded px-1.5 pr-6 text-white/85 text-[11.5px] appearance-none"
-            >
-              {typesLoading && <option>загрузка…</option>}
-              {!typesLoading && sheetTypes.length === 0 && (
-                <option value="generic">generic</option>
-              )}
-              {sheetTypes.map((t) => (
-                <option key={t.key} value={t.key}>{t.label}</option>
-              ))}
-            </select>
-            <ChevronDown
-              size={11}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none"
-            />
-          </div>
-        </label>
-
         {/* Per-card mode picker */}
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-white/45 text-[10px] uppercase tracking-wider">Режим</span>
