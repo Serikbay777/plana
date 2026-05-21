@@ -698,6 +698,71 @@ export type LayoutFloor = {
   sections: LayoutSection[];
 };
 
+// ---------------------------------------------------------------------------
+// LayoutProject — обёртка над несколькими этажами (Sprint 1 v1.0 plan).
+// На данном этапе под капотом проект всегда содержит ровно 1 этаж и
+// activeFloorIdx=0. Multi-floor добавляется в Sprint 4.
+// ---------------------------------------------------------------------------
+
+export type FloorEntry = {
+  level: number;          // -1 (подвал), 0 (цоколь), 1, 2, 3...
+  label?: string;         // "1 этаж", "Мансарда" и т.д.
+  layout: LayoutFloor;
+};
+
+export type LayoutProject = {
+  id: string;
+  name?: string;
+  units: "meters";        // "feet" зарезервировано на будущее
+  floors: FloorEntry[];   // .length >= 1
+  activeFloorIdx: number; // 0..floors.length-1
+  meta: {
+    createdAt: string;
+    updatedAt: string;
+    schemaVersion: 1;
+  };
+};
+
+function uid(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Обернуть одиночный LayoutFloor в LayoutProject (для backwards-compat). */
+export function wrapAsProject(layout: LayoutFloor, name?: string): LayoutProject {
+  const now = new Date().toISOString();
+  return {
+    id: uid(),
+    name,
+    units: "meters",
+    floors: [{ level: 1, label: "1 этаж", layout }],
+    activeFloorIdx: 0,
+    meta: { createdAt: now, updatedAt: now, schemaVersion: 1 },
+  };
+}
+
+/** Текущий активный LayoutFloor проекта. */
+export function getActiveFloor(project: LayoutProject): LayoutFloor {
+  return project.floors[project.activeFloorIdx]!.layout;
+}
+
+/** Вернуть копию проекта с заменённым активным этажом. */
+export function updateActiveFloor(
+  project: LayoutProject,
+  newLayout: LayoutFloor,
+): LayoutProject {
+  const floors = project.floors.map((f, i) =>
+    i === project.activeFloorIdx ? { ...f, layout: newLayout } : f,
+  );
+  return {
+    ...project,
+    floors,
+    meta: { ...project.meta, updatedAt: new Date().toISOString() },
+  };
+}
+
 /**
  * Генерировать структурированную планировку этажа (параметрически + AI).
  * Используется перед скачиванием IFC чтобы передать реальную геометрию.

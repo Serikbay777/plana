@@ -10,7 +10,7 @@
 // Этапы 2-3 (drag-edit стен, авто-замыкание комнат, размеры) — следующие
 // итерации поверх той же модели данных.
 
-import { useState, useRef, useCallback, useEffect, type ReactElement } from "react";
+import { useState, useRef, useCallback, useEffect, useReducer, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
   Pencil, RefreshCw, Undo2, Redo2, Send, MessageSquare, Grid3x3,
@@ -22,44 +22,25 @@ import {
   type LayoutFurniture,
   type BriefLayoutResponse,
 } from "@/lib/engine";
+import {
+  projectReducer,
+  initialEditorState,
+  selectCurrentLayout,
+  selectCanUndo,
+  selectCanRedo,
+  type RoomRef,
+} from "@/lib/projectReducer";
+import { FloorSelector } from "@/components/editor/FloorSelector";
 
 type Status = "idle" | "loading" | "ready" | "error";
 
 type ExportKind = "dxf" | "ifc" | "viz";
-
-type RoomRef = { sectionIdx: number; aptIdx: number; roomIdx: number };
 
 type ChatMsg = {
   role: "user" | "ai" | "error";
   text: string;
   ts: number;
 };
-
-const SNAP_M = 0.1;        // шаг привязки drag'а к сетке (0.1 м)
-
-function cloneLayout(l: LayoutFloor): LayoutFloor {
-  // structuredClone — быстрый глубокий клон встроенный в браузер
-  return typeof structuredClone === "function"
-    ? structuredClone(l)
-    : JSON.parse(JSON.stringify(l));
-}
-
-function moveRoomInLayout(
-  layout: LayoutFloor,
-  ref: RoomRef,
-  newX: number,
-  newY: number,
-): LayoutFloor {
-  const next = cloneLayout(layout);
-  const room = next.sections[ref.sectionIdx]?.apartments[ref.aptIdx]?.rooms[ref.roomIdx];
-  if (room) {
-    room.x = Math.max(0, newX);
-    room.y = Math.max(0, newY);
-  }
-  return next;
-}
-
-const snap = (v: number) => Math.round(v / SNAP_M) * SNAP_M;
 
 
 const BRIEF_PLACEHOLDER = `Например:
@@ -82,83 +63,35 @@ export function ArchitecturalDrawingsTab({
   const [vizImageUrl, setVizImageUrl] = useState<string | null>(null);
   const [enhancing, setEnhancing] = useState(false);
 
-  // ── Редактор (D-2/D-3) ─────────────────────────────────────────────
-  // Поднимаем layout наверх как мутируемый стейт. result.layout — исходный
-  // (для повторной генерации), editedLayout — текущая редактируемая версия.
-  const [editedLayout, setEditedLayout] = useState<LayoutFloor | null>(null);
-  const [editMode, setEditMode] = useState(false);
-  const [selected, setSelected] = useState<RoomRef | null>(null);
+  // ── Editor state via useReducer (Sprint 1 v1.0 plan) ───────────────
+  // Один reducer над всем editor state: project (с multi-floor),
+  // history/hIdx (undo/redo), selected, editMode. Все мутации — pure через
+  // dispatch. Заменил россыпь useState и editedLayoutRef из D-2/D-3.
+  const [editorState, dispatch] = useReducer(projectReducer, initialEditorState);
+  const { project, selected, editMode } = editorState;
+  const currentLayout = selectCurrentLayout(editorState);
+  const canUndo = selectCanUndo(editorState);
+  const canRedo = selectCanRedo(editorState);
 
-  // История для undo/redo. Каждый снапшот — целый LayoutFloor. Снапшоты
-  // создаются на завершении drag (mouseup) — один drag = одна запись.
-  const [history, setHistory] = useState<LayoutFloor[]>([]);
-  const [hIdx, setHIdx] = useState(-1);
-  const editedLayoutRef = useRef<LayoutFloor | null>(null);
-  useEffect(() => { editedLayoutRef.current = editedLayout; }, [editedLayout]);
-
+  // При новой генерации — заворачиваем layout в LayoutProject (1 этаж),
+  // history и selection сбрасываются reducer'ом сами.
   useEffect(() => {
-    // Новая генерация — копируем layout в редактируемый стейт, сбрасываем selection и историю.
     if (result) {
-      const initial = cloneLayout(result.layout);
-      setEditedLayout(initial);
-      setHistory([initial]);
-      setHIdx(0);
-      setSelected(null);
-      setEditMode(false);
+      dispatch({ type: "SET_PROJECT_FROM_LAYOUT", layout: result.layout });
     } else {
-      setEditedLayout(null);
-      setHistory([]);
-      setHIdx(-1);
+      dispatch({ type: "CLEAR" });
     }
   }, [result]);
 
-  const currentLayout = editedLayout ?? result?.layout ?? null;
-  const canUndo = hIdx > 0;
-  const canRedo = hIdx >= 0 && hIdx < history.length - 1;
-
-  const handleRoomSelect = (ref: RoomRef | null) => setSelected(ref);
+  const handleRoomSelect = (ref: RoomRef | null) =>
+    dispatch({ type: "SELECT_ROOM", ref });
   const handleRoomMove = (ref: RoomRef, newX: number, newY: number) => {
-    setEditedLayout((prev) => prev ? moveRoomInLayout(prev, ref, snap(newX), snap(newY)) : prev);
+    dispatch({ type: "MOVE_ROOM", ref, newX, newY });
   };
-  const handleRoomMoveCommit = () => {
-    // Push current state in history (одна запись на один drag)
-    const cur = editedLayoutRef.current;
-    if (!cur) return;
-    setHistory((prevHist) => {
-      const trimmed = prevHist.slice(0, hIdx + 1);
-      // Если ничего не изменилось — не пушим лишнюю запись
-      const last = trimmed[trimmed.length - 1];
-      if (last && JSON.stringify(last) === JSON.stringify(cur)) return prevHist;
-      return [...trimmed, cloneLayout(cur)];
-    });
-    setHIdx((prev) => prev + 1);
-  };
-  const handleResetEdits = () => {
-    if (!result) return;
-    const fresh = cloneLayout(result.layout);
-    setEditedLayout(fresh);
-    setHistory([fresh]);
-    setHIdx(0);
-    setSelected(null);
-  };
-
-  const undo = useCallback(() => {
-    setHIdx((prev) => {
-      if (prev <= 0) return prev;
-      const newIdx = prev - 1;
-      setEditedLayout(cloneLayout(history[newIdx]));
-      return newIdx;
-    });
-  }, [history]);
-
-  const redo = useCallback(() => {
-    setHIdx((prev) => {
-      if (prev >= history.length - 1) return prev;
-      const newIdx = prev + 1;
-      setEditedLayout(cloneLayout(history[newIdx]));
-      return newIdx;
-    });
-  }, [history]);
+  const handleRoomMoveCommit = () => dispatch({ type: "COMMIT_HISTORY" });
+  const handleResetEdits = () => dispatch({ type: "RESET_EDITS" });
+  const undo = useCallback(() => dispatch({ type: "UNDO" }), []);
+  const redo = useCallback(() => dispatch({ type: "REDO" }), []);
 
   // Keyboard shortcuts — Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z
   useEffect(() => {
@@ -206,13 +139,8 @@ export function ArchitecturalDrawingsTab({
     setChatBusy(true);
     try {
       const newLayout = await editLayoutWithChat(currentLayout, text);
-      setEditedLayout(newLayout);
-      // Пушим в историю чтобы undo откатывал чат-правку
-      setHistory((prevHist) => {
-        const trimmed = prevHist.slice(0, hIdx + 1);
-        return [...trimmed, cloneLayout(newLayout)];
-      });
-      setHIdx((prev) => prev + 1);
+      // Заменяем активный этаж и пушим в history — Ctrl+Z откатит chat-правку.
+      dispatch({ type: "REPLACE_ACTIVE_FLOOR", layout: newLayout, pushHistory: true });
       setChatMsgs((prev) => [...prev, { role: "ai", text: "Готово ✓", ts: Date.now() }]);
     } catch (e) {
       setChatMsgs((prev) => [
@@ -343,9 +271,19 @@ export function ArchitecturalDrawingsTab({
         {result && (
           <>
             <div className="flex-1" />
+            {project && project.floors.length > 0 && (
+              <FloorSelector
+                project={project}
+                variant="dark"
+                onSelect={(idx) => dispatch({ type: "SET_ACTIVE_FLOOR", idx })}
+                onAddFloor={() => dispatch({ type: "ADD_FLOOR" })}
+                onDuplicateActive={() => dispatch({ type: "DUPLICATE_ACTIVE_FLOOR" })}
+                onDeleteActive={() => dispatch({ type: "DELETE_ACTIVE_FLOOR" })}
+              />
+            )}
             {/* Edit mode toggle */}
             <button
-              onClick={() => setEditMode((v) => !v)}
+              onClick={() => dispatch({ type: "SET_EDIT_MODE", on: !editMode })}
               title={editMode ? "Выйти из редактора" : "Включить редактор: можно двигать комнаты"}
               className={[
                 "h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 transition",
@@ -374,7 +312,7 @@ export function ArchitecturalDrawingsTab({
                 >
                   <Redo2 size={12} />
                 </button>
-                {editedLayout && result && (
+                {canUndo && result && (
                   <button
                     onClick={handleResetEdits}
                     title="Откатить все ручные изменения к исходному AI-плану"
