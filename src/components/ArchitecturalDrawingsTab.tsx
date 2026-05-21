@@ -36,6 +36,9 @@ import { FloorSelector } from "@/components/editor/FloorSelector";
 import { LeftToolbar } from "@/components/editor/LeftToolbar";
 import { ModeTabs } from "@/components/editor/ModeTabs";
 import { LayersPanel } from "@/components/editor/LayersPanel";
+import { SnapControls } from "@/components/editor/SnapControls";
+import { HotkeysHelp } from "@/components/editor/HotkeysHelp";
+import { matchHotkey } from "@/lib/hotkeys";
 
 type Status = "idle" | "loading" | "ready" | "error";
 
@@ -88,8 +91,13 @@ export function ArchitecturalDrawingsTab({
     }
   }, [result]);
 
-  const handleRoomSelect = (ref: RoomRef | null) =>
-    dispatch({ type: "SELECT_ROOM", ref });
+  const handleRoomSelect = (ref: RoomRef | null, multi?: boolean) => {
+    if (multi && ref) {
+      dispatch({ type: "TOGGLE_SELECT_ROOM", ref });
+    } else {
+      dispatch({ type: "SELECT_ROOM", ref });
+    }
+  };
   const handleRoomMove = (ref: RoomRef, newX: number, newY: number) => {
     dispatch({ type: "MOVE_ROOM", ref, newX, newY });
   };
@@ -98,24 +106,44 @@ export function ArchitecturalDrawingsTab({
   const undo = useCallback(() => dispatch({ type: "UNDO" }), []);
   const redo = useCallback(() => dispatch({ type: "REDO" }), []);
 
-  // Keyboard shortcuts — Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z
+  // ── Hotkeys ─────────────────────────────────────────────────────────
+  // Один глобальный handler через matchHotkey: tool/mode переключение, undo/
+  // redo, навигация между этажами, toggle сетки, help-модалка по ?. Часть
+  // действий (lock, delete) пока заглушки до Sprint 5.
+  const [helpOpen, setHelpOpen] = useState(false);
   useEffect(() => {
-    if (!editMode || !currentLayout) return;
+    if (!project) return;
     const onKey = (e: KeyboardEvent) => {
-      const isMod = e.ctrlKey || e.metaKey;
-      if (!isMod) return;
-      const k = e.key.toLowerCase();
-      if (k === "z" && !e.shiftKey) {
-        e.preventDefault();
-        undo();
-      } else if ((k === "z" && e.shiftKey) || k === "y") {
-        e.preventDefault();
-        redo();
+      const m = matchHotkey(e);
+      if (!m) return;
+      e.preventDefault();
+      switch (m.kind) {
+        case "setTool": dispatch({ type: "SET_TOOL", tool: m.tool }); break;
+        case "setMode": dispatch({ type: "SET_MODE", mode: m.mode }); break;
+        case "toggleLayer": dispatch({ type: "TOGGLE_LAYER", id: m.id }); break;
+        case "undo": undo(); break;
+        case "redo": redo(); break;
+        case "floorPrev":
+          if (project) {
+            dispatch({ type: "SET_ACTIVE_FLOOR", idx: project.activeFloorIdx - 1 });
+          }
+          break;
+        case "floorNext":
+          if (project) {
+            dispatch({ type: "SET_ACTIVE_FLOOR", idx: project.activeFloorIdx + 1 });
+          }
+          break;
+        case "escape": dispatch({ type: "CLEAR_SELECTION" }); break;
+        case "openHelp": setHelpOpen(true); break;
+        case "lock":
+        case "deleteSelected":
+          // TODO Sprint 5
+          break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editMode, currentLayout, undo, redo]);
+  }, [project, undo, redo]);
 
   // ── Чат-итерация (E) ──────────────────────────────────────────────
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
@@ -284,6 +312,13 @@ export function ArchitecturalDrawingsTab({
                 onAddFloor={() => dispatch({ type: "ADD_FLOOR" })}
                 onDuplicateActive={() => dispatch({ type: "DUPLICATE_ACTIVE_FLOOR" })}
                 onDeleteActive={() => dispatch({ type: "DELETE_ACTIVE_FLOOR" })}
+              />
+            )}
+            {editMode && (
+              <SnapControls
+                step={editorState.snap.step}
+                onChange={(step) => dispatch({ type: "SET_SNAP", snap: { step } })}
+                variant="dark"
               />
             )}
             {/* Edit mode toggle */}
@@ -504,6 +539,19 @@ export function ArchitecturalDrawingsTab({
               />
             </div>
           )}
+
+          {/* Help button — discoverability hotkeys */}
+          {status === "ready" && currentLayout && (
+            <button
+              type="button"
+              onClick={() => setHelpOpen(true)}
+              title="Горячие клавиши (?)"
+              aria-label="Горячие клавиши"
+              className="absolute bottom-3 right-3 z-10 grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-black/40 text-[12px] font-bold text-white/70 backdrop-blur hover:bg-black/60 hover:text-white"
+            >
+              ?
+            </button>
+          )}
           {status === "idle" && !result && (
             <div className="absolute inset-0 grid place-items-center text-center p-8">
               <div className="max-w-md">
@@ -561,6 +609,7 @@ export function ArchitecturalDrawingsTab({
                           layout={currentLayout}
                           editMode={editMode}
                           selected={selected}
+                          selection={editorState.selection}
                           layers={editorState.layers}
                           onSelectRoom={handleRoomSelect}
                           onMoveRoom={handleRoomMove}
@@ -586,6 +635,7 @@ export function ArchitecturalDrawingsTab({
                       layout={currentLayout}
                       editMode={editMode}
                       selected={selected}
+                      selection={editorState.selection}
                       layers={editorState.layers}
                       onSelectRoom={handleRoomSelect}
                       onMoveRoom={handleRoomMove}
@@ -603,6 +653,8 @@ export function ArchitecturalDrawingsTab({
           )}
         </div>
       </div>
+
+      <HotkeysHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
     </>
   );
 }
@@ -681,8 +733,11 @@ type FloorPlanSvgProps = {
   layout: LayoutFloor;
   editMode?: boolean;
   selected?: RoomRef | null;
+  /** Полный набор выделений для multi-select. Если не передан — рисуем только primary. */
+  selection?: RoomRef[];
   layers?: LayersState;
-  onSelectRoom?: (ref: RoomRef | null) => void;
+  /** При Shift/Ctrl/Meta+click multi=true → toggle вместо replace. */
+  onSelectRoom?: (ref: RoomRef | null, multi?: boolean) => void;
   onMoveRoom?: (ref: RoomRef, newX: number, newY: number) => void;
   onMoveCommit?: () => void;
 };
@@ -692,6 +747,7 @@ function FloorPlanSvg({
   layout,
   editMode = false,
   selected = null,
+  selection,
   layers,
   onSelectRoom,
   onMoveRoom,
@@ -700,6 +756,23 @@ function FloorPlanSvg({
   // Helper: видим ли слой? default true для backwards compat.
   const layerVisible = (id: LayerId): boolean =>
     layers ? layers[id].visible : true;
+  // Helper: входит ли ref в multi-selection (или равен primary, если selection не задан).
+  const refSelected = (ref: RoomRef): boolean => {
+    if (selection) {
+      return selection.some(
+        (r) =>
+          r.sectionIdx === ref.sectionIdx
+          && r.aptIdx === ref.aptIdx
+          && r.roomIdx === ref.roomIdx,
+      );
+    }
+    return (
+      selected !== null
+      && selected.sectionIdx === ref.sectionIdx
+      && selected.aptIdx === ref.aptIdx
+      && selected.roomIdx === ref.roomIdx
+    );
+  };
   // Padding в метрах вокруг здания (для подписей размеров)
   const PAD = 3;
   const W = layout.width_m;
@@ -899,11 +972,7 @@ function FloorPlanSvg({
                     aptIdx: aIdx,
                     roomIdx: rIdx,
                   };
-                  const isSelected =
-                    selected !== null &&
-                    selected.sectionIdx === ref.sectionIdx &&
-                    selected.aptIdx === ref.aptIdx &&
-                    selected.roomIdx === ref.roomIdx;
+                  const isSelected = refSelected(ref);
                   return (
                     <rect
                       key={rIdx}
@@ -915,7 +984,8 @@ function FloorPlanSvg({
                         : undefined}
                       onClick={editMode ? (e) => {
                         e.stopPropagation();
-                        onSelectRoom?.(ref);
+                        const multi = e.shiftKey || e.ctrlKey || e.metaKey;
+                        onSelectRoom?.(ref, multi);
                       } : undefined}
                       style={editMode ? { cursor: "move" } : undefined}
                       // outline для выделенной комнаты — добавим overlay в отдельной группе ниже
@@ -1152,26 +1222,29 @@ function FloorPlanSvg({
           </g>
         ))}
 
-        {/* ── Outline выделенной комнаты в edit-mode ─────────────────── */}
-        {editMode && selected && (() => {
-          const section = layout.sections[selected.sectionIdx];
-          const apt = section?.apartments[selected.aptIdx];
-          const room = apt?.rooms[selected.roomIdx];
+        {/* ── Outline выделенных комнат в edit-mode (multi-select) ────── */}
+        {editMode && (selection ?? (selected ? [selected] : [])).map((ref, i) => {
+          const section = layout.sections[ref.sectionIdx];
+          const apt = section?.apartments[ref.aptIdx];
+          const room = apt?.rooms[ref.roomIdx];
           if (!room || !apt) return null;
           const rx = apt.x + room.x;
           const archY = apt.y + room.y;
+          // Primary (первый в selection) — синий; остальные — голубее.
+          const isPrimary = i === 0;
           return (
             <rect
+              key={`sel-${ref.sectionIdx}-${ref.aptIdx}-${ref.roomIdx}`}
               x={rx} y={ry(archY, room.d)}
               width={room.w} height={room.d}
               fill="none"
-              stroke="#0ea5e9"
-              strokeWidth={0.12}
+              stroke={isPrimary ? "#0ea5e9" : "#38bdf8"}
+              strokeWidth={isPrimary ? 0.12 : 0.09}
               strokeDasharray="0.25 0.15"
               pointerEvents="none"
             />
           );
-        })()}
+        })}
 
         {/* ── Размерные линии в CAD-стиле (засечки 45° на концах) ─────── */}
         {layerVisible("dimensions") && (

@@ -73,16 +73,35 @@ function defaultLayers(): LayersState {
   return result;
 }
 
+// Snap settings (Sprint 3). step=0 → off (без привязки к сетке).
+// snapToAngle и snapToWall — заготовки для S3 / S5; пока влияют только на
+// будущие drawing-инструменты, не на drag комнат.
+export type SnapSettings = {
+  step: number;          // шаг сетки в метрах: 0 (off) / 0.1 / 0.5 / 1.0
+  snapToAngle: boolean;  // только 0/45/90 для draw tools
+  snapToWall: boolean;   // привязка к end-points и серединам стен
+};
+
+const DEFAULT_SNAP: SnapSettings = {
+  step: 0.1,
+  snapToAngle: true,
+  snapToWall: true,
+};
+
 export type EditorState = {
   project: LayoutProject | null;     // null = ничего ещё не сгенерировано
   initialProject: LayoutProject | null; // снэпшот «как сгенерировал AI» — для RESET_EDITS
   history: LayoutProject[];
   hIdx: number;                       // -1 если history пуст
+  /** Primary-selection — обратная совместимость с D-2 кодом (outline, drag). */
   selected: RoomRef | null;
+  /** Полный набор выделенных объектов — Sprint 3+. Содержит primary первым элементом. */
+  selection: RoomRef[];
   editMode: boolean;
   tool: ToolKind;
   mode: EditorMode;
   layers: LayersState;
+  snap: SnapSettings;
 };
 
 export const initialEditorState: EditorState = {
@@ -91,10 +110,12 @@ export const initialEditorState: EditorState = {
   history: [],
   hIdx: -1,
   selected: null,
+  selection: [],
   editMode: false,
   tool: "select",
   mode: "edit",
   layers: defaultLayers(),
+  snap: DEFAULT_SNAP,
 };
 
 // ---------------------------------------------------------------------------
@@ -111,6 +132,8 @@ export type EditorAction =
   | { type: "REDO" }
   | { type: "RESET_EDITS" }
   | { type: "SELECT_ROOM"; ref: RoomRef | null }
+  | { type: "TOGGLE_SELECT_ROOM"; ref: RoomRef }
+  | { type: "CLEAR_SELECTION" }
   | { type: "SET_EDIT_MODE"; on: boolean }
   | { type: "SET_ACTIVE_FLOOR"; idx: number }
   | { type: "ADD_FLOOR"; level?: number; label?: string }
@@ -121,14 +144,30 @@ export type EditorAction =
   | { type: "TOGGLE_LAYER"; id: LayerId }
   | { type: "SET_LAYER_VISIBLE"; id: LayerId; visible: boolean }
   | { type: "SET_LAYER_LOCKED"; id: LayerId; locked: boolean }
+  | { type: "SET_SNAP"; snap: Partial<SnapSettings> }
   | { type: "CLEAR" };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const SNAP_M = 0.1;
-const snap = (v: number) => Math.round(v / SNAP_M) * SNAP_M;
+/** Привязать значение к шагу сетки. step=0 → возвращаем как есть. */
+function snapValue(v: number, step: number): number {
+  if (step <= 0) return v;
+  return Math.round(v / step) * step;
+}
+
+/** Сравнение RoomRef по содержимому. */
+export function sameRef(a: RoomRef, b: RoomRef): boolean {
+  return a.sectionIdx === b.sectionIdx
+    && a.aptIdx === b.aptIdx
+    && a.roomIdx === b.roomIdx;
+}
+
+/** Входит ли ref в selection. Для рендера outline на canvas. */
+export function isInSelection(selection: RoomRef[], ref: RoomRef): boolean {
+  return selection.some((r) => sameRef(r, ref));
+}
 
 function cloneProject(p: LayoutProject): LayoutProject {
   return typeof structuredClone === "function"
@@ -141,6 +180,7 @@ function moveRoomInFloor(
   ref: RoomRef,
   newX: number,
   newY: number,
+  step: number,
 ): LayoutFloor {
   const next = typeof structuredClone === "function"
     ? structuredClone(layout)
@@ -148,8 +188,8 @@ function moveRoomInFloor(
   const room =
     next.sections[ref.sectionIdx]?.apartments[ref.aptIdx]?.rooms[ref.roomIdx];
   if (room) {
-    room.x = Math.max(0, snap(newX));
-    room.y = Math.max(0, snap(newY));
+    room.x = Math.max(0, snapValue(newX, step));
+    room.y = Math.max(0, snapValue(newY, step));
   }
   return next;
 }
@@ -196,7 +236,9 @@ export function projectReducer(
     case "MOVE_ROOM": {
       if (!state.project) return state;
       const cur = getActiveFloor(state.project);
-      const newFloor = moveRoomInFloor(cur, action.ref, action.newX, action.newY);
+      const newFloor = moveRoomInFloor(
+        cur, action.ref, action.newX, action.newY, state.snap.step,
+      );
       const newProject = updateActiveFloor(state.project, newFloor);
       // history НЕ пушим — это идёт через COMMIT_HISTORY на mouseup
       return { ...state, project: newProject };
@@ -263,10 +305,34 @@ export function projectReducer(
     }
 
     case "SELECT_ROOM":
-      return { ...state, selected: action.ref };
+      return {
+        ...state,
+        selected: action.ref,
+        selection: action.ref ? [action.ref] : [],
+      };
+
+    case "TOGGLE_SELECT_ROOM": {
+      const idx = state.selection.findIndex((r) => sameRef(r, action.ref));
+      if (idx >= 0) {
+        // remove
+        const next = state.selection.filter((_, i) => i !== idx);
+        return { ...state, selection: next, selected: next[0] ?? null };
+      }
+      // add: новый идёт в primary
+      const next = [action.ref, ...state.selection];
+      return { ...state, selection: next, selected: action.ref };
+    }
+
+    case "CLEAR_SELECTION":
+      return { ...state, selection: [], selected: null };
 
     case "SET_EDIT_MODE":
-      return { ...state, editMode: action.on, selected: action.on ? state.selected : null };
+      return {
+        ...state,
+        editMode: action.on,
+        selected: action.on ? state.selected : null,
+        selection: action.on ? state.selection : [],
+      };
 
     case "SET_ACTIVE_FLOOR": {
       if (!state.project) return state;
@@ -373,6 +439,9 @@ export function projectReducer(
           [action.id]: { ...state.layers[action.id], locked: action.locked },
         },
       };
+
+    case "SET_SNAP":
+      return { ...state, snap: { ...state.snap, ...action.snap } };
 
     case "CLEAR":
       // tool/mode/layers сбрасываются вместе с проектом
