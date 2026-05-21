@@ -964,5 +964,26 @@ export async function classifyPdfPage(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Архитектурные чертежи: свободное ТЗ → структурированный layout этажа
+// (типы LayoutFloor/Section/Apartment/Room уже объявлены выше)
+// ---------------------------------------------------------------------------
+
+export type BriefLayoutResponse = {
+  layout: LayoutFloor;
+  inputs: VisualizeFromInputsRequest;
+  used_defaults: string[];
+  notes: string;
+};
+
+export async function generateLayoutFromBrief(
+  brief: string,
+): Promise<BriefLayoutResponse> {
+  return request("/generate/layout-from-brief", {
+    method: "POST",
+    body: JSON.stringify({ brief }),
+  });
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;

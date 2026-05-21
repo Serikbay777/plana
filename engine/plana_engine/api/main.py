@@ -1700,6 +1700,100 @@ def generate_floor_layout_endpoint(req: VisualizeFromInputsRequest) -> LayoutFlo
         raise HTTPException(status_code=500, detail=f"Layout generation failed: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Архитектурные чертежи: свободное ТЗ → структурированный план этажа
+# Этап 1 фичи «мини-CAD на платформе».
+# ---------------------------------------------------------------------------
+
+
+class BriefRequest(BaseModel):
+    brief: str
+
+
+class BriefLayoutResponse(BaseModel):
+    layout: LayoutFloor
+    inputs: VisualizeFromInputsRequest
+    used_defaults: list[str]
+    notes: str
+
+
+def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list[str]]:
+    """Заполнить VisualizeFromInputsRequest из BriefDerivedInputs + дефолты.
+
+    Возвращает (request, used_defaults) — список полей, для которых
+    GPT не нашёл значение в ТЗ и мы подставили дефолт.
+    """
+    used: list[str] = []
+
+    def _or(value: Any, default: Any, name: str) -> Any:
+        if value is None:
+            used.append(name)
+            return default
+        return value
+
+    purpose_raw = b.purpose
+    try:
+        purpose = BuildingPurpose(purpose_raw) if purpose_raw else BuildingPurpose.RESIDENTIAL
+    except ValueError:
+        purpose = BuildingPurpose.RESIDENTIAL
+        used.append("purpose")
+    if purpose_raw is None:
+        used.append("purpose")
+
+    return VisualizeFromInputsRequest(
+        site_width_m=    _or(b.site_width_m,    30.0, "site_width_m"),
+        site_depth_m=    _or(b.site_depth_m,    16.0, "site_depth_m"),
+        setback_front_m= _or(b.setback_front_m, 5.0,  "setback_front_m"),
+        setback_side_m=  _or(b.setback_side_m,  5.0,  "setback_side_m"),
+        setback_rear_m=  _or(b.setback_rear_m,  5.0,  "setback_rear_m"),
+        floors=          _or(b.floors,          4,    "floors"),
+        purpose=         purpose,
+        sections=        _or(b.sections,        1,    "sections"),
+        studio_pct=      _or(b.studio_pct,      0.0,  "studio_pct"),
+        k1_pct=          _or(b.k1_pct,          25.0, "k1_pct"),
+        k2_pct=          _or(b.k2_pct,          50.0, "k2_pct"),
+        k3_pct=          _or(b.k3_pct,          25.0, "k3_pct"),
+        lifts_passenger= _or(b.lifts_passenger, 1,    "lifts_passenger"),
+        lifts_freight=   _or(b.lifts_freight,   0,    "lifts_freight"),
+        max_height_m=    _or(b.max_height_m,    30.0, "max_height_m"),
+    ), used
+
+
+@app.post("/generate/layout-from-brief", response_model=BriefLayoutResponse)
+def generate_layout_from_brief_endpoint(req: BriefRequest) -> BriefLayoutResponse:
+    """Свободное ТЗ → GPT-4 → MarketingInputs → детерминированный layout.
+
+    Возвращает layout + восстановленный VisualizeFromInputsRequest
+    (фронт хранит его для последующих /export/floorplan-dxf, /visualize/sheet
+    и т.д.) + список полей, заполненных дефолтами.
+    """
+    if not req.brief or not req.brief.strip():
+        raise HTTPException(status_code=400, detail="brief is empty")
+
+    from ..visualizer.brief_parser import BriefParseError, parse_brief
+    from ..visualizer.layout_generator import generate_floor_layout
+
+    try:
+        derived = parse_brief(req.brief)
+    except BriefParseError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    inputs_req, used_defaults = _request_from_brief_inputs(derived)
+    marketing_inputs = _inputs_from_req(inputs_req)
+
+    try:
+        layout = generate_floor_layout(marketing_inputs)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Layout generation failed: {e}")
+
+    return BriefLayoutResponse(
+        layout=layout,
+        inputs=inputs_req,
+        used_defaults=used_defaults,
+        notes=derived.notes,
+    )
+
+
 @app.post("/export/floorplan-dxf")
 def export_floorplan_dxf(req: VisualizeFromInputsRequest) -> Response:
     """Сгенерировать DXF плана типового этажа (для AutoCAD/ArchiCAD/Revit).

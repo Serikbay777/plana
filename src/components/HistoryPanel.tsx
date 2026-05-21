@@ -13,14 +13,15 @@ import type { PromptFormState } from "@/components/PromptForm";
 // Config
 // ---------------------------------------------------------------------------
 
-type HistoryTab = "ai_plans" | "viz" | "site" | "placement" | "pdf_viz";
+type HistoryTab = "ai_plans" | "viz" | "site" | "placement" | "pdf_viz" | "arch_drawings";
 
 const HISTORY_TABS: { key: HistoryTab; label: string; icon: React.ReactNode; tabs: string[] }[] = [
-  { key: "ai_plans",   label: "Чертежи",      icon: <LayoutGrid size={11} />, tabs: ["ai_plans"] },
-  { key: "viz",        label: "Визуализация",  icon: <ImageIcon  size={11} />, tabs: ["viz_exterior", "viz_floor", "viz_interior"] },
-  { key: "site",       label: "Посадка",       icon: <MapPin     size={11} />, tabs: ["site"] },
-  { key: "placement",  label: "Размещение ЖК", icon: <Building2  size={11} />, tabs: ["placement"] },
-  { key: "pdf_viz",    label: "PDF",           icon: <FileText   size={11} />, tabs: ["pdf_viz"] },
+  { key: "ai_plans",       label: "Чертежи",      icon: <LayoutGrid size={11} />, tabs: ["ai_plans"] },
+  { key: "viz",            label: "Визуализация",  icon: <ImageIcon  size={11} />, tabs: ["viz_exterior", "viz_floor", "viz_interior"] },
+  { key: "site",           label: "Посадка",       icon: <MapPin     size={11} />, tabs: ["site"] },
+  { key: "placement",      label: "Размещение ЖК", icon: <Building2  size={11} />, tabs: ["placement"] },
+  { key: "pdf_viz",        label: "PDF",           icon: <FileText   size={11} />, tabs: ["pdf_viz"] },
+  { key: "arch_drawings",  label: "Арх. чертежи",  icon: <LayoutGrid size={11} />, tabs: ["arch_drawings"] },
 ];
 
 const VIZ_TAB_LABEL: Record<string, string> = {

@@ -47,6 +47,7 @@ import { getSession, signOut, type Session } from "@/lib/auth";
 import { createProject, updateProject, uploadAsset, getProject, createRun, listProjects, type GenerationRun, type Project as ProjectType } from "@/lib/projects";
 import HistoryPanel from "@/components/HistoryPanel";
 import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
+import { ArchitecturalDrawingsTab } from "@/components/ArchitecturalDrawingsTab";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -54,7 +55,7 @@ import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
 
 type GenState = "idle" | "loading" | "ready" | "error";
 type CadExportKind = "dxf" | "ifc";
-type TopTab = "site" | "viz" | "ai_plans" | "placement" | "pdf_viz";
+type TopTab = "site" | "viz" | "ai_plans" | "placement" | "pdf_viz" | "arch_drawings";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
 
 // Tab 2/3 — AI картинки
@@ -712,6 +713,9 @@ export default function AppPage() {
       // Полноценный restore PDF-альбома требовал бы хранить исходный PDF —
       // в MVP просто переключаем таб; превью сохранённых ассетов остаётся в Истории.
       setTab("pdf_viz");
+    } else if (run.tab === "arch_drawings") {
+      // Этап 1: restore = просто переключение таба + превью в Истории.
+      setTab("arch_drawings");
     }
   }, []);
 
@@ -824,10 +828,10 @@ export default function AppPage() {
 
       <main
         className="flex-1 px-6 pb-6 pt-4 grid gap-4"
-        style={{ gridTemplateColumns: (tab === "placement" || tab === "site" || tab === "pdf_viz") ? "1fr" : "300px minmax(0, 1fr)" }}
+        style={{ gridTemplateColumns: (tab === "placement" || tab === "site" || tab === "pdf_viz" || tab === "arch_drawings") ? "1fr" : "300px minmax(0, 1fr)" }}
       >
         {/* LEFT — форма + панель валидации (скрыто на фото-табах) */}
-        {tab !== "placement" && tab !== "site" && tab !== "pdf_viz" && (
+        {tab !== "placement" && tab !== "site" && tab !== "pdf_viz" && tab !== "arch_drawings" && (
           <div className="flex flex-col gap-3 min-h-0">
             <PromptForm
               value={form}
@@ -940,6 +944,13 @@ export default function AppPage() {
                 autoSaveGeneration("pdf_viz", pageIndex, [asset], form);
               }}
               onResultsChange={setPdfVizResults}
+            />
+          )}
+          {tab === "arch_drawings" && (
+            <ArchitecturalDrawingsTab
+              onAutoSave={(asset) => {
+                autoSaveGeneration("arch_drawings", 1, [asset], form);
+              }}
             />
           )}
         </section>
@@ -1122,11 +1133,12 @@ function TabStrip({
   cadExportLoading: CadExportKind | null;
 }) {
   const items: Array<{ key: TopTab; label: string; icon: React.ReactNode }> = [
-    { key: "ai_plans",  label: "AI Чертежи",          icon: <Sparkles size={13} /> },
-    { key: "viz",       label: "Визуализации",         icon: <ImageIcon size={13} /> },
-    { key: "site",      label: "Посадка на участок",  icon: <MapIcon size={13} /> },
-    { key: "placement", label: "Размещение ЖК",        icon: <Building2 size={13} /> },
-    { key: "pdf_viz",   label: "PDF Визуализация",     icon: <FileText size={13} /> },
+    { key: "ai_plans",       label: "AI Чертежи",           icon: <Sparkles size={13} /> },
+    { key: "viz",            label: "Визуализации",          icon: <ImageIcon size={13} /> },
+    { key: "site",           label: "Посадка на участок",   icon: <MapIcon size={13} /> },
+    { key: "placement",      label: "Размещение ЖК",         icon: <Building2 size={13} /> },
+    { key: "pdf_viz",        label: "PDF Визуализация",      icon: <FileText size={13} /> },
+    { key: "arch_drawings",  label: "Архитектурные чертежи", icon: <Ruler size={13} /> },
   ];
   return (
     <div className="px-6 pt-3 pb-1 border-b border-white/[0.04] flex items-center justify-between gap-3 flex-wrap">
