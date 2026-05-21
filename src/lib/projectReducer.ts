@@ -23,6 +23,56 @@ export type RoomRef = {
   roomIdx: number;
 };
 
+// Инструменты левого toolbar (Sprint 2 — заглушки, активная логика на Sprint 3).
+export type ToolKind =
+  | "select"     // V — стрелка выбора
+  | "pan"        // H / Space — перемещение по канвасу
+  | "wall"       // W — рисование стены
+  | "door"       // D
+  | "window"     // N
+  | "stair"      // S
+  | "room"       // R — прямоугольная комната
+  | "furniture"  // F — открыть каталог
+  | "measure"    // M — линейка
+  | "dimension"  // Dim — постоянная размерная линия
+  | "eraser";    // E
+
+// Mode tabs сверху canvas (по Maket).
+export type EditorMode =
+  | "edit"       // геометрия: стены, комнаты
+  | "build"      // конструкция: толщины, материалы стен
+  | "finishes"   // отделка
+  | "objects"    // мебель / сантехника
+  | "visualize"; // 3D / рендер
+
+// Видимость и блокировка слоёв.
+export type LayerId =
+  | "walls"
+  | "rooms"
+  | "doors"
+  | "windows"
+  | "furniture"
+  | "dimensions"
+  | "texts"
+  | "grid"
+  | "scaleBar";
+
+export type LayerState = { visible: boolean; locked: boolean };
+export type LayersState = Record<LayerId, LayerState>;
+
+const ALL_LAYERS: LayerId[] = [
+  "walls", "rooms", "doors", "windows",
+  "furniture", "dimensions", "texts", "grid", "scaleBar",
+];
+
+function defaultLayers(): LayersState {
+  const result = {} as LayersState;
+  for (const id of ALL_LAYERS) {
+    result[id] = { visible: true, locked: false };
+  }
+  return result;
+}
+
 export type EditorState = {
   project: LayoutProject | null;     // null = ничего ещё не сгенерировано
   initialProject: LayoutProject | null; // снэпшот «как сгенерировал AI» — для RESET_EDITS
@@ -30,6 +80,9 @@ export type EditorState = {
   hIdx: number;                       // -1 если history пуст
   selected: RoomRef | null;
   editMode: boolean;
+  tool: ToolKind;
+  mode: EditorMode;
+  layers: LayersState;
 };
 
 export const initialEditorState: EditorState = {
@@ -39,6 +92,9 @@ export const initialEditorState: EditorState = {
   hIdx: -1,
   selected: null,
   editMode: false,
+  tool: "select",
+  mode: "edit",
+  layers: defaultLayers(),
 };
 
 // ---------------------------------------------------------------------------
@@ -60,6 +116,11 @@ export type EditorAction =
   | { type: "ADD_FLOOR"; level?: number; label?: string }
   | { type: "DUPLICATE_ACTIVE_FLOOR" }
   | { type: "DELETE_ACTIVE_FLOOR" }
+  | { type: "SET_TOOL"; tool: ToolKind }
+  | { type: "SET_MODE"; mode: EditorMode }
+  | { type: "TOGGLE_LAYER"; id: LayerId }
+  | { type: "SET_LAYER_VISIBLE"; id: LayerId; visible: boolean }
+  | { type: "SET_LAYER_LOCKED"; id: LayerId; locked: boolean }
   | { type: "CLEAR" };
 
 // ---------------------------------------------------------------------------
@@ -109,6 +170,7 @@ export function projectReducer(
     case "SET_PROJECT_FROM_LAYOUT": {
       const project = wrapAsProject(action.layout, action.name);
       return {
+        ...state,
         project,
         initialProject: project,
         history: [project],
@@ -121,6 +183,7 @@ export function projectReducer(
     case "SET_PROJECT": {
       const project = action.project;
       return {
+        ...state,
         project,
         initialProject: project,
         history: [project],
@@ -279,7 +342,40 @@ export function projectReducer(
       };
     }
 
+    case "SET_TOOL":
+      return { ...state, tool: action.tool };
+
+    case "SET_MODE":
+      return { ...state, mode: action.mode };
+
+    case "TOGGLE_LAYER": {
+      const cur = state.layers[action.id];
+      return {
+        ...state,
+        layers: { ...state.layers, [action.id]: { ...cur, visible: !cur.visible } },
+      };
+    }
+
+    case "SET_LAYER_VISIBLE":
+      return {
+        ...state,
+        layers: {
+          ...state.layers,
+          [action.id]: { ...state.layers[action.id], visible: action.visible },
+        },
+      };
+
+    case "SET_LAYER_LOCKED":
+      return {
+        ...state,
+        layers: {
+          ...state.layers,
+          [action.id]: { ...state.layers[action.id], locked: action.locked },
+        },
+      };
+
     case "CLEAR":
+      // tool/mode/layers сбрасываются вместе с проектом
       return initialEditorState;
 
     default:

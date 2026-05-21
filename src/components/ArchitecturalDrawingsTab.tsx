@@ -29,8 +29,13 @@ import {
   selectCanUndo,
   selectCanRedo,
   type RoomRef,
+  type LayersState,
+  type LayerId,
 } from "@/lib/projectReducer";
 import { FloorSelector } from "@/components/editor/FloorSelector";
+import { LeftToolbar } from "@/components/editor/LeftToolbar";
+import { ModeTabs } from "@/components/editor/ModeTabs";
+import { LayersPanel } from "@/components/editor/LayersPanel";
 
 type Status = "idle" | "loading" | "ready" | "error";
 
@@ -348,9 +353,22 @@ export function ArchitecturalDrawingsTab({
         )}
       </div>
 
-      {/* Контент: split-view */}
-      <div className="flex-1 min-h-0 grid" style={{ gridTemplateColumns: "320px minmax(0, 1fr)" }}>
-        {/* LEFT — текстовое ТЗ */}
+      {/* Контент: 3-колоночный layout (Maket-style) */}
+      {/* [LeftToolbar 44px] [ТЗ + chat 320px] [Canvas 1fr] */}
+      {/* Sprint 2 v1.0 plan: AI chat пока остаётся в центральной колонке,
+          в Sprint 5 он переедет в RightPanel. */}
+      <div className="flex-1 min-h-0 grid" style={{ gridTemplateColumns: "auto 320px minmax(0, 1fr)" }}>
+        {/* LEFT — Toolbar инструментов (Sprint 2: UI без реальной логики, S3 оживит) */}
+        <div className="border-r border-white/[0.04] py-2 px-2 flex flex-col gap-2 items-center">
+          <LeftToolbar
+            tool={editorState.tool}
+            onChange={(t) => dispatch({ type: "SET_TOOL", tool: t })}
+            variant="dark"
+            disabled={["wall", "door", "window", "stair", "room", "furniture", "measure", "dimension", "eraser"]}
+          />
+        </div>
+
+        {/* CENTER — текстовое ТЗ + AI чат */}
         <div className="border-r border-white/[0.04] p-4 flex flex-col gap-3 min-h-0">
           <div>
             <div className="text-[10.5px] uppercase tracking-wider text-white/45 mb-1.5">
@@ -455,8 +473,37 @@ export function ArchitecturalDrawingsTab({
           )}
         </div>
 
-        {/* RIGHT — canvas */}
+        {/* RIGHT — canvas + ModeTabs + LayersPanel (плавающая) */}
         <div className="relative overflow-hidden">
+          {/* ModeTabs над canvas — показываем только когда есть план */}
+          {status === "ready" && currentLayout && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
+              <ModeTabs
+                mode={editorState.mode}
+                onChange={(m) => dispatch({ type: "SET_MODE", mode: m })}
+                variant="dark"
+                disabled={["build", "finishes", "visualize"]}
+              />
+            </div>
+          )}
+
+          {/* LayersPanel плавающая в правом углу — только при наличии плана */}
+          {status === "ready" && currentLayout && (
+            <div className="absolute top-2 right-2 z-10 w-40">
+              <LayersPanel
+                layers={editorState.layers}
+                onToggleVisible={(id) => dispatch({ type: "TOGGLE_LAYER", id })}
+                onToggleLocked={(id) =>
+                  dispatch({
+                    type: "SET_LAYER_LOCKED",
+                    id,
+                    locked: !editorState.layers[id].locked,
+                  })
+                }
+                variant="dark"
+              />
+            </div>
+          )}
           {status === "idle" && !result && (
             <div className="absolute inset-0 grid place-items-center text-center p-8">
               <div className="max-w-md">
@@ -514,6 +561,7 @@ export function ArchitecturalDrawingsTab({
                           layout={currentLayout}
                           editMode={editMode}
                           selected={selected}
+                          layers={editorState.layers}
                           onSelectRoom={handleRoomSelect}
                           onMoveRoom={handleRoomMove}
                           onMoveCommit={handleRoomMoveCommit}
@@ -538,6 +586,7 @@ export function ArchitecturalDrawingsTab({
                       layout={currentLayout}
                       editMode={editMode}
                       selected={selected}
+                      layers={editorState.layers}
                       onSelectRoom={handleRoomSelect}
                       onMoveRoom={handleRoomMove}
                       onMoveCommit={handleRoomMoveCommit}
@@ -632,6 +681,7 @@ type FloorPlanSvgProps = {
   layout: LayoutFloor;
   editMode?: boolean;
   selected?: RoomRef | null;
+  layers?: LayersState;
   onSelectRoom?: (ref: RoomRef | null) => void;
   onMoveRoom?: (ref: RoomRef, newX: number, newY: number) => void;
   onMoveCommit?: () => void;
@@ -642,10 +692,14 @@ function FloorPlanSvg({
   layout,
   editMode = false,
   selected = null,
+  layers,
   onSelectRoom,
   onMoveRoom,
   onMoveCommit,
 }: FloorPlanSvgProps) {
+  // Helper: видим ли слой? default true для backwards compat.
+  const layerVisible = (id: LayerId): boolean =>
+    layers ? layers[id].visible : true;
   // Padding в метрах вокруг здания (для подписей размеров)
   const PAD = 3;
   const W = layout.width_m;
@@ -809,10 +863,10 @@ function FloorPlanSvg({
           <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#9c8554" strokeWidth={0.025} />
         </pattern>
       </defs>
-      {gridStyle === "dots" && (
+      {layerVisible("grid") && gridStyle === "dots" && (
         <rect x={0} y={0} width={viewBoxW} height={viewBoxH} fill={`url(#${gridId}-dots)`} />
       )}
-      {gridStyle === "grid" && (
+      {layerVisible("grid") && gridStyle === "grid" && (
         <>
           <rect x={0} y={0} width={viewBoxW} height={viewBoxH} fill={`url(#${gridId}-fine)`} />
           <rect x={0} y={0} width={viewBoxW} height={viewBoxH} fill={`url(#${gridId}-major)`} />
@@ -958,7 +1012,7 @@ function FloorPlanSvg({
         ))}
 
         {/* ── Мебель — мелкие иконки внутри комнат ────────────────────── */}
-        {layout.sections.map((section) => (
+        {layerVisible("furniture") && layout.sections.map((section) => (
           <g key={`furniture-${section.index}`}>
             {section.apartments.map((apt) =>
               apt.rooms.map((room, rIdx) =>
@@ -1031,7 +1085,7 @@ function FloorPlanSvg({
         />
 
         {/* ── Подписи комнат и номера квартир ─────────────────────────── */}
-        {layout.sections.map((section) => (
+        {layerVisible("texts") && layout.sections.map((section) => (
           <g key={`labels-${section.index}`}>
             {section.apartments.map((apt) => (
               <g key={`apt-label-${apt.number}`}>
@@ -1120,21 +1174,25 @@ function FloorPlanSvg({
         })()}
 
         {/* ── Размерные линии в CAD-стиле (засечки 45° на концах) ─────── */}
-        <DimensionLine
-          orientation="horizontal"
-          x1={0} x2={W} pos={ry(D + 1.5)}
-          label={`${W.toFixed(2)} М`}
-          color={LABEL_COLOR}
-        />
-        <DimensionLine
-          orientation="vertical"
-          y1={ry(D)} y2={ry(0)} pos={-1.5}
-          label={`${D.toFixed(2)} М`}
-          color={LABEL_COLOR}
-        />
+        {layerVisible("dimensions") && (
+          <>
+            <DimensionLine
+              orientation="horizontal"
+              x1={0} x2={W} pos={ry(D + 1.5)}
+              label={`${W.toFixed(2)} М`}
+              color={LABEL_COLOR}
+            />
+            <DimensionLine
+              orientation="vertical"
+              y1={ry(D)} y2={ry(0)} pos={-1.5}
+              label={`${D.toFixed(2)} М`}
+              color={LABEL_COLOR}
+            />
+          </>
+        )}
 
         {/* ── Scale bar (под зданием слева) ───────────────────────────── */}
-        <ScaleBar y={ry(0) + 0.8} color={LABEL_COLOR} />
+        {layerVisible("scaleBar") && <ScaleBar y={ry(0) + 0.8} color={LABEL_COLOR} />}
       </g>
     </svg>
 
