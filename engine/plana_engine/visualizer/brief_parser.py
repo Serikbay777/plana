@@ -28,9 +28,19 @@ class BriefDerivedInputs:
 
     Все поля опциональны — если не указано в ТЗ, заполним дефолтом.
     Названия совпадают с VisualizeFromInputsRequest для лёгкого маппинга.
+
+    КЛЮЧЕВОЕ РАЗДЕЛЕНИЕ:
+      • building_width_m / building_depth_m — пятно застройки (FOOTPRINT),
+        то что юзер обычно имеет в виду, когда говорит «дом 30×16»
+      • site_width_m / site_depth_m — размер участка (включая отступы)
+    Если указан только building — backend вычислит site = building + 2*setback.
+    Если указан только site — backend оставит как есть.
+    Если ничего не указано — backend применит дефолтные размеры.
     """
-    site_width_m:    float | None
-    site_depth_m:    float | None
+    site_width_m:     float | None
+    site_depth_m:     float | None
+    building_width_m: float | None
+    building_depth_m: float | None
     setback_front_m: float | None
     setback_side_m:  float | None
     setback_rear_m:  float | None
@@ -55,22 +65,40 @@ layout. Output strictly valid JSON matching the schema.
 
 CRITICAL RULES — read carefully:
 
-1. Building footprint dimensions (site_width_m, site_depth_m) are the MOST
-   important fields. Look HARDER for them. Sources to check, in order:
-     - explicit "30×16 м", "60 на 40 метров", "30x16", "30 м × 16 м"
-     - in project title or first line ("ЖК 60×40", "Дом 30 на 20")
-     - "длина 30, ширина 16" / "длинная сторона 30 м"
-     - approximate area "180-220 м²" + reasonable aspect → derive
-       width × depth (e.g. 200 m² ≈ 14×14 or 16×12)
-     - plot size "10 соток" = 1000 m² total plot — НЕ путать с пятном
-       застройки; здание обычно 30-40% от участка
-   If only an area is given (e.g. "200 м²") without aspect — pick a
-   reasonable rectangular footprint (aspect 1.5:1 — 2:1, e.g. 18×12).
+1. DIMENSIONS — самая важная часть. Различай ДВА типа размеров:
+
+   а) building_width_m / building_depth_m = ПЯТНО ЗАСТРОЙКИ (footprint
+      здания). Это то, что юзер обычно имеет в виду, когда говорит:
+        • «габариты здания 30×16»
+        • «дом 30×16 м»
+        • «ЖК 60×40»
+        • «здание длиной 30, глубиной 16»
+        • «корпус 30×16»
+      Когда видишь такие фразы — заполняй building_width_m /
+      building_depth_m, а site_*_m оставляй null.
+
+   б) site_width_m / site_depth_m = РАЗМЕР УЧАСТКА (включая землю
+      под отступами). Это когда юзер явно говорит про участок:
+        • «участок 50×30»
+        • «земельный надел 40×25»
+        • «лот 30×20»
+        • «надел 10 соток» (= 1000 м² участка, аспект 1.4:1 →
+          примерно 40×25 м)
+      В этих случаях заполняй site_*_m.
+
+   в) Если ТЗ говорит про площадь («180-220 м²») без явного «здание»/
+      «участок» — трактуй как площадь ЗАСТРОЙКИ (пятно), выбери
+      аспект 1.5:1 — 2:1 → building_width_m × building_depth_m.
+
+   КРИТИЧНО: НЕ пиши одни и те же числа в site_* И в building_* —
+   выбери одно. Если юзер не уточнил тип, и используется слово
+   «здание/дом/ЖК/корпус» — это building_*.
 
 2. setback_front_m / setback_side_m / setback_rear_m:
      - Defaults for small residential: 3 m on all sides
-     - "Отступы от красных линий" — берём это число
-     - "Плотная застройка" / "без отступов" → 0
+     - «Отступы от красной линии N м, боковые M м, задний K м» —
+       парсь все три значения отдельно
+     - «Плотная застройка» / «без отступов» → 0
    If not stated and dimensions are < 25 m on any side — use 3 m, not 5 m
    (5 m on a 20×16 building leaves a tiny inner footprint).
 
@@ -126,6 +154,8 @@ _SCHEMA: dict[str, Any] = {
         "properties": {
             "site_width_m":     {"type": ["number", "null"]},
             "site_depth_m":     {"type": ["number", "null"]},
+            "building_width_m": {"type": ["number", "null"]},
+            "building_depth_m": {"type": ["number", "null"]},
             "setback_front_m":  {"type": ["number", "null"]},
             "setback_side_m":   {"type": ["number", "null"]},
             "setback_rear_m":   {"type": ["number", "null"]},
@@ -146,6 +176,7 @@ _SCHEMA: dict[str, Any] = {
         },
         "required": [
             "site_width_m", "site_depth_m",
+            "building_width_m", "building_depth_m",
             "setback_front_m", "setback_side_m", "setback_rear_m",
             "floors", "purpose", "sections",
             "studio_pct", "k1_pct", "k2_pct", "k3_pct",
@@ -193,6 +224,8 @@ def parse_brief(brief: str, *, model: str = "gpt-4.1") -> BriefDerivedInputs:
     return BriefDerivedInputs(
         site_width_m=    data.get("site_width_m"),
         site_depth_m=    data.get("site_depth_m"),
+        building_width_m=data.get("building_width_m"),
+        building_depth_m=data.get("building_depth_m"),
         setback_front_m= data.get("setback_front_m"),
         setback_side_m=  data.get("setback_side_m"),
         setback_rear_m=  data.get("setback_rear_m"),

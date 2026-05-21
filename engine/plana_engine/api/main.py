@@ -1775,9 +1775,14 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
     Возвращает (request, used_defaults) — список полей, для которых
     GPT не нашёл значение в ТЗ и мы подставили дефолт.
 
-    Дефолты подобраны так, чтобы дать жизнеспособное здание: 24×14 м
-    с отступами 3 м даёт внутренний контур 18×8 м — норм для секционного
-    дома средней этажности.
+    Логика по габаритам:
+      1. Если GPT извлёк building_width_m / building_depth_m — это пятно
+         застройки. Берём отступы (из ТЗ или дефолты) и считаем
+         site = building + 2*setback. Footprint получится ровно тот, что
+         просил юзер.
+      2. Иначе если GPT извлёк site_*_m — берём как есть.
+      3. Иначе дефолт 24×14 м (с отступами 3 м даёт 18×8 — рабочее
+         секционное здание средней этажности).
     """
     used: list[str] = []
 
@@ -1808,12 +1813,30 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
         k2_pct     = b.k2_pct     or 0.0
         k3_pct     = b.k3_pct     or 0.0
 
+    setback_front = _or(b.setback_front_m, 3.0, "setback_front_m")
+    setback_side  = _or(b.setback_side_m,  3.0, "setback_side_m")
+    setback_rear  = _or(b.setback_rear_m,  3.0, "setback_rear_m")
+
+    # Резолвинг габаритов: building + setbacks → site, либо прямо site
+    if b.building_width_m is not None or b.building_depth_m is not None:
+        bw = b.building_width_m if b.building_width_m is not None else 24.0
+        bd = b.building_depth_m if b.building_depth_m is not None else 14.0
+        if b.building_width_m is None:
+            used.append("building_width_m")
+        if b.building_depth_m is None:
+            used.append("building_depth_m")
+        site_w = bw + 2 * setback_side
+        site_d = bd + setback_front + setback_rear
+    else:
+        site_w = _or(b.site_width_m, 24.0 + 2 * setback_side,                 "site_width_m")
+        site_d = _or(b.site_depth_m, 14.0 + setback_front + setback_rear,     "site_depth_m")
+
     return VisualizeFromInputsRequest(
-        site_width_m=    _or(b.site_width_m,    24.0, "site_width_m"),
-        site_depth_m=    _or(b.site_depth_m,    14.0, "site_depth_m"),
-        setback_front_m= _or(b.setback_front_m, 3.0,  "setback_front_m"),
-        setback_side_m=  _or(b.setback_side_m,  3.0,  "setback_side_m"),
-        setback_rear_m=  _or(b.setback_rear_m,  3.0,  "setback_rear_m"),
+        site_width_m=    site_w,
+        site_depth_m=    site_d,
+        setback_front_m= setback_front,
+        setback_side_m=  setback_side,
+        setback_rear_m=  setback_rear,
         floors=          _or(b.floors,          4,    "floors"),
         purpose=         purpose,
         sections=        _or(b.sections,        1,    "sections"),
