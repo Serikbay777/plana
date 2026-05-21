@@ -45,8 +45,11 @@ const COST_PER_PAGE = 0.042;
 const COST_VISION_EXTRACT = 0.02;      // gpt-4.1 vision на 1 страницу (~оценка)
 const COST_CLASSIFY = 0.01;            // gpt-4.1 vision classify
 
-const PARALLEL_GEN_LIMIT = 3;          // одновременных /visualize/sheet
-const PARALLEL_CLASSIFY_LIMIT = 5;     // одновременных /pdf/classify-page
+// Engine на VPS уходит в OOM при 3+ одновременных gpt-image-запросах
+// (worker thread + base64 PNG ≈ 50–100 MiB на каждый). Поэтому генерация —
+// строго по одной странице. Vision-classify лёгкая, до 3 одновременно ОК.
+const PARALLEL_GEN_LIMIT = 1;
+const PARALLEL_CLASSIFY_LIMIT = 3;
 
 const DEFAULT_TYPE_BY_INDEX = (idx: number): string => {
   if (idx === 0) return "title_hero";
