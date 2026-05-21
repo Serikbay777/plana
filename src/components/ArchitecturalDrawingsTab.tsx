@@ -13,6 +13,7 @@
 import { useState, useRef, useCallback, useEffect, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
+  Pencil, RefreshCw,
 } from "lucide-react";
 import {
   generateLayoutFromBrief, exportFloorplanDxf, exportFloorplanIfc,
@@ -25,6 +26,34 @@ import {
 type Status = "idle" | "loading" | "ready" | "error";
 
 type ExportKind = "dxf" | "ifc" | "viz";
+
+type RoomRef = { sectionIdx: number; aptIdx: number; roomIdx: number };
+
+const SNAP_M = 0.1;        // шаг привязки drag'а к сетке (0.1 м)
+
+function cloneLayout(l: LayoutFloor): LayoutFloor {
+  // structuredClone — быстрый глубокий клон встроенный в браузер
+  return typeof structuredClone === "function"
+    ? structuredClone(l)
+    : JSON.parse(JSON.stringify(l));
+}
+
+function moveRoomInLayout(
+  layout: LayoutFloor,
+  ref: RoomRef,
+  newX: number,
+  newY: number,
+): LayoutFloor {
+  const next = cloneLayout(layout);
+  const room = next.sections[ref.sectionIdx]?.apartments[ref.aptIdx]?.rooms[ref.roomIdx];
+  if (room) {
+    room.x = Math.max(0, newX);
+    room.y = Math.max(0, newY);
+  }
+  return next;
+}
+
+const snap = (v: number) => Math.round(v / SNAP_M) * SNAP_M;
 
 
 const BRIEF_PLACEHOLDER = `Например:
@@ -46,6 +75,36 @@ export function ArchitecturalDrawingsTab({
   const [exportBusy, setExportBusy] = useState<ExportKind | null>(null);
   const [vizImageUrl, setVizImageUrl] = useState<string | null>(null);
   const [enhancing, setEnhancing] = useState(false);
+
+  // ── Редактор (D-2) ─────────────────────────────────────────────────
+  // Поднимаем layout наверх как мутируемый стейт. result.layout — исходный
+  // (для повторной генерации), editedLayout — текущая редактируемая версия.
+  const [editedLayout, setEditedLayout] = useState<LayoutFloor | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [selected, setSelected] = useState<RoomRef | null>(null);
+
+  useEffect(() => {
+    // Новая генерация — копируем layout в редактируемый стейт, сбрасываем selection.
+    if (result) {
+      setEditedLayout(cloneLayout(result.layout));
+      setSelected(null);
+      setEditMode(false);
+    } else {
+      setEditedLayout(null);
+    }
+  }, [result]);
+
+  const currentLayout = editedLayout ?? result?.layout ?? null;
+
+  const handleRoomSelect = (ref: RoomRef | null) => setSelected(ref);
+  const handleRoomMove = (ref: RoomRef, newX: number, newY: number) => {
+    setEditedLayout((prev) => prev ? moveRoomInLayout(prev, ref, snap(newX), snap(newY)) : prev);
+  };
+  const handleResetEdits = () => {
+    if (!result) return;
+    setEditedLayout(cloneLayout(result.layout));
+    setSelected(null);
+  };
 
   const handleEnhance = async () => {
     if (!brief.trim() || enhancing || status === "loading") return;
@@ -139,11 +198,11 @@ export function ArchitecturalDrawingsTab({
         <span className="text-[13px] font-medium text-white/85">
           Архитектурные чертежи
         </span>
-        {result && (
+        {result && currentLayout && (
           <>
             <div className="h-4 w-px bg-white/[0.07]" />
             <span className="text-[11.5px] text-white/55">
-              {result.layout.width_m.toFixed(1)} × {result.layout.depth_m.toFixed(1)} м · {result.layout.sections.length} секц. · {totalApartments(result.layout)} кв.
+              {currentLayout.width_m.toFixed(1)} × {currentLayout.depth_m.toFixed(1)} м · {currentLayout.sections.length} секц. · {totalApartments(currentLayout)} кв.
             </span>
             {result.used_defaults.length > 0 && (
               <span
@@ -159,6 +218,28 @@ export function ArchitecturalDrawingsTab({
         {result && (
           <>
             <div className="flex-1" />
+            {/* Edit mode toggle */}
+            <button
+              onClick={() => setEditMode((v) => !v)}
+              title={editMode ? "Выйти из редактора" : "Включить редактор: можно двигать комнаты"}
+              className={[
+                "h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 transition",
+                editMode
+                  ? "bg-emerald-500/30 border border-emerald-400/50 text-emerald-50"
+                  : "border border-emerald-400/30 text-emerald-200/90 hover:bg-emerald-500/15",
+              ].join(" ")}
+            >
+              <Pencil size={11} /> {editMode ? "Редактор вкл." : "Редактор"}
+            </button>
+            {editMode && editedLayout && result && (
+              <button
+                onClick={handleResetEdits}
+                title="Откатить все ручные изменения к исходному AI-плану"
+                className="h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-white/15 text-white/65 hover:bg-white/[0.06] transition"
+              >
+                <RefreshCw size={11} /> Сброс
+              </button>
+            )}
             <button
               onClick={handleExportDxf}
               disabled={exportBusy !== null}
@@ -277,7 +358,7 @@ export function ArchitecturalDrawingsTab({
             </div>
           )}
 
-          {status === "ready" && result && (
+          {status === "ready" && currentLayout && (
             <div className="absolute inset-0 flex flex-col">
               {/* Скроллируемая область — пускаем вертикальный скролл */}
               <div className="flex-1 min-h-0 overflow-y-auto p-2">
@@ -286,10 +367,16 @@ export function ArchitecturalDrawingsTab({
                     {/* План — фиксированная пропорция, чтобы не схлопывался */}
                     <div className="relative bg-white rounded-lg overflow-hidden">
                       <div className="absolute top-2 left-2 z-10 h-5 px-1.5 rounded bg-black/55 text-[10px] text-white/85 grid place-items-center">
-                        План
+                        План {editMode && "· редактор"}
                       </div>
-                      <div style={{ aspectRatio: `${result.layout.width_m + 6}/${result.layout.depth_m + 6}` }}>
-                        <FloorPlanSvg layout={result.layout} />
+                      <div style={{ aspectRatio: `${currentLayout.width_m + 6}/${currentLayout.depth_m + 6}` }}>
+                        <FloorPlanSvg
+                          layout={currentLayout}
+                          editMode={editMode}
+                          selected={selected}
+                          onSelectRoom={handleRoomSelect}
+                          onMoveRoom={handleRoomMove}
+                        />
                       </div>
                     </div>
                     {/* AI визуализация — natural-height */}
@@ -305,8 +392,14 @@ export function ArchitecturalDrawingsTab({
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-white rounded-lg" style={{ aspectRatio: `${result.layout.width_m + 6}/${result.layout.depth_m + 6}` }}>
-                    <FloorPlanSvg layout={result.layout} />
+                  <div className="bg-white rounded-lg" style={{ aspectRatio: `${currentLayout.width_m + 6}/${currentLayout.depth_m + 6}` }}>
+                    <FloorPlanSvg
+                      layout={currentLayout}
+                      editMode={editMode}
+                      selected={selected}
+                      onSelectRoom={handleRoomSelect}
+                      onMoveRoom={handleRoomMove}
+                    />
                   </div>
                 )}
               </div>
@@ -385,7 +478,22 @@ const VP_ZOOM_MIN = 0.4;
 const VP_ZOOM_MAX = 8;
 
 
-function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
+type FloorPlanSvgProps = {
+  layout: LayoutFloor;
+  editMode?: boolean;
+  selected?: RoomRef | null;
+  onSelectRoom?: (ref: RoomRef | null) => void;
+  onMoveRoom?: (ref: RoomRef, newX: number, newY: number) => void;
+};
+
+
+function FloorPlanSvg({
+  layout,
+  editMode = false,
+  selected = null,
+  onSelectRoom,
+  onMoveRoom,
+}: FloorPlanSvgProps) {
   // Padding в метрах вокруг здания (для подписей размеров)
   const PAD = 3;
   const W = layout.width_m;
@@ -406,7 +514,45 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
   const [vp, setVp] = useState<Viewport>(VP_RESET);
   const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+
+  // Drag комнаты в edit-mode
+  const startRoomDrag = (e: React.MouseEvent, ref: RoomRef, room: { x: number; y: number }) => {
+    if (!editMode || !onMoveRoom) return;
+    e.stopPropagation();
+    onSelectRoom?.(ref);
+
+    // px/metre считаем один раз в момент начала drag через bounding rect SVG
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    const rect = svgEl.getBoundingClientRect();
+    // preserveAspectRatio meet → SVG-юнит = min(w/vbW, h/vbH) пикселей
+    const pxPerMeter = Math.min(rect.width / viewBoxW, rect.height / viewBoxH);
+    if (pxPerMeter <= 0) return;
+
+    const start = { cx: e.clientX, cy: e.clientY, rx: room.x, ry: room.y };
+    const onMove = (ev: MouseEvent) => {
+      const dxPx = ev.clientX - start.cx;
+      const dyPx = ev.clientY - start.cy;
+      const dxM = dxPx / pxPerMeter;
+      // SVG Y растёт вниз, но архитектурные координаты Y растут вверх:
+      // tянуть мышь вниз по экрану → arch Y уменьшается.
+      const dyM = -dyPx / pxPerMeter;
+      onMoveRoom(ref, start.rx + dxM, start.ry + dyM);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const onBgClick = () => {
+    // Клик по фону снимает выделение
+    if (editMode) onSelectRoom?.(null);
+  };
 
   // При смене layout — сбрасываем viewport
   useEffect(() => {
@@ -477,6 +623,7 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
       }}
     >
     <svg
+      ref={svgRef}
       viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
       preserveAspectRatio="xMidYMid meet"
       style={{
@@ -487,6 +634,7 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
         transformOrigin: "0 0",
       }}
       fontFamily={fontFamily}
+      onClick={onBgClick}
     >
       {/* Точечная сетка на фоне — как в maket.ai */}
       <defs>
@@ -512,17 +660,37 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
             />
 
             {/* Квартиры — заливаем по комнатам единым тоном */}
-            {section.apartments.map((apt) => (
+            {section.apartments.map((apt, aIdx) => (
               <g key={`apt-fill-${apt.number}`}>
                 {apt.rooms.map((room, rIdx) => {
                   const rx = apt.x + room.x;
                   const archY = apt.y + room.y;
+                  const ref: RoomRef = {
+                    sectionIdx: section.index,
+                    aptIdx: aIdx,
+                    roomIdx: rIdx,
+                  };
+                  const isSelected =
+                    selected !== null &&
+                    selected.sectionIdx === ref.sectionIdx &&
+                    selected.aptIdx === ref.aptIdx &&
+                    selected.roomIdx === ref.roomIdx;
                   return (
                     <rect
                       key={rIdx}
                       x={rx} y={ry(archY, room.d)}
                       width={room.w} height={room.d}
                       fill={ROOM_FILL}
+                      onMouseDown={editMode
+                        ? (e) => startRoomDrag(e, ref, { x: room.x, y: room.y })
+                        : undefined}
+                      onClick={editMode ? (e) => {
+                        e.stopPropagation();
+                        onSelectRoom?.(ref);
+                      } : undefined}
+                      style={editMode ? { cursor: "move" } : undefined}
+                      // outline для выделенной комнаты — добавим overlay в отдельной группе ниже
+                      data-selected={isSelected || undefined}
                     />
                   );
                 })}
@@ -746,6 +914,27 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
             ))}
           </g>
         ))}
+
+        {/* ── Outline выделенной комнаты в edit-mode ─────────────────── */}
+        {editMode && selected && (() => {
+          const section = layout.sections[selected.sectionIdx];
+          const apt = section?.apartments[selected.aptIdx];
+          const room = apt?.rooms[selected.roomIdx];
+          if (!room || !apt) return null;
+          const rx = apt.x + room.x;
+          const archY = apt.y + room.y;
+          return (
+            <rect
+              x={rx} y={ry(archY, room.d)}
+              width={room.w} height={room.d}
+              fill="none"
+              stroke="#0ea5e9"
+              strokeWidth={0.12}
+              strokeDasharray="0.25 0.15"
+              pointerEvents="none"
+            />
+          );
+        })()}
 
         {/* ── Размерные линии в CAD-стиле (засечки 45° на концах) ─────── */}
         <DimensionLine
