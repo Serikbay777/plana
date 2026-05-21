@@ -985,5 +985,13 @@ export async function generateLayoutFromBrief(
   });
 }
 
+export async function enhanceBrief(brief: string): Promise<string> {
+  const res = await request<{ enhanced_brief: string }>("/enhance/brief", {
+    method: "POST",
+    body: JSON.stringify({ brief }),
+  });
+  return res.enhanced_brief;
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;

@@ -16,9 +16,8 @@ import {
 } from "lucide-react";
 import {
   generateLayoutFromBrief, exportFloorplanDxf, exportFloorplanIfc,
-  visualizeSheet,
+  visualizeSheet, enhanceBrief,
   type LayoutFloor, type BriefLayoutResponse,
-  type VisualizeFromInputsRequest,
 } from "@/lib/engine";
 
 type Status = "idle" | "loading" | "ready" | "error";
@@ -44,6 +43,21 @@ export function ArchitecturalDrawingsTab({
   const [result, setResult] = useState<BriefLayoutResponse | null>(null);
   const [exportBusy, setExportBusy] = useState<ExportKind | null>(null);
   const [vizImageUrl, setVizImageUrl] = useState<string | null>(null);
+  const [enhancing, setEnhancing] = useState(false);
+
+  const handleEnhance = async () => {
+    if (!brief.trim() || enhancing || status === "loading") return;
+    setEnhancing(true);
+    setError(null);
+    try {
+      const improved = await enhanceBrief(brief);
+      setBrief(improved);
+    } catch (e) {
+      setError(`Улучшение: ${(e as Error).message}`);
+    } finally {
+      setEnhancing(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!brief.trim() || status === "loading") return;
@@ -185,14 +199,25 @@ export function ArchitecturalDrawingsTab({
               className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white/85 placeholder-white/25 resize-none leading-relaxed focus:outline-none focus:border-sky-400/40"
             />
           </div>
-          <button
-            onClick={handleGenerate}
-            disabled={!brief.trim() || status === "loading"}
-            className="btn-apple h-9 px-4 text-[12.5px] flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {status === "loading" ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-            Сгенерировать план
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleEnhance}
+              disabled={!brief.trim() || enhancing || status === "loading"}
+              title="Улучшить ТЗ через AI-архитектора (нормы, отступы, микс)"
+              className="h-9 px-3 rounded-lg text-[12.5px] flex items-center gap-1.5 border border-sky-400/30 text-sky-200/90 hover:bg-sky-500/15 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {enhancing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
+              Улучшить
+            </button>
+            <button
+              onClick={handleGenerate}
+              disabled={!brief.trim() || status === "loading" || enhancing}
+              className="btn-apple flex-1 h-9 px-4 text-[12.5px] flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {status === "loading" ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              Сгенерировать план
+            </button>
+          </div>
           {result?.notes && (
             <div className="text-[10.5px] text-white/45 leading-relaxed">
               <div className="uppercase tracking-wider text-white/30 mb-1">Заметки модели</div>

@@ -1717,6 +1717,29 @@ class BriefLayoutResponse(BaseModel):
     notes: str
 
 
+class EnhanceBriefResponse(BaseModel):
+    enhanced_brief: str
+
+
+@app.post("/enhance/brief", response_model=EnhanceBriefResponse)
+def enhance_brief_endpoint(req: BriefRequest) -> EnhanceBriefResponse:
+    """Улучшить ТЗ через GPT-архитектора (отступы, микс, лифты, нормы).
+
+    Возвращает переписанный текст — фронт подставит его в textarea.
+    """
+    if not req.brief or not req.brief.strip():
+        raise HTTPException(status_code=400, detail="brief is empty")
+
+    from ..visualizer.brief_enhancer import BriefEnhanceError, enhance_brief
+
+    try:
+        improved = enhance_brief(req.brief)
+    except BriefEnhanceError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return EnhanceBriefResponse(enhanced_brief=improved)
+
+
 def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list[str]]:
     """Заполнить VisualizeFromInputsRequest из BriefDerivedInputs + дефолты.
 
