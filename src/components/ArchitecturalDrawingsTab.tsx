@@ -10,7 +10,7 @@
 // Этапы 2-3 (drag-edit стен, авто-замыкание комнат, размеры) — следующие
 // итерации поверх той же модели данных.
 
-import { useState, type ReactElement } from "react";
+import { useState, useRef, useCallback, useEffect, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
 } from "lucide-react";
@@ -379,6 +379,12 @@ const ROOM_LABEL_FALLBACK_RU: Record<string, string> = {
 };
 
 
+type Viewport = { zoom: number; panX: number; panY: number };
+const VP_RESET: Viewport = { zoom: 1, panX: 0, panY: 0 };
+const VP_ZOOM_MIN = 0.4;
+const VP_ZOOM_MAX = 8;
+
+
 function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
   // Padding в метрах вокруг здания (для подписей размеров)
   const PAD = 3;
@@ -396,12 +402,90 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
   // Уникальный id для точечной сетки на фоне
   const gridId = `dot-grid-${Math.random().toString(36).slice(2, 8)}`;
 
+  // ── Viewport: zoom + pan через CSS transform на SVG ─────────────────
+  const [vp, setVp] = useState<Viewport>(VP_RESET);
+  const [dragging, setDragging] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+
+  // При смене layout — сбрасываем viewport
+  useEffect(() => {
+    setVp(VP_RESET);
+  }, [layout]);
+
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    if (!containerRef.current) return;
+    e.preventDefault();
+    const rect = containerRef.current.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    setVp((prev) => {
+      const newZoom = Math.min(VP_ZOOM_MAX, Math.max(VP_ZOOM_MIN, prev.zoom * factor));
+      const k = newZoom / prev.zoom;
+      return {
+        zoom: newZoom,
+        panX: cx - (cx - prev.panX) * k,
+        panY: cy - (cy - prev.panY) * k,
+      };
+    });
+  }, []);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    dragRef.current = { sx: e.clientX, sy: e.clientY, px: vp.panX, py: vp.panY };
+    setDragging(true);
+  };
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.sx;
+    const dy = e.clientY - dragRef.current.sy;
+    setVp((prev) => ({ ...prev, panX: dragRef.current!.px + dx, panY: dragRef.current!.py + dy }));
+  };
+  const stopDrag = () => { dragRef.current = null; setDragging(false); };
+
+  const zoomBtn = (factor: number) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    setVp((prev) => {
+      const newZoom = Math.min(VP_ZOOM_MAX, Math.max(VP_ZOOM_MIN, prev.zoom * factor));
+      const k = newZoom / prev.zoom;
+      return { zoom: newZoom, panX: cx - (cx - prev.panX) * k, panY: cy - (cy - prev.panY) * k };
+    });
+  };
+  const resetVp = () => setVp(VP_RESET);
+
   return (
+    <div
+      ref={containerRef}
+      onWheel={onWheel}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={stopDrag}
+      onMouseLeave={stopDrag}
+      onDoubleClick={resetVp}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "100%",
+        overflow: "hidden",
+        background: CANVAS_BG,
+        cursor: dragging ? "grabbing" : "grab",
+        userSelect: "none",
+      }}
+    >
     <svg
       viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
       preserveAspectRatio="xMidYMid meet"
-      className="w-full h-full"
-      style={{ background: CANVAS_BG }}
+      style={{
+        background: CANVAS_BG,
+        width: "100%",
+        height: "100%",
+        transform: `translate(${vp.panX}px, ${vp.panY}px) scale(${vp.zoom})`,
+        transformOrigin: "0 0",
+      }}
       fontFamily={fontFamily}
     >
       {/* Точечная сетка на фоне — как в maket.ai */}
@@ -678,8 +762,72 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
         />
       </g>
     </svg>
+
+    {/* Overlay: zoom controls */}
+    <div
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      style={{
+        position: "absolute",
+        right: 12,
+        bottom: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        background: "rgba(255,255,255,0.95)",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+        borderRadius: 8,
+        padding: 3,
+        userSelect: "none",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => zoomBtn(1.25)}
+        title="Приблизить"
+        style={zoomBtnStyle}
+      >+</button>
+      <button
+        type="button"
+        onClick={() => zoomBtn(0.8)}
+        title="Отдалить"
+        style={zoomBtnStyle}
+      >−</button>
+      <button
+        type="button"
+        onClick={resetVp}
+        title="Сбросить (двойной клик по фону)"
+        style={{ ...zoomBtnStyle, fontSize: 12 }}
+      >⌖</button>
+      <div style={{
+        fontSize: 10,
+        textAlign: "center",
+        color: "#666",
+        padding: "2px 0",
+        fontVariantNumeric: "tabular-nums",
+      }}>
+        {Math.round(vp.zoom * 100)}%
+      </div>
+    </div>
+    </div>
   );
 }
+
+const zoomBtnStyle: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  border: "1px solid #d1d5db",
+  background: "#fff",
+  borderRadius: 4,
+  fontSize: 16,
+  fontWeight: 600,
+  color: "#374151",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  lineHeight: 1,
+};
 
 
 // ---------------------------------------------------------------------------
