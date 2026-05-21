@@ -321,9 +321,13 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
   const viewBoxW = W + PAD * 2;
   const viewBoxH = D + PAD * 2;
 
-  // SVG ось Y направлена вниз. Архитектурные координаты Y направлены вверх.
-  // Чтобы план не был перевёрнут — flip через scale(1, -1) и translate.
-  // То есть transform: translate(PAD, viewBoxH - PAD) scale(1, -1).
+  // Архитектурные координаты Y: 0 внизу, растут вверх (юг → север).
+  // SVG Y: 0 сверху, растёт вниз. Чтобы не отражать текст глобальным flip'ом —
+  // инвертируем Y-координаты на месте: rectY = D - archY - height, textY = D - archY.
+  const ry = (archY: number, h: number = 0) => D - archY - h;
+
+  // Сделаем шрифты больше читаемыми (в метровых единицах SVG)
+  const fontFamily = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
   return (
     <svg
@@ -331,8 +335,9 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
       preserveAspectRatio="xMidYMid meet"
       className="w-full h-full"
       style={{ background: "#fafafa" }}
+      fontFamily={fontFamily}
     >
-      <g transform={`translate(${PAD}, ${viewBoxH - PAD}) scale(1, -1)`}>
+      <g transform={`translate(${PAD}, ${PAD})`}>
         {/* Внешний контур здания */}
         <rect
           x={0} y={0} width={W} height={D}
@@ -353,7 +358,8 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
 
             {/* Коридор */}
             <rect
-              x={section.x_start} y={section.corridor_y}
+              x={section.x_start}
+              y={ry(section.corridor_y, section.corridor_d)}
               width={section.width} height={section.corridor_d}
               fill="#f3f4f6" stroke="#9ca3af" strokeWidth={0.04}
             />
@@ -362,17 +368,17 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
             {section.cores.map((core, ci) => (
               <g key={ci}>
                 <rect
-                  x={core.x} y={core.y}
+                  x={core.x} y={ry(core.y, core.d)}
                   width={core.w} height={core.d}
                   fill="#374151" stroke="#1f2937" strokeWidth={0.05}
                 />
                 <text
                   x={core.x + core.w / 2}
-                  y={core.y + core.d / 2}
+                  y={ry(core.y + core.d / 2)}
                   textAnchor="middle" dominantBaseline="central"
                   fill="#f9fafb"
-                  fontSize={0.5}
-                  transform={`scale(1, -1) translate(0, -${(core.y + core.d / 2) * 2})`}
+                  fontSize={Math.min(0.55, core.w * 0.28, core.d * 0.22)}
+                  fontWeight={600}
                 >
                   {CORE_LABEL[core.kind] ?? "?"}
                 </text>
@@ -384,43 +390,45 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
               <g key={apt.number}>
                 {/* Контур квартиры */}
                 <rect
-                  x={apt.x} y={apt.y}
+                  x={apt.x} y={ry(apt.y, apt.d)}
                   width={apt.w} height={apt.d}
                   fill="none" stroke="#6b7280" strokeWidth={0.06}
                 />
 
                 {/* Комнаты внутри */}
-                {apt.rooms.map((room, ri) => {
+                {apt.rooms.map((room, rIdx) => {
                   const rx = apt.x + room.x;
-                  const ry = apt.y + room.y;
+                  const archY = apt.y + room.y;
+                  const fontSize = Math.min(0.36, room.w * 0.08, room.d * 0.14);
+                  const areaFontSize = Math.min(0.28, room.w * 0.06, room.d * 0.11);
+                  const cx = rx + room.w / 2;
                   return (
-                    <g key={ri}>
+                    <g key={rIdx}>
                       <rect
-                        x={rx} y={ry}
+                        x={rx} y={ry(archY, room.d)}
                         width={room.w} height={room.d}
                         fill={ROOM_COLOR[room.kind] ?? "#f3f4f6"}
                         stroke="#9ca3af" strokeWidth={0.025}
                       />
-                      {/* Подпись комнаты — два текста: имя сверху, площадь снизу */}
+                      {/* Подпись комнаты — имя + площадь снизу */}
                       {room.w > 1.6 && room.d > 1.0 && (
                         <>
                           <text
-                            x={rx + room.w / 2}
-                            y={ry + room.d / 2 - 0.1}
+                            x={cx}
+                            y={ry(archY + room.d / 2 + 0.15)}
                             textAnchor="middle" dominantBaseline="central"
                             fill="#1f2937"
-                            fontSize={Math.min(0.32, room.w * 0.07, room.d * 0.12)}
-                            transform={`scale(1, -1) translate(0, -${(ry + room.d / 2 - 0.1) * 2})`}
+                            fontSize={fontSize}
+                            fontWeight={500}
                           >
                             {room.name_ru}
                           </text>
                           <text
-                            x={rx + room.w / 2}
-                            y={ry + room.d / 2 + 0.35}
+                            x={cx}
+                            y={ry(archY + room.d / 2 - 0.3)}
                             textAnchor="middle" dominantBaseline="central"
                             fill="#6b7280"
-                            fontSize={Math.min(0.24, room.w * 0.05, room.d * 0.10)}
-                            transform={`scale(1, -1) translate(0, -${(ry + room.d / 2 + 0.35) * 2})`}
+                            fontSize={areaFontSize}
                           >
                             {(room.w * room.d).toFixed(1)} м²
                           </text>
@@ -430,53 +438,51 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
                   );
                 })}
 
-                {/* Номер квартиры в углу */}
+                {/* Номер квартиры в углу — у северной кромки квартиры */}
                 <text
                   x={apt.x + 0.3}
-                  y={apt.y + apt.d - 0.3}
-                  textAnchor="start" dominantBaseline="hanging"
+                  y={ry(apt.y + apt.d - 0.3)}
+                  textAnchor="start" dominantBaseline="central"
                   fill="#1f2937"
-                  fontSize={0.4} fontWeight={700}
-                  transform={`scale(1, -1) translate(0, -${(apt.y + apt.d - 0.3) * 2})`}
+                  fontSize={0.45} fontWeight={700}
                 >
-                  #{apt.number}
+                  №{apt.number}
                 </text>
               </g>
             ))}
           </g>
         ))}
 
-        {/* Размер по ширине */}
+        {/* Размер по ширине — над зданием (Y отрицательный после ry) */}
         <g>
           <line
-            x1={0} y1={-1.5} x2={W} y2={-1.5}
+            x1={0} y1={ry(D + 1.5)} x2={W} y2={ry(D + 1.5)}
             stroke="#1f2937" strokeWidth={0.04}
           />
-          <line x1={0} y1={-1.7} x2={0} y2={-1.3} stroke="#1f2937" strokeWidth={0.04} />
-          <line x1={W} y1={-1.7} x2={W} y2={-1.3} stroke="#1f2937" strokeWidth={0.04} />
+          <line x1={0} y1={ry(D + 1.7)} x2={0} y2={ry(D + 1.3)} stroke="#1f2937" strokeWidth={0.04} />
+          <line x1={W} y1={ry(D + 1.7)} x2={W} y2={ry(D + 1.3)} stroke="#1f2937" strokeWidth={0.04} />
           <text
-            x={W / 2} y={-2.0}
+            x={W / 2} y={ry(D + 2.1)}
             textAnchor="middle" dominantBaseline="central"
-            fill="#1f2937" fontSize={0.45} fontWeight={600}
-            transform={`scale(1, -1) translate(0, -${-2.0 * 2})`}
+            fill="#1f2937" fontSize={0.5} fontWeight={600}
           >
             {W.toFixed(2)} м
           </text>
         </g>
 
-        {/* Размер по высоте */}
+        {/* Размер по высоте — слева от здания */}
         <g>
           <line
-            x1={-1.5} y1={0} x2={-1.5} y2={D}
+            x1={-1.5} y1={ry(D)} x2={-1.5} y2={ry(0)}
             stroke="#1f2937" strokeWidth={0.04}
           />
-          <line x1={-1.7} y1={0} x2={-1.3} y2={0} stroke="#1f2937" strokeWidth={0.04} />
-          <line x1={-1.7} y1={D} x2={-1.3} y2={D} stroke="#1f2937" strokeWidth={0.04} />
+          <line x1={-1.7} y1={ry(D)} x2={-1.3} y2={ry(D)} stroke="#1f2937" strokeWidth={0.04} />
+          <line x1={-1.7} y1={ry(0)} x2={-1.3} y2={ry(0)} stroke="#1f2937" strokeWidth={0.04} />
           <text
-            x={-2.2} y={D / 2}
+            x={-2.2} y={ry(D / 2)}
             textAnchor="middle" dominantBaseline="central"
-            fill="#1f2937" fontSize={0.45} fontWeight={600}
-            transform={`scale(1, -1) translate(0, -${(D / 2) * 2}) rotate(-90 ${-2.2} ${D / 2})`}
+            fill="#1f2937" fontSize={0.5} fontWeight={600}
+            transform={`rotate(-90, -2.2, ${ry(D / 2)})`}
           >
             {D.toFixed(2)} м
           </text>
