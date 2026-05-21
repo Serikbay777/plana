@@ -14,6 +14,7 @@ from ..cad.layout_schema import (
     LayoutCore,
     LayoutDoor,
     LayoutFloor,
+    LayoutFurniture,
     LayoutRoom,
     LayoutSection,
     LayoutWindow,
@@ -229,6 +230,8 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
                 exterior_side: str = "S" if side_y < corr_y else "N"
                 interior_side: str = "N" if side_y < corr_y else "S"
                 _add_apertures(rooms, apt_d, exterior_side, interior_side)
+                for room in rooms:
+                    _add_furniture(room, exterior_side)
 
                 apartments.append(LayoutApartment(
                     type_code=apt_type,
@@ -419,6 +422,189 @@ def _door_centered(
         swing=swing,                       # type: ignore[arg-type]
         hinge="left",
     )
+
+
+# ── Мебель ────────────────────────────────────────────────────────────────
+
+
+# Стандартные размеры мебели (метры, в неповёрнутом виде: width × depth)
+_FURN_SIZES: dict[str, tuple[float, float]] = {
+    "bed":          (1.6, 2.0),
+    "wardrobe":     (2.0, 0.6),
+    "nightstand":   (0.5, 0.4),
+    "sofa":         (2.4, 0.9),
+    "coffee_table": (1.1, 0.6),
+    "tv":           (1.4, 0.2),
+    "stove":        (0.6, 0.6),
+    "sink":         (0.8, 0.6),
+    "fridge":       (0.6, 0.65),
+    "dining_table": (1.4, 0.8),
+    "bathtub":      (1.7, 0.7),
+    "toilet":       (0.4, 0.7),
+    "washbasin":    (0.6, 0.45),
+    "armchair":     (0.8, 0.85),
+}
+
+
+def _add_furniture(room: LayoutRoom, exterior_side: str) -> None:
+    """Расставить детерминированно мебель внутри room (in-place).
+
+    Логика — упрощённая, для визуальной правдоподобности:
+      • Кровать/диван — спинкой к стене, противоположной окну
+      • В кухне — кухонный фронт вдоль одной из боковых стен
+      • В сан.узлах — ванна/унитаз/раковина по разным стенам
+    """
+    rw, rd = room.w, room.d
+    # back_y — y-координата стены, противоположной окну (фасаду)
+    # Если фасад S (окно внизу) → back_wall наверху (y близко к rd)
+    # Если фасад N → back_wall внизу (y = 0)
+    if exterior_side == "S":
+        back_y_pos = "top"        # мебель «спинкой к северной стене»
+    else:
+        back_y_pos = "bottom"     # мебель «спинкой к южной стене»
+
+    items: list[LayoutFurniture] = []
+
+    if room.kind == "bedroom":
+        # Кровать у дальней от окна стены, по центру по X
+        bed_w, bed_d = _FURN_SIZES["bed"]
+        if rw >= bed_w + 0.4 and rd >= bed_d + 0.8:
+            bx = (rw - bed_w) / 2
+            by = (rd - bed_d - 0.1) if back_y_pos == "top" else 0.1
+            items.append(LayoutFurniture(
+                kind="bed", x=round(bx, 3), y=round(by, 3),
+                w=bed_w, d=bed_d, rotation=0,
+            ))
+            # Прикроватные тумбы — слева и справа от кровати
+            ns_w, ns_d = _FURN_SIZES["nightstand"]
+            ns_y = by + (bed_d - ns_d) / 2
+            if bx - ns_w >= 0.05:
+                items.append(LayoutFurniture(
+                    kind="nightstand", x=round(bx - ns_w - 0.05, 3),
+                    y=round(ns_y, 3), w=ns_w, d=ns_d, rotation=0,
+                ))
+            if bx + bed_w + ns_w <= rw - 0.05:
+                items.append(LayoutFurniture(
+                    kind="nightstand", x=round(bx + bed_w + 0.05, 3),
+                    y=round(ns_y, 3), w=ns_w, d=ns_d, rotation=0,
+                ))
+        # Шкаф — у боковой стены, если место есть
+        wb_w, wb_d = _FURN_SIZES["wardrobe"]
+        if rw >= wb_w + 0.4 and rd >= 3.5:
+            wb_x = (rw - wb_w) / 2
+            wb_y = 0.0 if back_y_pos == "top" else rd - wb_d
+            items.append(LayoutFurniture(
+                kind="wardrobe", x=round(wb_x, 3), y=round(wb_y, 3),
+                w=wb_w, d=wb_d, rotation=0,
+            ))
+
+    elif room.kind == "living":
+        # Диван спинкой к back-стене, по центру
+        s_w, s_d = _FURN_SIZES["sofa"]
+        if rw >= s_w + 0.3 and rd >= s_d + 1.0:
+            sx = (rw - s_w) / 2
+            sy = (rd - s_d - 0.1) if back_y_pos == "top" else 0.1
+            items.append(LayoutFurniture(
+                kind="sofa", x=round(sx, 3), y=round(sy, 3),
+                w=s_w, d=s_d, rotation=0,
+            ))
+            # Журнальный столик перед диваном (отступ 0.4 м)
+            ct_w, ct_d = _FURN_SIZES["coffee_table"]
+            ct_x = (rw - ct_w) / 2
+            ct_y = (sy - ct_d - 0.4) if back_y_pos == "top" else (sy + s_d + 0.4)
+            if ct_y >= 0 and ct_y + ct_d <= rd:
+                items.append(LayoutFurniture(
+                    kind="coffee_table", x=round(ct_x, 3), y=round(ct_y, 3),
+                    w=ct_w, d=ct_d, rotation=0,
+                ))
+            # ТВ у противоположной стены
+            tv_w, tv_d = _FURN_SIZES["tv"]
+            tv_x = (rw - tv_w) / 2
+            tv_y = 0.05 if back_y_pos == "top" else (rd - tv_d - 0.05)
+            items.append(LayoutFurniture(
+                kind="tv", x=round(tv_x, 3), y=round(tv_y, 3),
+                w=tv_w, d=tv_d, rotation=0,
+            ))
+
+    elif room.kind == "kitchen":
+        # Линейка плита-мойка-холодильник вдоль западной стены
+        x = 0.1
+        y = 0.1 if back_y_pos == "bottom" else rd - _FURN_SIZES["stove"][1] - 0.1
+        for kind in ("fridge", "sink", "stove"):
+            f_w, f_d = _FURN_SIZES[kind]
+            if x + f_w > rw - 0.1:
+                break
+            items.append(LayoutFurniture(
+                kind=kind, x=round(x, 3), y=round(y, 3),
+                w=f_w, d=f_d, rotation=0,
+            ))
+            x += f_w + 0.05
+        # Обеденный стол в свободной зоне
+        dt_w, dt_d = _FURN_SIZES["dining_table"]
+        if rw >= dt_w + 0.4 and rd >= 2.8:
+            dt_x = (rw - dt_w) / 2
+            dt_y = (rd - dt_d) / 2 if back_y_pos == "top" else (rd - dt_d) / 2
+            items.append(LayoutFurniture(
+                kind="dining_table", x=round(dt_x, 3), y=round(dt_y, 3),
+                w=dt_w, d=dt_d, rotation=0,
+            ))
+
+    elif room.kind == "bathroom":
+        # Ванна вдоль длинной стены
+        b_w, b_d = _FURN_SIZES["bathtub"]
+        if rw >= b_w + 0.2 and rd >= b_d + 0.4:
+            items.append(LayoutFurniture(
+                kind="bathtub", x=round((rw - b_w) / 2, 3), y=0.05,
+                w=b_w, d=b_d, rotation=0,
+            ))
+            # Унитаз и раковина — у противоположной стены, рядом
+            t_w, t_d = _FURN_SIZES["toilet"]
+            wb_w2, wb_d2 = _FURN_SIZES["washbasin"]
+            row_y = rd - max(t_d, wb_d2) - 0.05
+            total = t_w + wb_w2 + 0.1
+            row_x = (rw - total) / 2
+            items.append(LayoutFurniture(
+                kind="toilet", x=round(row_x, 3), y=round(row_y + (max(t_d, wb_d2) - t_d), 3),
+                w=t_w, d=t_d, rotation=0,
+            ))
+            items.append(LayoutFurniture(
+                kind="washbasin", x=round(row_x + t_w + 0.1, 3),
+                y=round(row_y + (max(t_d, wb_d2) - wb_d2), 3),
+                w=wb_w2, d=wb_d2, rotation=0,
+            ))
+        else:
+            # Маленький сан.узел: только унитаз и раковина
+            t_w, t_d = _FURN_SIZES["toilet"]
+            wb_w2, wb_d2 = _FURN_SIZES["washbasin"]
+            if rw >= t_w + 0.1 and rd >= t_d + 0.1:
+                items.append(LayoutFurniture(
+                    kind="toilet", x=0.05, y=0.05,
+                    w=t_w, d=t_d, rotation=0,
+                ))
+            if rw >= t_w + wb_w2 + 0.2 and rd >= max(t_d, wb_d2) + 0.1:
+                items.append(LayoutFurniture(
+                    kind="washbasin", x=round(t_w + 0.15, 3), y=0.05,
+                    w=wb_w2, d=wb_d2, rotation=0,
+                ))
+
+    elif room.kind == "toilet":
+        t_w, t_d = _FURN_SIZES["toilet"]
+        wb_w2, wb_d2 = _FURN_SIZES["washbasin"]
+        if rw >= t_w + 0.1 and rd >= t_d + 0.1:
+            items.append(LayoutFurniture(
+                kind="toilet", x=round((rw - t_w) / 2, 3),
+                y=round(rd - t_d - 0.1, 3),
+                w=t_w, d=t_d, rotation=0,
+            ))
+        if rw >= wb_w2 + 0.1 and rd >= t_d + wb_d2 + 0.2:
+            items.append(LayoutFurniture(
+                kind="washbasin", x=round((rw - wb_w2) / 2, 3), y=0.05,
+                w=wb_w2, d=wb_d2, rotation=0,
+            ))
+
+    # hallway / loggia / storage — пустые
+
+    room.furniture.extend(items)
 
 
 # ── Вспомогательные функции ───────────────────────────────────────────────

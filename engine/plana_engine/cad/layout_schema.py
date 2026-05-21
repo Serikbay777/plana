@@ -39,6 +39,35 @@ class LayoutWindow(BaseModel):
     width: float = 1.5
 
 
+FurnitureKind = Literal[
+    # спальня
+    "bed", "wardrobe", "nightstand",
+    # гостиная
+    "sofa", "coffee_table", "tv",
+    # кухня
+    "stove", "sink", "fridge", "dining_table",
+    # сан.узел
+    "bathtub", "toilet", "washbasin",
+    # прочее
+    "armchair",
+]
+
+
+class LayoutFurniture(BaseModel):
+    """Элемент мебели/оборудования внутри комнаты.
+
+    Координаты x, y — левый-нижний угол bounding box объекта в системе
+    координат комнаты (не квартиры). Поворот 0/90/180/270 относится к
+    отрисовке иконки; bounding box (w×d) уже учитывает поворот.
+    """
+    kind: FurnitureKind
+    x: float
+    y: float
+    w: float
+    d: float
+    rotation: int = 0       # 0/90/180/270, против часовой
+
+
 class LayoutRoom(BaseModel):
     kind: str
     """Функция помещения: living / bedroom / kitchen / bathroom / toilet / hallway / loggia / storage"""
@@ -54,6 +83,7 @@ class LayoutRoom(BaseModel):
     """Глубина по оси Y (м)"""
     doors: list[LayoutDoor] = []
     windows: list[LayoutWindow] = []
+    furniture: list[LayoutFurniture] = []
 
     @property
     def area_m2(self) -> float:

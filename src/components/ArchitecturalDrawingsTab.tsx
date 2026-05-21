@@ -18,6 +18,7 @@ import {
   generateLayoutFromBrief, exportFloorplanDxf, exportFloorplanIfc,
   visualizeSheet, enhanceBrief,
   type LayoutFloor, type LayoutDoor, type LayoutWindow, type LayoutSide,
+  type LayoutFurniture,
   type BriefLayoutResponse,
 } from "@/lib/engine";
 
@@ -529,6 +530,28 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
           </g>
         ))}
 
+        {/* ── Мебель — мелкие иконки внутри комнат ────────────────────── */}
+        {layout.sections.map((section) => (
+          <g key={`furniture-${section.index}`}>
+            {section.apartments.map((apt) =>
+              apt.rooms.map((room, rIdx) =>
+                (room.furniture ?? []).map((furn, fi) => {
+                  const fx = apt.x + room.x + furn.x;
+                  const fArchY = apt.y + room.y + furn.y;
+                  return (
+                    <FurnitureItem
+                      key={`f-${apt.number}-${rIdx}-${fi}`}
+                      furn={furn}
+                      svgX={fx}
+                      svgY={ry(fArchY, furn.d)}
+                    />
+                  );
+                })
+              )
+            )}
+          </g>
+        ))}
+
         {/* ── Ядра: лифты и лестницы ──────────────────────────────────── */}
         {layout.sections.map((section) => (
           <g key={`cores-${section.index}`}>
@@ -731,6 +754,252 @@ function DimensionLine(props:
       </text>
     </g>
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// FurnitureItem — стилизованная иконка мебели/сантехники
+// ---------------------------------------------------------------------------
+
+const FURN_STROKE = "#5a5a5a";
+const FURN_FILL   = "#E5DBC0";
+const FURN_WATER  = "#cfd8dc";
+const FURN_SCREEN = "#1f2937";
+
+
+function FurnitureItem({
+  furn, svgX, svgY,
+}: {
+  furn: LayoutFurniture;
+  svgX: number;       // left-X в SVG
+  svgY: number;       // top-Y в SVG (после ry-инверсии)
+}) {
+  const { w, d, kind } = furn;
+  const sw = 0.02;    // тонкие линии деталей
+
+  const baseRect = (
+    <rect
+      x={svgX} y={svgY} width={w} height={d}
+      fill={FURN_FILL}
+      stroke={FURN_STROKE}
+      strokeWidth={sw}
+    />
+  );
+
+  switch (kind) {
+    case "bed": {
+      // Кровать с подушкой и одеялом. Подушка наверху (там где SVG-Y маленький =
+      // голова кровати у «back» стены комнаты).
+      const pillowW = w * 0.7;
+      const pillowD = d * 0.18;
+      const px = svgX + (w - pillowW) / 2;
+      const py = svgY + d * 0.05;
+      return (
+        <g>
+          {baseRect}
+          {/* Одеяло — линия отделяющая верх от низа */}
+          <line
+            x1={svgX} y1={svgY + d * 0.32}
+            x2={svgX + w} y2={svgY + d * 0.32}
+            stroke={FURN_STROKE} strokeWidth={sw}
+          />
+          {/* Подушка */}
+          <rect
+            x={px} y={py} width={pillowW} height={pillowD}
+            fill="#fff" stroke={FURN_STROKE} strokeWidth={sw} rx={0.05}
+          />
+        </g>
+      );
+    }
+
+    case "wardrobe":
+      return (
+        <g>
+          {baseRect}
+          {/* Две створки */}
+          <line
+            x1={svgX + w / 2} y1={svgY}
+            x2={svgX + w / 2} y2={svgY + d}
+            stroke={FURN_STROKE} strokeWidth={sw}
+          />
+        </g>
+      );
+
+    case "nightstand":
+      return baseRect;
+
+    case "sofa": {
+      // Диван с тремя секциями + спинка отделена линией
+      const backY = svgY + d * 0.25;
+      return (
+        <g>
+          {baseRect}
+          {/* Спинка */}
+          <line x1={svgX} y1={backY} x2={svgX + w} y2={backY}
+                stroke={FURN_STROKE} strokeWidth={sw} />
+          {/* Подлокотники */}
+          <line x1={svgX + w * 0.08} y1={backY} x2={svgX + w * 0.08} y2={svgY + d}
+                stroke={FURN_STROKE} strokeWidth={sw} />
+          <line x1={svgX + w * 0.92} y1={backY} x2={svgX + w * 0.92} y2={svgY + d}
+                stroke={FURN_STROKE} strokeWidth={sw} />
+          {/* Разделение на 3 подушки */}
+          <line x1={svgX + w * 0.36} y1={backY} x2={svgX + w * 0.36} y2={svgY + d}
+                stroke={FURN_STROKE} strokeWidth={sw} />
+          <line x1={svgX + w * 0.64} y1={backY} x2={svgX + w * 0.64} y2={svgY + d}
+                stroke={FURN_STROKE} strokeWidth={sw} />
+        </g>
+      );
+    }
+
+    case "coffee_table":
+      return (
+        <rect
+          x={svgX} y={svgY} width={w} height={d}
+          fill={FURN_FILL}
+          stroke={FURN_STROKE}
+          strokeWidth={sw}
+          rx={0.08} ry={0.08}
+        />
+      );
+
+    case "tv":
+      return (
+        <rect
+          x={svgX} y={svgY} width={w} height={d}
+          fill={FURN_SCREEN}
+          stroke={FURN_STROKE}
+          strokeWidth={sw}
+        />
+      );
+
+    case "stove": {
+      // Конфорки — 4 круга по углам
+      const cr = Math.min(w, d) * 0.13;
+      const ox = w * 0.27;
+      const oy = d * 0.27;
+      return (
+        <g>
+          {baseRect}
+          <circle cx={svgX + ox} cy={svgY + oy} r={cr} fill="none" stroke={FURN_STROKE} strokeWidth={sw} />
+          <circle cx={svgX + w - ox} cy={svgY + oy} r={cr} fill="none" stroke={FURN_STROKE} strokeWidth={sw} />
+          <circle cx={svgX + ox} cy={svgY + d - oy} r={cr} fill="none" stroke={FURN_STROKE} strokeWidth={sw} />
+          <circle cx={svgX + w - ox} cy={svgY + d - oy} r={cr} fill="none" stroke={FURN_STROKE} strokeWidth={sw} />
+        </g>
+      );
+    }
+
+    case "sink": {
+      const insetW = w * 0.78;
+      const insetD = d * 0.65;
+      const ix = svgX + (w - insetW) / 2;
+      const iy = svgY + (d - insetD) / 2;
+      return (
+        <g>
+          {baseRect}
+          <rect
+            x={ix} y={iy} width={insetW} height={insetD}
+            fill={FURN_WATER}
+            stroke={FURN_STROKE} strokeWidth={sw}
+            rx={0.08} ry={0.08}
+          />
+        </g>
+      );
+    }
+
+    case "fridge":
+      return (
+        <g>
+          {baseRect}
+          {/* Дверь морозильника отделена линией наверху */}
+          <line
+            x1={svgX} y1={svgY + d * 0.3}
+            x2={svgX + w} y2={svgY + d * 0.3}
+            stroke={FURN_STROKE} strokeWidth={sw}
+          />
+        </g>
+      );
+
+    case "dining_table":
+      return (
+        <rect
+          x={svgX} y={svgY} width={w} height={d}
+          fill="none"
+          stroke={FURN_STROKE} strokeWidth={sw}
+          rx={0.05} ry={0.05}
+        />
+      );
+
+    case "bathtub":
+      return (
+        <g>
+          <rect
+            x={svgX} y={svgY} width={w} height={d}
+            fill={FURN_WATER}
+            stroke={FURN_STROKE} strokeWidth={sw}
+            rx={d * 0.35} ry={d * 0.35}
+          />
+          {/* Слив — кружок */}
+          <circle
+            cx={svgX + w * 0.85} cy={svgY + d * 0.5}
+            r={d * 0.08}
+            fill="none" stroke={FURN_STROKE} strokeWidth={sw}
+          />
+        </g>
+      );
+
+    case "toilet": {
+      // Бачок наверху + чаша унитаза снизу
+      const tankH = d * 0.32;
+      const bowlH = d - tankH;
+      return (
+        <g>
+          {/* Бачок */}
+          <rect
+            x={svgX} y={svgY} width={w} height={tankH}
+            fill={FURN_FILL} stroke={FURN_STROKE} strokeWidth={sw}
+          />
+          {/* Чаша */}
+          <ellipse
+            cx={svgX + w / 2} cy={svgY + tankH + bowlH / 2}
+            rx={w / 2 - sw} ry={bowlH / 2 - sw}
+            fill={FURN_WATER} stroke={FURN_STROKE} strokeWidth={sw}
+          />
+        </g>
+      );
+    }
+
+    case "washbasin": {
+      // Тумба + чаша внутри
+      const bowlW = w * 0.72;
+      const bowlD = d * 0.65;
+      const bx = svgX + (w - bowlW) / 2;
+      const by = svgY + (d - bowlD) / 2;
+      return (
+        <g>
+          {baseRect}
+          <ellipse
+            cx={bx + bowlW / 2} cy={by + bowlD / 2}
+            rx={bowlW / 2} ry={bowlD / 2}
+            fill={FURN_WATER} stroke={FURN_STROKE} strokeWidth={sw}
+          />
+        </g>
+      );
+    }
+
+    case "armchair":
+      return (
+        <g>
+          {baseRect}
+          {/* Спинка */}
+          <line x1={svgX} y1={svgY + d * 0.25}
+                x2={svgX + w} y2={svgY + d * 0.25}
+                stroke={FURN_STROKE} strokeWidth={sw} />
+        </g>
+      );
+
+    default:
+      return baseRect;
+  }
 }
 
 

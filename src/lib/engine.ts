@@ -645,12 +645,29 @@ export type LayoutWindow = {
   width: number;
 };
 
+export type FurnitureKind =
+  | "bed" | "wardrobe" | "nightstand"
+  | "sofa" | "coffee_table" | "tv"
+  | "stove" | "sink" | "fridge" | "dining_table"
+  | "bathtub" | "toilet" | "washbasin"
+  | "armchair";
+
+export type LayoutFurniture = {
+  kind: FurnitureKind;
+  x: number;
+  y: number;
+  w: number;
+  d: number;
+  rotation: number;     // 0/90/180/270
+};
+
 export type LayoutRoom = {
   kind: string;
   name_ru: string;
   x: number; y: number; w: number; d: number;
   doors?: LayoutDoor[];
   windows?: LayoutWindow[];
+  furniture?: LayoutFurniture[];
 };
 
 export type LayoutApartment = {
