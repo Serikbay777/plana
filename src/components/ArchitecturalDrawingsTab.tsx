@@ -13,11 +13,11 @@
 import { useState, useRef, useCallback, useEffect, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
-  Pencil, RefreshCw, Undo2, Redo2,
+  Pencil, RefreshCw, Undo2, Redo2, Send, MessageSquare,
 } from "lucide-react";
 import {
   generateLayoutFromBrief, exportFloorplanDxf, exportFloorplanIfc,
-  visualizeSheet, enhanceBrief,
+  visualizeSheet, enhanceBrief, editLayoutWithChat,
   type LayoutFloor, type LayoutDoor, type LayoutWindow, type LayoutSide,
   type LayoutFurniture,
   type BriefLayoutResponse,
@@ -28,6 +28,12 @@ type Status = "idle" | "loading" | "ready" | "error";
 type ExportKind = "dxf" | "ifc" | "viz";
 
 type RoomRef = { sectionIdx: number; aptIdx: number; roomIdx: number };
+
+type ChatMsg = {
+  role: "user" | "ai" | "error";
+  text: string;
+  ts: number;
+};
 
 const SNAP_M = 0.1;        // шаг привязки drag'а к сетке (0.1 м)
 
@@ -172,6 +178,58 @@ export function ArchitecturalDrawingsTab({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [editMode, currentLayout, undo, redo]);
+
+  // ── Чат-итерация (E) ──────────────────────────────────────────────
+  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const chatListRef = useRef<HTMLDivElement | null>(null);
+
+  // Сбрасываем чат при новой генерации
+  useEffect(() => {
+    if (result) setChatMsgs([]);
+  }, [result]);
+
+  // Autoscroll списка сообщений вниз
+  useEffect(() => {
+    if (chatListRef.current) {
+      chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
+    }
+  }, [chatMsgs, chatBusy]);
+
+  const sendChat = async () => {
+    const text = chatInput.trim();
+    if (!text || chatBusy || !currentLayout) return;
+    setChatInput("");
+    const userMsg: ChatMsg = { role: "user", text, ts: Date.now() };
+    setChatMsgs((prev) => [...prev, userMsg]);
+    setChatBusy(true);
+    try {
+      const newLayout = await editLayoutWithChat(currentLayout, text);
+      setEditedLayout(newLayout);
+      // Пушим в историю чтобы undo откатывал чат-правку
+      setHistory((prevHist) => {
+        const trimmed = prevHist.slice(0, hIdx + 1);
+        return [...trimmed, cloneLayout(newLayout)];
+      });
+      setHIdx((prev) => prev + 1);
+      setChatMsgs((prev) => [...prev, { role: "ai", text: "Готово ✓", ts: Date.now() }]);
+    } catch (e) {
+      setChatMsgs((prev) => [
+        ...prev,
+        { role: "error", text: (e as Error).message, ts: Date.now() },
+      ]);
+    } finally {
+      setChatBusy(false);
+    }
+  };
+
+  const onChatKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void sendChat();
+    }
+  };
 
   const handleEnhance = async () => {
     if (!brief.trim() || enhancing || status === "loading") return;
@@ -365,7 +423,7 @@ export function ArchitecturalDrawingsTab({
               onChange={(e) => setBrief(e.target.value)}
               placeholder={BRIEF_PLACEHOLDER}
               disabled={status === "loading"}
-              rows={14}
+              rows={currentLayout ? 6 : 12}
               className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white/85 placeholder-white/25 resize-none leading-relaxed focus:outline-none focus:border-sky-400/40"
             />
           </div>
@@ -388,16 +446,73 @@ export function ArchitecturalDrawingsTab({
               Сгенерировать план
             </button>
           </div>
-          {result?.notes && (
+          {result?.notes && !currentLayout && (
             <div className="text-[10.5px] text-white/45 leading-relaxed">
               <div className="uppercase tracking-wider text-white/30 mb-1">Заметки модели</div>
               {result.notes}
             </div>
           )}
-          {result && result.used_defaults.length > 0 && (
-            <div className="text-[10px] text-amber-200/55 leading-relaxed">
-              <div className="uppercase tracking-wider text-amber-200/40 mb-1">Дефолты</div>
-              В ТЗ не указано: {result.used_defaults.join(", ")}
+
+          {/* ── Чат-итерация ───────────────────────────────────────── */}
+          {currentLayout && (
+            <div className="flex flex-col flex-1 min-h-0 mt-2 border-t border-white/[0.05] pt-3">
+              <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-white/45 mb-2">
+                <MessageSquare size={11} className="text-sky-300" />
+                Чат-правки
+              </div>
+
+              <div
+                ref={chatListRef}
+                className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5 pr-1"
+              >
+                {chatMsgs.length === 0 && !chatBusy && (
+                  <div className="text-[11px] text-white/40 leading-relaxed italic">
+                    Пиши что подправить — «увеличь спальню 1 на 1.5 м»,
+                    «удали гардеробную», «сделай ванную просторнее».
+                    AI применит правку, можно откатить через Ctrl+Z.
+                  </div>
+                )}
+                {chatMsgs.map((m, i) => (
+                  <div
+                    key={i}
+                    className={[
+                      "rounded-lg px-2.5 py-1.5 text-[11.5px] leading-snug max-w-[95%]",
+                      m.role === "user"
+                        ? "bg-sky-500/15 border border-sky-400/20 text-sky-50 self-end"
+                        : m.role === "ai"
+                          ? "bg-emerald-500/10 border border-emerald-400/15 text-emerald-100 self-start"
+                          : "bg-rose-500/15 border border-rose-400/20 text-rose-100 self-start",
+                    ].join(" ")}
+                  >
+                    {m.text}
+                  </div>
+                ))}
+                {chatBusy && (
+                  <div className="self-start text-[11px] text-white/55 flex items-center gap-1.5 px-2 py-1">
+                    <Loader2 size={11} className="animate-spin" /> AI обновляет план…
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-2 flex gap-1.5">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={onChatKey}
+                  disabled={chatBusy}
+                  placeholder="Что подправить?"
+                  className="flex-1 h-8 bg-white/[0.05] border border-white/[0.08] rounded-md px-2.5 text-[11.5px] text-white/85 placeholder-white/30 focus:outline-none focus:border-sky-400/40"
+                />
+                <button
+                  onClick={sendChat}
+                  disabled={chatBusy || !chatInput.trim()}
+                  className="h-8 w-8 rounded-md bg-sky-500/80 hover:bg-sky-400 text-white grid place-items-center disabled:opacity-30 disabled:cursor-not-allowed transition"
+                  title="Отправить (Enter)"
+                >
+                  {chatBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                </button>
+              </div>
             </div>
           )}
         </div>

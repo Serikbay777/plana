@@ -1721,6 +1721,35 @@ class EnhanceBriefResponse(BaseModel):
     enhanced_brief: str
 
 
+class ChatEditRequest(BaseModel):
+    layout: LayoutFloor
+    message: str
+
+
+class ChatEditResponse(BaseModel):
+    layout: LayoutFloor
+
+
+@app.post("/edit/layout-with-chat", response_model=ChatEditResponse)
+def edit_layout_with_chat_endpoint(req: ChatEditRequest) -> ChatEditResponse:
+    """Применить пользовательскую правку к layout через GPT-4 в чат-режиме.
+
+    Юзер пишет «увеличь спальню на 2 м» → GPT возвращает обновлённый
+    LayoutFloor. Геометрия секций/коридоров/ядер сохраняется.
+    """
+    if not req.message or not req.message.strip():
+        raise HTTPException(status_code=400, detail="message is empty")
+
+    from ..visualizer.layout_chat_editor import LayoutChatError, edit_layout_with_chat
+
+    try:
+        new_layout = edit_layout_with_chat(req.layout, req.message)
+    except LayoutChatError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return ChatEditResponse(layout=new_layout)
+
+
 @app.post("/enhance/brief", response_model=EnhanceBriefResponse)
 def enhance_brief_endpoint(req: BriefRequest) -> EnhanceBriefResponse:
     """Улучшить ТЗ через GPT-архитектора (отступы, микс, лифты, нормы).

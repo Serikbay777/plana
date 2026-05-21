@@ -1028,5 +1028,16 @@ export async function enhanceBrief(brief: string): Promise<string> {
   return res.enhanced_brief;
 }
 
+export async function editLayoutWithChat(
+  layout: LayoutFloor,
+  message: string,
+): Promise<LayoutFloor> {
+  const res = await request<{ layout: LayoutFloor }>("/edit/layout-with-chat", {
+    method: "POST",
+    body: JSON.stringify({ layout, message }),
+  });
+  return res.layout;
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;
