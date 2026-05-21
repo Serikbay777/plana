@@ -18,7 +18,9 @@ import {
   type SheetType, type SheetVizMode,
 } from "@/lib/engine";
 
-type Quality = "low" | "medium" | "high";
+// Качество фиксировано — селектор убран из UI по просьбе.
+const FIXED_QUALITY = "medium" as const;
+type Quality = typeof FIXED_QUALITY;
 
 type PageCard = {
   index: number;
@@ -38,13 +40,8 @@ type PageCard = {
   error: string | null;
 };
 
-// Ориентировочная стоимость gpt-image-1 на 1024×1024 (на 2026-05):
-//   standard ≈ $0.04, high ≈ $0.17, low ≈ $0.011.
-const COST_PER_PAGE: Record<Quality, number> = {
-  low:    0.011,
-  medium: 0.042,
-  high:   0.167,
-};
+// Ориентировочная стоимость gpt-image-1 на 1024×1024 в medium ≈ $0.042.
+const COST_PER_PAGE = 0.042;
 const COST_VISION_EXTRACT = 0.02;      // gpt-4.1 vision на 1 страницу (~оценка)
 const COST_CLASSIFY = 0.01;            // gpt-4.1 vision classify
 
@@ -89,7 +86,7 @@ export function PdfVizTab({
   const [sheetTypes, setSheetTypes] = useState<SheetType[]>([]);
   const [typesLoading, setTypesLoading] = useState(true);
 
-  const [quality, setQuality] = useState<Quality>("medium");
+  const quality: Quality = FIXED_QUALITY;
   const [defaultMode, setDefaultMode] = useState<SheetVizMode>("C");
   const [genBusy, setGenBusy] = useState(false);
   const [classifyBusy, setClassifyBusy] = useState(false);
@@ -257,7 +254,7 @@ export function PdfVizTab({
   const selectedCount = selectedPages.length;
   const cModeCount = selectedPages.filter((p) => p.mode === "C").length;
   const estimatedCost =
-    selectedCount * COST_PER_PAGE[quality] +
+    selectedCount * COST_PER_PAGE +
     cModeCount * COST_VISION_EXTRACT;
 
   const runGenerationQueue = useCallback(async (queue: PageCard[]) => {
@@ -403,21 +400,6 @@ export function PdfVizTab({
               </div>
             </div>
 
-            {/* Качество */}
-            <div className="flex items-center gap-2 text-[11.5px] text-white/50">
-              <span>Качество</span>
-              <select
-                value={quality}
-                onChange={(e) => setQuality(e.target.value as Quality)}
-                disabled={busy}
-                className="h-7 bg-white/[0.06] border border-white/10 rounded px-1.5 text-white/80 text-[11.5px]"
-              >
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-              </select>
-            </div>
-
             {/* Авто-распознать */}
             <button
               onClick={handleClassifyAll}
@@ -447,7 +429,7 @@ export function PdfVizTab({
             </button>
             <span
               className="text-[11px] text-white/45"
-              title={`gpt-image (${quality}) × ${selectedCount}${cModeCount > 0 ? ` + Vision-extract × ${cModeCount}` : ""}`}
+              title={`gpt-image × ${selectedCount}${cModeCount > 0 ? ` + Vision-extract × ${cModeCount}` : ""}`}
             >
               ~${estimatedCost.toFixed(2)}
             </span>
