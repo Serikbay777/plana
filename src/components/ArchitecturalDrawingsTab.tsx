@@ -556,10 +556,10 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
                   const canShowArea  = room.w >= MIN_ROOM_AREA_W && room.d >= 0.9;
                   if (!canShowLabel && !canShowArea) return null;
                   const label = upperCaseRoom(room.name_ru, room.kind);
-                  // «12.4 m²» с латинским m, чтобы Chrome не глючил на «м²»
-                  // в мелком кегле (бывало что superscript-«²» рендерился
-                  // не в той позиции и казалось будто строка перевёрнута).
-                  const areaText = `${(room.w * room.d).toFixed(1)} m²`;
+                  // «12.4 м.кв.» — однозначная LTR-кириллица без superscript-
+                  // символов. Chrome bidi-алгоритм путается с «²» + цифрами в
+                  // SVG-тексте, рендерит порядок задом наперёд («²м 2.21»).
+                  const areaText = `${(room.w * room.d).toFixed(1)} м.кв.`;
                   return (
                     <g key={rIdx}>
                       {canShowLabel && (
