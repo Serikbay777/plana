@@ -13,7 +13,7 @@
 import { useState, useRef, useCallback, useEffect, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
-  Pencil, RefreshCw, Undo2, Redo2, Send, MessageSquare,
+  Pencil, RefreshCw, Undo2, Redo2, Send, MessageSquare, Grid3x3,
 } from "lucide-react";
 import {
   generateLayoutFromBrief, exportFloorplanDxf, exportFloorplanIfc,
@@ -681,6 +681,14 @@ const VP_RESET: Viewport = { zoom: 1, panX: 0, panY: 0 };
 const VP_ZOOM_MIN = 0.4;
 const VP_ZOOM_MAX = 8;
 
+type GridStyle = "grid" | "dots" | "none";
+const GRID_STYLES: GridStyle[] = ["grid", "dots", "none"];
+const GRID_STYLE_LABEL: Record<GridStyle, string> = {
+  grid: "клетка",
+  dots: "точки",
+  none: "без сетки",
+};
+
 
 type FloorPlanSvgProps = {
   layout: LayoutFloor;
@@ -719,9 +727,17 @@ function FloorPlanSvg({
   // ── Viewport: zoom + pan через CSS transform на SVG ─────────────────
   const [vp, setVp] = useState<Viewport>(VP_RESET);
   const [dragging, setDragging] = useState(false);
+  const [gridStyle, setGridStyle] = useState<GridStyle>("grid");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+
+  const cycleGridStyle = () => {
+    setGridStyle((prev) => {
+      const i = GRID_STYLES.indexOf(prev);
+      return GRID_STYLES[(i + 1) % GRID_STYLES.length];
+    });
+  };
 
   // Drag комнаты в edit-mode
   const startRoomDrag = (e: React.MouseEvent, ref: RoomRef, room: { x: number; y: number }) => {
@@ -843,13 +859,27 @@ function FloorPlanSvg({
       fontFamily={fontFamily}
       onClick={onBgClick}
     >
-      {/* Точечная сетка на фоне — как в maket.ai */}
+      {/* ── Фоновая сетка: 3 режима (клетка / точки / без) ──────────── */}
       <defs>
-        <pattern id={gridId} width={1} height={1} patternUnits="userSpaceOnUse">
+        <pattern id={`${gridId}-dots`} width={1} height={1} patternUnits="userSpaceOnUse">
           <circle cx={0.5} cy={0.5} r={0.025} fill="#b8a878" opacity={0.5} />
         </pattern>
+        <pattern id={`${gridId}-fine`} width={0.5} height={0.5} patternUnits="userSpaceOnUse">
+          <path d="M 0.5 0 L 0 0 0 0.5" fill="none" stroke="#cbb88a" strokeWidth={0.008} />
+        </pattern>
+        <pattern id={`${gridId}-major`} width={5} height={5} patternUnits="userSpaceOnUse">
+          <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#9c8554" strokeWidth={0.025} />
+        </pattern>
       </defs>
-      <rect x={0} y={0} width={viewBoxW} height={viewBoxH} fill={`url(#${gridId})`} />
+      {gridStyle === "dots" && (
+        <rect x={0} y={0} width={viewBoxW} height={viewBoxH} fill={`url(#${gridId}-dots)`} />
+      )}
+      {gridStyle === "grid" && (
+        <>
+          <rect x={0} y={0} width={viewBoxW} height={viewBoxH} fill={`url(#${gridId}-fine)`} />
+          <rect x={0} y={0} width={viewBoxW} height={viewBoxH} fill={`url(#${gridId}-major)`} />
+        </>
+      )}
 
       <g transform={`translate(${PAD}, ${PAD})`}>
         {/* ── Заливка всех комнат и коридора единым бежевым ────────────── */}
@@ -1164,6 +1194,9 @@ function FloorPlanSvg({
           label={`${D.toFixed(2)} М`}
           color={LABEL_COLOR}
         />
+
+        {/* ── Scale bar (под зданием слева) ───────────────────────────── */}
+        <ScaleBar y={ry(0) + 0.8} color={LABEL_COLOR} />
       </g>
     </svg>
 
@@ -1203,6 +1236,18 @@ function FloorPlanSvg({
         title="Сбросить (двойной клик по фону)"
         style={{ ...zoomBtnStyle, fontSize: 12 }}
       >⌖</button>
+      <button
+        type="button"
+        onClick={cycleGridStyle}
+        title={`Сетка: ${GRID_STYLE_LABEL[gridStyle]} (клик — следующий режим)`}
+        style={{
+          ...zoomBtnStyle,
+          background: gridStyle === "none" ? "#f3f4f6" : "#fff",
+          color: gridStyle === "none" ? "#9ca3af" : "#374151",
+        }}
+      >
+        <Grid3x3 size={14} />
+      </button>
       <div style={{
         fontSize: 10,
         textAlign: "center",
@@ -1232,6 +1277,53 @@ const zoomBtnStyle: React.CSSProperties = {
   justifyContent: "center",
   lineHeight: 1,
 };
+
+
+// ---------------------------------------------------------------------------
+// Scale bar — чёрно-белые секции по 1 м, как в архитектурных альбомах
+// ---------------------------------------------------------------------------
+
+function ScaleBar({ y, color }: { y: number; color: string }) {
+  const SEGMENTS = 5;            // 0..5 м
+  const H = 0.25;
+  const stroke = 0.025;
+  return (
+    <g>
+      {[...Array(SEGMENTS)].map((_, i) => (
+        <rect
+          key={i}
+          x={i} y={y - H / 2} width={1} height={H}
+          fill={i % 2 === 0 ? color : "#fff"}
+          stroke={color}
+          strokeWidth={stroke}
+        />
+      ))}
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <text
+          key={i}
+          x={i} y={y + H / 2 + 0.45}
+          textAnchor="middle" dominantBaseline="central"
+          fill={color}
+          fontSize={0.32}
+          fontWeight={600}
+          style={{ fontVariantNumeric: "tabular-nums" }}
+        >
+          {i}
+        </text>
+      ))}
+      <text
+        x={SEGMENTS + 0.5} y={y}
+        textAnchor="start" dominantBaseline="central"
+        fill={color}
+        fontSize={0.36}
+        fontWeight={600}
+        letterSpacing={0.04}
+      >
+        М
+      </text>
+    </g>
+  );
+}
 
 
 // ---------------------------------------------------------------------------
