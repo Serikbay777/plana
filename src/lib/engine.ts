@@ -1104,5 +1104,99 @@ export async function editLayoutWithChat(
   return res.layout;
 }
 
+// ---------------------------------------------------------------------------
+// Wizard (Sprint 4 v1.0 plan) — структурированный ввод для нового проекта.
+// На v1 wizard собирает textual brief и вызывает существующий
+// /generate/layout-from-brief. В v1.5 — отдельный structured endpoint
+// /generate/layout-from-wizard, который не теряет точность параметров
+// в текстовой сериализации.
+// ---------------------------------------------------------------------------
+
+export type FootprintShape = "rect" | "l" | "t" | "u" | "custom";
+
+export type ProjectType =
+  | "residential_sfh"   // single-family house
+  | "residential_multi" // small multi-family (townhouse, low-rise)
+  | "commercial"        // офис / коммерция
+  | "mixed";            // mixed-use
+
+export type RoomReqKind =
+  | "bedroom" | "bathroom" | "kitchen" | "living"
+  | "dining" | "office" | "garage" | "utility" | "storage";
+
+export type RoomReq = {
+  kind: RoomReqKind;
+  count: number;
+};
+
+export type WizardInputs = {
+  projectType: ProjectType;
+  floors: number;             // 1..6
+  totalAreaM2: number;        // общая площадь
+  footprint: FootprintShape;
+  buildingWidth: number;
+  buildingDepth: number;
+  rooms: RoomReq[];
+  city?: string;              // для будущей привязки норм (S5/v1.5)
+  notes?: string;             // дополнительные пожелания пользователя
+};
+
+const PROJECT_TYPE_RU: Record<ProjectType, string> = {
+  residential_sfh: "Жилой одноквартирный дом",
+  residential_multi: "Малоэтажное жильё (таунхаус/секционка)",
+  commercial: "Коммерческое здание",
+  mixed: "Mixed-use",
+};
+
+const ROOM_RU: Record<RoomReqKind, [string, string]> = {
+  bedroom:  ["спальня", "спален"],
+  bathroom: ["ванная", "ванных"],
+  kitchen:  ["кухня", "кухонь"],
+  living:   ["гостиная", "гостиных"],
+  dining:   ["столовая", "столовых"],
+  office:   ["кабинет", "кабинетов"],
+  garage:   ["гараж", "гаражей"],
+  utility:  ["подсобка", "подсобок"],
+  storage:  ["кладовка", "кладовок"],
+};
+
+/** Собрать textual brief из wizard-параметров для existing brief-endpoint. */
+export function briefFromWizard(w: WizardInputs): string {
+  const parts: string[] = [];
+  parts.push(`${PROJECT_TYPE_RU[w.projectType]}. ${w.floors}-этажный.`);
+  parts.push(`Габариты ${w.buildingWidth.toFixed(1)}×${w.buildingDepth.toFixed(1)} м.`);
+  parts.push(`Общая площадь ${w.totalAreaM2.toFixed(0)} м².`);
+  if (w.footprint !== "rect") {
+    parts.push(`Форма контура: ${w.footprint.toUpperCase()}-образная.`);
+  }
+
+  const roomsText = w.rooms
+    .filter((r) => r.count > 0)
+    .map((r) => {
+      const [single, multi] = ROOM_RU[r.kind];
+      const word = r.count === 1 ? single : multi;
+      return `${r.count} ${word}`;
+    })
+    .join(", ");
+  if (roomsText) parts.push(`Состав: ${roomsText}.`);
+
+  if (w.city) parts.push(`Локация: ${w.city}.`);
+  if (w.notes && w.notes.trim()) parts.push(`Дополнительно: ${w.notes.trim()}`);
+
+  return parts.join(" ");
+}
+
+/**
+ * Генерация плана через wizard. На Sprint 4 — оборачивает brief-endpoint;
+ * в v1.5 заменится на /generate/layout-from-wizard с потерей нулевой
+ * точности параметров.
+ */
+export async function generateLayoutFromWizard(
+  inputs: WizardInputs,
+): Promise<BriefLayoutResponse> {
+  const brief = briefFromWizard(inputs);
+  return generateLayoutFromBrief(brief);
+}
+
 export { EngineError };
 export const ENGINE_BASE_URL = ENGINE_URL;

@@ -16,11 +16,13 @@ import {
   Pencil, RefreshCw, Undo2, Redo2, Send, MessageSquare, Grid3x3,
 } from "lucide-react";
 import {
-  generateLayoutFromBrief, exportFloorplanDxf, exportFloorplanIfc,
+  generateLayoutFromBrief, generateLayoutFromWizard,
+  exportFloorplanDxf, exportFloorplanIfc,
   visualizeSheet, enhanceBrief, editLayoutWithChat,
   type LayoutFloor, type LayoutDoor, type LayoutWindow, type LayoutSide,
   type LayoutFurniture,
   type BriefLayoutResponse,
+  type WizardInputs,
 } from "@/lib/engine";
 import {
   projectReducer,
@@ -38,6 +40,7 @@ import { ModeTabs } from "@/components/editor/ModeTabs";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { SnapControls } from "@/components/editor/SnapControls";
 import { HotkeysHelp } from "@/components/editor/HotkeysHelp";
+import { NewProjectWizard } from "@/components/wizard/NewProjectWizard";
 import { matchHotkey } from "@/lib/hotkeys";
 
 type Status = "idle" | "loading" | "ready" | "error";
@@ -213,6 +216,23 @@ export function ArchitecturalDrawingsTab({
     if (vizImageUrl) { URL.revokeObjectURL(vizImageUrl); setVizImageUrl(null); }
     try {
       const res = await generateLayoutFromBrief(brief);
+      setResult(res);
+      setStatus("ready");
+    } catch (e) {
+      setError((e as Error).message);
+      setStatus("error");
+    }
+  };
+
+  // ── Wizard (Sprint 4) ───────────────────────────────────────────────
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const handleWizardComplete = async (inputs: WizardInputs) => {
+    setWizardOpen(false);
+    setStatus("loading");
+    setError(null);
+    if (vizImageUrl) { URL.revokeObjectURL(vizImageUrl); setVizImageUrl(null); }
+    try {
+      const res = await generateLayoutFromWizard(inputs);
       setResult(res);
       setStatus("ready");
     } catch (e) {
@@ -406,8 +426,18 @@ export function ArchitecturalDrawingsTab({
         {/* CENTER — текстовое ТЗ + AI чат */}
         <div className="border-r border-white/[0.04] p-4 flex flex-col gap-3 min-h-0">
           <div>
-            <div className="text-[10.5px] uppercase tracking-wider text-white/45 mb-1.5">
-              Техническое задание
+            <div className="mb-1.5 flex items-center justify-between">
+              <div className="text-[10.5px] uppercase tracking-wider text-white/45">
+                Техническое задание
+              </div>
+              <button
+                onClick={() => setWizardOpen(true)}
+                disabled={status === "loading"}
+                title="Открыть мастер создания проекта (4 шага)"
+                className="h-6 px-2 rounded text-[10.5px] flex items-center gap-1 border border-sky-400/30 text-sky-200/90 hover:bg-sky-500/15 transition disabled:opacity-30"
+              >
+                <Wand2 size={10} /> Через wizard
+              </button>
             </div>
             <textarea
               value={brief}
@@ -561,10 +591,19 @@ export function ArchitecturalDrawingsTab({
                 <div className="text-[15px] font-semibold tracking-display mb-1.5">
                   Опиши здание словами
                 </div>
-                <div className="text-[12.5px] text-white/55 leading-relaxed">
+                <div className="text-[12.5px] text-white/55 leading-relaxed mb-4">
                   AI распарсит параметры, построит технический план этажа.
                   Дальше — экспорт в DXF/IFC или AI-визуализация поверх.
                 </div>
+                <div className="text-[11px] text-white/35 mb-2">
+                  или
+                </div>
+                <button
+                  onClick={() => setWizardOpen(true)}
+                  className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-sky-400/40 text-sky-100 hover:bg-sky-500/15 text-[12.5px] transition"
+                >
+                  <Wand2 size={13} /> Создать через wizard
+                </button>
               </div>
             </div>
           )}
@@ -655,6 +694,11 @@ export function ArchitecturalDrawingsTab({
       </div>
 
       <HotkeysHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <NewProjectWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onComplete={handleWizardComplete}
+      />
     </>
   );
 }
