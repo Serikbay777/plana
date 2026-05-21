@@ -10,14 +10,15 @@
 // Этапы 2-3 (drag-edit стен, авто-замыкание комнат, размеры) — следующие
 // итерации поверх той же модели данных.
 
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
 } from "lucide-react";
 import {
   generateLayoutFromBrief, exportFloorplanDxf, exportFloorplanIfc,
   visualizeSheet, enhanceBrief,
-  type LayoutFloor, type BriefLayoutResponse,
+  type LayoutFloor, type LayoutDoor, type LayoutWindow, type LayoutSide,
+  type BriefLayoutResponse,
 } from "@/lib/engine";
 
 type Status = "idle" | "loading" | "ready" | "error";
@@ -499,6 +500,35 @@ function FloorPlanSvg({ layout }: { layout: LayoutFloor }) {
           </g>
         ))}
 
+        {/* ── Двери и окна — рисуем поверх стен, до ядер и контура ───── */}
+        {layout.sections.map((section) => (
+          <g key={`apertures-${section.index}`}>
+            {section.apartments.map((apt) =>
+              apt.rooms.flatMap((room, rIdx) => {
+                const rx = apt.x + room.x;
+                const archY = apt.y + room.y;
+                const childKey = `${apt.number}-${rIdx}`;
+                return [
+                  ...(room.windows ?? []).map((win, wi) => (
+                    <WindowSymbol
+                      key={`w-${childKey}-${wi}`}
+                      rx={rx} archY={archY} rw={room.w} rd={room.d}
+                      win={win} ry={ry}
+                    />
+                  )),
+                  ...(room.doors ?? []).map((door, di) => (
+                    <DoorSymbol
+                      key={`d-${childKey}-${di}`}
+                      rx={rx} archY={archY} rw={room.w} rd={room.d}
+                      door={door} ry={ry}
+                    />
+                  )),
+                ];
+              })
+            )}
+          </g>
+        ))}
+
         {/* ── Ядра: лифты и лестницы ──────────────────────────────────── */}
         {layout.sections.map((section) => (
           <g key={`cores-${section.index}`}>
@@ -708,6 +738,185 @@ function upperCaseRoom(nameRu: string, kind: string): string {
   const trimmed = (nameRu || "").trim();
   if (trimmed) return trimmed.toUpperCase();
   return ROOM_LABEL_FALLBACK_RU[kind] ?? kind.toUpperCase();
+}
+
+
+// ---------------------------------------------------------------------------
+// WindowSymbol — окно как разрыв стены + двойная линия по центру (стеклопакет)
+// ---------------------------------------------------------------------------
+
+type SymbolProps = {
+  rx: number;          // абсолютный X левой кромки комнаты в системе здания (м)
+  archY: number;       // абсолютный архитектурный Y нижней кромки комнаты
+  rw: number;          // ширина комнаты по X (м)
+  rd: number;          // глубина комнаты по Y (м)
+  ry: (archY: number, h?: number) => number;
+};
+
+
+function WindowSymbol({
+  rx, archY, rw, rd, win, ry,
+}: SymbolProps & { win: LayoutWindow }) {
+  const { p1, p2, horizontal } = wallSegment(win.side, win.offset, win.width, rx, archY, rw, rd, ry);
+  const wallT = WALL_PARTITION;       // толщина внешней стены, на которой окно
+  // Окно: белый «вырез» в стене + две тонкие линии (символ стеклопакета)
+  const gap = wallT * 0.55;           // расстояние между двумя линиями
+  if (horizontal) {
+    const wy = (p1.y + p2.y) / 2;
+    return (
+      <g>
+        <rect
+          x={Math.min(p1.x, p2.x)} y={wy - wallT / 2}
+          width={Math.abs(p2.x - p1.x)} height={wallT}
+          fill={CANVAS_BG} stroke="none"
+        />
+        <line x1={p1.x} y1={wy - gap / 2} x2={p2.x} y2={wy - gap / 2} stroke={WALL_COLOR} strokeWidth={0.04} />
+        <line x1={p1.x} y1={wy + gap / 2} x2={p2.x} y2={wy + gap / 2} stroke={WALL_COLOR} strokeWidth={0.04} />
+      </g>
+    );
+  }
+  const wx = (p1.x + p2.x) / 2;
+  return (
+    <g>
+      <rect
+        x={wx - wallT / 2} y={Math.min(p1.y, p2.y)}
+        width={wallT} height={Math.abs(p2.y - p1.y)}
+        fill={CANVAS_BG} stroke="none"
+      />
+      <line x1={wx - gap / 2} y1={p1.y} x2={wx - gap / 2} y2={p2.y} stroke={WALL_COLOR} strokeWidth={0.04} />
+      <line x1={wx + gap / 2} y1={p1.y} x2={wx + gap / 2} y2={p2.y} stroke={WALL_COLOR} strokeWidth={0.04} />
+    </g>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// DoorSymbol — дверь как разрыв стены + дуга 90° (траектория открывания)
+// ---------------------------------------------------------------------------
+
+function DoorSymbol({
+  rx, archY, rw, rd, door, ry,
+}: SymbolProps & { door: LayoutDoor }) {
+  const { p1, p2, horizontal, inward } = wallSegment(
+    door.side, door.offset, door.width, rx, archY, rw, rd, ry,
+  );
+  const wallT = WALL_PARTITION;
+
+  // Петля и противоположный конец проёма.
+  // door.hinge = "left" → петля на той точке, которая ближе к началу offset'а.
+  // wallSegment возвращает p1 как «начальный конец» (соответствует offset),
+  // p2 — как «дальний конец» (offset + width).
+  const hinge = door.hinge === "left" ? p1 : p2;
+  const opposite = door.hinge === "left" ? p2 : p1;
+  const doorLen = door.width;
+
+  // Открытое положение полотна: на 90° от стены вглубь комнаты.
+  // inward.dx/dy — единичный вектор «внутрь комнаты» относительно стены.
+  const open = {
+    x: hinge.x + inward.dx * doorLen,
+    y: hinge.y + inward.dy * doorLen,
+  };
+
+  // Дуга от opposite (closed) до open (open). Радиус = doorLen, центр в hinge.
+  const arcLargeFlag = 0;     // 90° — малая дуга
+  const arcSweepFlag = computeSweep(hinge, opposite, open);
+
+  // Вырез в стене (белый прямоугольник в проёме)
+  let cutout: ReactElement;
+  if (horizontal) {
+    const wy = (p1.y + p2.y) / 2;
+    cutout = (
+      <rect
+        x={Math.min(p1.x, p2.x)} y={wy - wallT / 2}
+        width={Math.abs(p2.x - p1.x)} height={wallT}
+        fill={CANVAS_BG} stroke="none"
+      />
+    );
+  } else {
+    const wx = (p1.x + p2.x) / 2;
+    cutout = (
+      <rect
+        x={wx - wallT / 2} y={Math.min(p1.y, p2.y)}
+        width={wallT} height={Math.abs(p2.y - p1.y)}
+        fill={CANVAS_BG} stroke="none"
+      />
+    );
+  }
+
+  return (
+    <g stroke={WALL_COLOR} strokeWidth={0.04} fill="none" strokeLinecap="round">
+      {cutout}
+      {/* Дуга открывания */}
+      <path
+        d={`M ${opposite.x} ${opposite.y} A ${doorLen} ${doorLen} 0 ${arcLargeFlag} ${arcSweepFlag} ${open.x} ${open.y}`}
+        strokeDasharray="0.06 0.06"
+        strokeWidth={0.025}
+      />
+      {/* Полотно двери в открытом положении */}
+      <line x1={hinge.x} y1={hinge.y} x2={open.x} y2={open.y} strokeWidth={0.06} />
+    </g>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// wallSegment — выдаёт 2 точки SVG-сегмента стены + ориентацию +
+// единичный вектор «внутрь комнаты» (для дуги двери).
+// ---------------------------------------------------------------------------
+
+type Pt = { x: number; y: number };
+
+function wallSegment(
+  side: LayoutSide,
+  offset: number,
+  width: number,
+  rx: number,
+  archY: number,
+  rw: number,
+  rd: number,
+  ry: (archY: number, h?: number) => number,
+): { p1: Pt; p2: Pt; horizontal: boolean; inward: { dx: number; dy: number } } {
+  switch (side) {
+    case "S":
+      return {
+        p1: { x: rx + offset,         y: ry(archY) },
+        p2: { x: rx + offset + width, y: ry(archY) },
+        horizontal: true,
+        inward: { dx: 0, dy: -1 },   // внутрь комнаты вверх в SVG = -1 по Y
+      };
+    case "N":
+      return {
+        p1: { x: rx + offset,         y: ry(archY + rd) },
+        p2: { x: rx + offset + width, y: ry(archY + rd) },
+        horizontal: true,
+        inward: { dx: 0, dy: +1 },
+      };
+    case "W":
+      return {
+        p1: { x: rx, y: ry(archY + offset) },
+        p2: { x: rx, y: ry(archY + offset + width) },
+        horizontal: false,
+        inward: { dx: +1, dy: 0 },
+      };
+    case "E":
+      return {
+        p1: { x: rx + rw, y: ry(archY + offset) },
+        p2: { x: rx + rw, y: ry(archY + offset + width) },
+        horizontal: false,
+        inward: { dx: -1, dy: 0 },
+      };
+  }
+}
+
+
+/** SVG arc sweep-flag — 1 если идём по часовой стрелке от p1 до p2 при
+ *  взгляде из центра, иначе 0. Для двери: дуга от closed к open. */
+function computeSweep(center: Pt, from: Pt, to: Pt): number {
+  // Cross product (from-center) × (to-center). В SVG Y растёт вниз,
+  // поэтому положительный cross = против часовой → sweepFlag=0.
+  const cross = (from.x - center.x) * (to.y - center.y)
+              - (from.y - center.y) * (to.x - center.x);
+  return cross > 0 ? 0 : 1;
 }
 
 

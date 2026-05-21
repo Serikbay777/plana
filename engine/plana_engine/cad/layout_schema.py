@@ -12,6 +12,33 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+Side = Literal["S", "N", "W", "E"]
+"""Сторона комнаты/квартиры:
+   S — южная (low Y)   N — северная (high Y)
+   W — западная (low X)   E — восточная (high X)
+"""
+
+
+class LayoutDoor(BaseModel):
+    """Дверь, привязанная к одной из четырёх стен комнаты."""
+    side: Side
+    offset: float
+    """Расстояние от южной (для W/E) или западной (для S/N) кромки стены (м)"""
+    width: float = 0.9
+    """Ширина проёма (м). По умолчанию стандартная межкомнатная 0.9 м."""
+    swing: Literal["in", "out"] = "in"
+    """Открывание: внутрь комнаты (in) или наружу (out)."""
+    hinge: Literal["left", "right"] = "left"
+    """С какой стороны проёма петли (если смотреть со стороны open-направления)."""
+
+
+class LayoutWindow(BaseModel):
+    """Окно на одной из стен комнаты (обычно внешней)."""
+    side: Side
+    offset: float
+    width: float = 1.5
+
+
 class LayoutRoom(BaseModel):
     kind: str
     """Функция помещения: living / bedroom / kitchen / bathroom / toilet / hallway / loggia / storage"""
@@ -25,6 +52,8 @@ class LayoutRoom(BaseModel):
     """Ширина по оси X (м)"""
     d: float
     """Глубина по оси Y (м)"""
+    doors: list[LayoutDoor] = []
+    windows: list[LayoutWindow] = []
 
     @property
     def area_m2(self) -> float:

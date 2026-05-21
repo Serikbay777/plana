@@ -12,9 +12,11 @@ import math
 from ..cad.layout_schema import (
     LayoutApartment,
     LayoutCore,
+    LayoutDoor,
     LayoutFloor,
     LayoutRoom,
     LayoutSection,
+    LayoutWindow,
 )
 from .marketing_prompt import MarketingInputs
 
@@ -219,6 +221,15 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
                 rooms_raw = _ROOM_BUILDERS[apt_type](aw, apt_d)
                 rooms = [LayoutRoom(**r) for r in rooms_raw]
 
+                # Где у этой квартиры фасадная (наружная) и где внутренняя
+                # (к коридору) стена. В двухсторонней секции:
+                #   южная квартира → фасад S, коридор N
+                #   северная квартира → фасад N, коридор S
+                # В галерейном — квартиры только с юга, коридор N.
+                exterior_side: str = "S" if side_y < corr_y else "N"
+                interior_side: str = "N" if side_y < corr_y else "S"
+                _add_apertures(rooms, apt_d, exterior_side, interior_side)
+
                 apartments.append(LayoutApartment(
                     type_code=apt_type,
                     number=apt_num,
@@ -239,6 +250,175 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
         ))
 
     return LayoutFloor(width_m=round(inner_w, 3), depth_m=round(inner_d, 3), sections=sections)
+
+
+# ── Двери и окна ───────────────────────────────────────────────────────────
+
+
+_WINDOW_KINDS: frozenset[str] = frozenset({"living", "bedroom", "kitchen"})
+"""Какие типы комнат получают окна на фасадной стене."""
+
+_DOOR_NEEDED_KINDS: frozenset[str] = frozenset({
+    "living", "bedroom", "kitchen", "bathroom", "toilet", "hallway",
+})
+"""Какие комнаты должны иметь хотя бы одну дверь (для попадания внутрь)."""
+
+
+def _add_apertures(
+    rooms: list[LayoutRoom],
+    apt_d: float,
+    exterior_side: str,   # "S" — низ Y, "N" — верх Y
+    interior_side: str,   # противоположная exterior_side
+) -> None:
+    """Расставить окна и двери для всех комнат квартиры in-place.
+
+    Простейшая (но визуально читаемая) логика:
+      • Окно — на стороне комнаты, совпадающей с фасадом квартиры,
+        если эта сторона физически касается фасадной кромки квартиры.
+        Только для жилых комнат и кухни (не для сан.узлов и кладовых).
+      • Дверь — каждой комнате, кроме коридорно-прихожей.
+        Если комната касается прихожей по стороне — дверь там.
+        Иначе — дверь со стороны interior_side (к коридору) или произвольно
+        к ближайшей соседней комнате.
+      • Прихожая получает входную дверь на стороне квартиры, обращённой
+        к коридору (interior_side).
+    """
+    # Найдём прихожую (для определения куда вешать двери комнат)
+    hallway = next((r for r in rooms if r.kind == "hallway"), None)
+
+    for room in rooms:
+        # ── Окна ─────────────────────────────────────────────────────
+        if room.kind in _WINDOW_KINDS:
+            window = _make_window_on_facade(room, apt_d, exterior_side)
+            if window is not None:
+                room.windows.append(window)
+
+        # ── Двери ────────────────────────────────────────────────────
+        if room.kind == "hallway":
+            # Входная дверь квартиры — на стороне коридора
+            entrance = _make_entrance_door(room, apt_d, interior_side)
+            if entrance is not None:
+                room.doors.append(entrance)
+        elif room.kind in _DOOR_NEEDED_KINDS:
+            # Дверь в эту комнату — пытаемся со стороны прихожей,
+            # иначе со стороны interior_side.
+            door = _make_internal_door(room, hallway, apt_d, interior_side)
+            if door is not None:
+                room.doors.append(door)
+
+
+def _make_window_on_facade(
+    room: LayoutRoom, apt_d: float, exterior_side: str,
+) -> LayoutWindow | None:
+    """Окно на фасадной стене комнаты, если она физически касается фасада."""
+    if exterior_side == "S":
+        # Южная стена квартиры — y = 0. Комната касается её, если room.y ≈ 0.
+        if room.y > 0.01:
+            return None
+        side = "S"
+        stretch = room.w
+    elif exterior_side == "N":
+        if abs(room.y + room.d - apt_d) > 0.01:
+            return None
+        side = "N"
+        stretch = room.w
+    else:
+        return None
+
+    # Ширина окна — пропорционально стене, но не больше 2 м, не меньше 0.9 м
+    width = min(2.0, max(0.9, stretch * 0.55))
+    offset = (stretch - width) / 2
+    return LayoutWindow(side=side, offset=round(offset, 3), width=round(width, 3))
+
+
+def _make_entrance_door(
+    room: LayoutRoom, apt_d: float, interior_side: str,
+) -> LayoutDoor | None:
+    """Входная дверь квартиры — из прихожей на коридор."""
+    if interior_side == "S":
+        if room.y > 0.01:
+            return None
+        stretch = room.w
+    elif interior_side == "N":
+        if abs(room.y + room.d - apt_d) > 0.01:
+            return None
+        stretch = room.w
+    else:
+        return None
+
+    width = 0.9
+    offset = (stretch - width) / 2
+    return LayoutDoor(
+        side=interior_side,  # type: ignore[arg-type]
+        offset=round(offset, 3),
+        width=width,
+        swing="in",
+        hinge="left",
+    )
+
+
+def _make_internal_door(
+    room: LayoutRoom,
+    hallway: LayoutRoom | None,
+    apt_d: float,
+    interior_side: str,
+) -> LayoutDoor | None:
+    """Дверь во внутреннюю комнату.
+
+    Эвристика:
+      1. Если комната смежна с прихожей по какой-то стене — дверь там.
+      2. Иначе — на стороне комнаты, обращённой к interior_side
+         (т.е. в глубь квартиры).
+      3. Если ничего не подходит — выбираем самую длинную стену.
+    """
+    # 1. Смежна ли с прихожей?
+    if hallway is not None:
+        adj_side = _adjacent_side(room, hallway)
+        if adj_side is not None:
+            return _door_centered(room, adj_side, swing="in")
+
+    # 2. interior_side, если комната не у фасада
+    if interior_side == "S" and abs(room.y) > 0.01:
+        return _door_centered(room, "S", swing="in")
+    if interior_side == "N" and abs(room.y + room.d - apt_d) > 0.01:
+        return _door_centered(room, "N", swing="in")
+
+    # 3. На самую длинную стену
+    if room.w >= room.d:
+        return _door_centered(room, interior_side if interior_side in ("S", "N") else "S", swing="in")
+    return _door_centered(room, "W", swing="in")
+
+
+def _adjacent_side(room: LayoutRoom, other: LayoutRoom, tol: float = 0.05) -> str | None:
+    """Какой стороной room касается other (если касается)."""
+    # other.y_top == room.y (other южнее room) → дверь на S-стене room
+    if abs(room.y - (other.y + other.d)) < tol:
+        return "S"
+    # other.y == room.y + room.d (other севернее) → N-стена
+    if abs((room.y + room.d) - other.y) < tol:
+        return "N"
+    # other.x + other.w == room.x → W-стена
+    if abs(room.x - (other.x + other.w)) < tol:
+        return "W"
+    if abs((room.x + room.w) - other.x) < tol:
+        return "E"
+    return None
+
+
+def _door_centered(
+    room: LayoutRoom, side: str, *, swing: str = "in",
+) -> LayoutDoor:
+    """Дверь по центру указанной стены комнаты."""
+    width = 0.8 if room.kind in ("bathroom", "toilet") else 0.9
+    stretch = room.w if side in ("S", "N") else room.d
+    offset = max(0.1, (stretch - width) / 2)
+    return LayoutDoor(
+        side=side,                         # type: ignore[arg-type]
+        offset=round(offset, 3),
+        width=width,
+        swing=swing,                       # type: ignore[arg-type]
+        hinge="left",
+    )
 
 
 # ── Вспомогательные функции ───────────────────────────────────────────────

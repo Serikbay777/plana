@@ -629,10 +629,28 @@ export type FloorPlanMetrics = {
 // Floor layout (structured GPT-4o output — basis for rich IFC/DXF)
 // ---------------------------------------------------------------------------
 
+export type LayoutSide = "S" | "N" | "W" | "E";
+
+export type LayoutDoor = {
+  side: LayoutSide;
+  offset: number;
+  width: number;
+  swing: "in" | "out";
+  hinge: "left" | "right";
+};
+
+export type LayoutWindow = {
+  side: LayoutSide;
+  offset: number;
+  width: number;
+};
+
 export type LayoutRoom = {
   kind: string;
   name_ru: string;
   x: number; y: number; w: number; d: number;
+  doors?: LayoutDoor[];
+  windows?: LayoutWindow[];
 };
 
 export type LayoutApartment = {
