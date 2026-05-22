@@ -1725,6 +1725,140 @@ class EnhanceBriefResponse(BaseModel):
     enhanced_brief: str
 
 
+class AlbumRequest(BaseModel):
+    brief: str
+
+
+class AlbumResponse(BaseModel):
+    album: "LayoutAlbumOut"
+    inputs: VisualizeFromInputsRequest
+    used_defaults: list[str]
+    notes: str
+
+
+class LayoutAlbumOut(BaseModel):
+    """Pydantic-обёртка LayoutAlbum для FastAPI (имя без префикса)."""
+    project_name: str
+    layout: LayoutFloor
+    floors_total: int
+    sheets: list[dict]   # AlbumSheet — простой dict для гибкости JSON
+
+
+def _build_album_sheets(layout: LayoutFloor, floors_total: int) -> list[dict]:
+    """Сборка списка листов для MVP Sprint 1.
+
+    Фиксированный набор: титул + общие данные + плановые листы по этажам +
+    три таблицы (экспликация / двери / окна).
+    """
+    sheets: list[dict] = [
+        {"kind": "title",         "title": "Титульный лист"},
+        {"kind": "general_data",  "title": "Общие данные"},
+    ]
+    # План на каждый этаж (для MVP — все этажи рисуются одинаковым layout,
+    # как «план типового этажа»). Подвал и кровля придут в Sprint 2.
+    for fl in range(1, max(1, floors_total) + 1):
+        sheets.append({
+            "kind": "floor_plan",
+            "title": f"План {fl}-го этажа",
+            "floor_number": fl,
+        })
+    # Таблицы
+    sheets.extend([
+        {"kind": "room_explication", "title": "Экспликация помещений"},
+        {"kind": "doors_spec",       "title": "Спецификация дверных блоков"},
+        {"kind": "windows_spec",     "title": "Спецификация оконных блоков"},
+    ])
+    return sheets
+
+
+@app.post("/generate/album-from-brief", response_model=AlbumResponse)
+def generate_album_from_brief_endpoint(req: AlbumRequest) -> AlbumResponse:
+    """Свободное ТЗ → альбом чертежей (MVP: 5-9 листов).
+
+    Обёртка над /generate/layout-from-brief: парсит ТЗ через GPT, строит
+    layout, и собирает фиксированный набор листов:
+      • Титул
+      • Общие данные (таблица параметров)
+      • План каждого этажа
+      • Экспликация помещений
+      • Спецификация дверей
+      • Спецификация окон
+
+    Sprint 2 добавит: подвал, кровлю, разрезы, фасады.
+    Sprint 3 добавит: hero-render, мастерплан.
+    """
+    if not req.brief or not req.brief.strip():
+        raise HTTPException(status_code=400, detail="brief is empty")
+
+    from ..visualizer.brief_parser import BriefParseError, parse_brief
+    from ..visualizer.layout_generator import generate_floor_layout
+
+    try:
+        derived = parse_brief(req.brief)
+    except BriefParseError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    inputs_req, used_defaults = _request_from_brief_inputs(derived)
+    _validate_layout_feasibility(inputs_req)
+
+    marketing_inputs = _inputs_from_req(inputs_req)
+    try:
+        layout = generate_floor_layout(marketing_inputs)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Layout generation failed: {e}")
+
+    floors_total = max(1, inputs_req.floors)
+    sheets = _build_album_sheets(layout, floors_total)
+    project_name = f"ЖК {floors_total}эт {layout.width_m:.0f}×{layout.depth_m:.0f}"
+
+    album = LayoutAlbumOut(
+        project_name=project_name,
+        layout=layout,
+        floors_total=floors_total,
+        sheets=sheets,
+    )
+
+    return AlbumResponse(
+        album=album,
+        inputs=inputs_req,
+        used_defaults=used_defaults,
+        notes=derived.notes,
+    )
+
+
+@app.post("/generate/album-from-inputs", response_model=AlbumResponse)
+def generate_album_from_inputs_endpoint(req: VisualizeFromInputsRequest) -> AlbumResponse:
+    """Альбом из готовой формы (PromptForm), без GPT-парсинга текста.
+
+    Используется когда параметры уже структурированы (вкладка AI Чертежи).
+    Возвращает тот же AlbumResponse что и /album-from-brief.
+    """
+    from ..visualizer.layout_generator import generate_floor_layout
+
+    _validate_layout_feasibility(req)
+    marketing_inputs = _inputs_from_req(req)
+    try:
+        layout = generate_floor_layout(marketing_inputs)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Layout generation failed: {e}")
+
+    floors_total = max(1, req.floors)
+    sheets = _build_album_sheets(layout, floors_total)
+    project_name = f"ЖК {floors_total}эт {layout.width_m:.0f}×{layout.depth_m:.0f}"
+
+    return AlbumResponse(
+        album=LayoutAlbumOut(
+            project_name=project_name,
+            layout=layout,
+            floors_total=floors_total,
+            sheets=sheets,
+        ),
+        inputs=req,
+        used_defaults=[],
+        notes="",
+    )
+
+
 class ChatEditRequest(BaseModel):
     layout: LayoutFloor
     message: str

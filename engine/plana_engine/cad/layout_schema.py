@@ -131,3 +131,49 @@ class LayoutFloor(BaseModel):
     width_m: float
     depth_m: float
     sections: list[LayoutSection] = []
+
+
+# ─── ALBUM (Sprint 1 «Альбом-генератор») ─────────────────────────────────
+
+
+AlbumSheetKind = Literal[
+    # Vector / технические (Sprint 1 + 2):
+    "title",              # Титульный лист
+    "general_data",       # Общие данные / параметры проекта (таблица)
+    "floor_plan",         # План этажа
+    "basement_plan",      # План подвала (Sprint 2)
+    "roof_plan",          # План кровли (Sprint 2)
+    "section",            # Разрез 1-1 / 2-2 (Sprint 2)
+    "facade",             # Фасад (Sprint 2)
+    "room_explication",   # Экспликация помещений (таблица)
+    "doors_spec",         # Спецификация дверей (таблица)
+    "windows_spec",       # Спецификация окон (таблица)
+    # gpt-image декоративные (Sprint 3):
+    "hero_render",        # Hero-рендер фасада
+    "masterplan",         # Аэровид/мастерплан
+]
+
+
+class AlbumSheet(BaseModel):
+    """Один лист альбома. Контент специфичен типу — для floor_plan
+    используем общий layout у LayoutAlbum, для таблиц — вычисляется на
+    лету из того же layout, для hero/masterplan — gpt-image на фронте.
+    """
+    kind: AlbumSheetKind
+    title: str                     # «План типового этажа», «Спецификация дверей»
+    floor_number: int | None = None    # для plan-листов: 1, 2, ... или None
+    section_label: str | None = None   # для section: «1-1», «2-2»
+    facade_side: Literal["S", "N", "E", "W"] | None = None  # для facade
+
+
+class LayoutAlbum(BaseModel):
+    """Альбом — комплект чертежей одного проекта.
+
+    Sprint 1: единый layout (для всех планов одинаковый), несколько
+    одинаковых planов на разные этажи, плюс таблицы.
+    Sprint 2: добавятся раздельные layouts для подвала/кровли/разрезов.
+    """
+    project_name: str
+    layout: LayoutFloor
+    floors_total: int = 1            # сколько этажей в проекте
+    sheets: list[AlbumSheet] = []

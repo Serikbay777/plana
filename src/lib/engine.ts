@@ -1104,6 +1104,60 @@ export async function editLayoutWithChat(
   return res.layout;
 }
 
+// ─── Album-генератор (Sprint 1) ─────────────────────────────────────────
+
+export type AlbumSheetKind =
+  | "title"
+  | "general_data"
+  | "floor_plan"
+  | "basement_plan"
+  | "roof_plan"
+  | "section"
+  | "facade"
+  | "room_explication"
+  | "doors_spec"
+  | "windows_spec"
+  | "hero_render"
+  | "masterplan";
+
+export type AlbumSheet = {
+  kind: AlbumSheetKind;
+  title: string;
+  floor_number?: number;
+  section_label?: string;
+  facade_side?: "S" | "N" | "E" | "W";
+};
+
+export type LayoutAlbum = {
+  project_name: string;
+  layout: LayoutFloor;
+  floors_total: number;
+  sheets: AlbumSheet[];
+};
+
+export type AlbumResponse = {
+  album: LayoutAlbum;
+  inputs: VisualizeFromInputsRequest;
+  used_defaults: string[];
+  notes: string;
+};
+
+export async function generateAlbumFromBrief(brief: string): Promise<AlbumResponse> {
+  return request("/generate/album-from-brief", {
+    method: "POST",
+    body: JSON.stringify({ brief }),
+  });
+}
+
+export async function generateAlbumFromInputs(
+  req: VisualizeFromInputsRequest,
+): Promise<AlbumResponse> {
+  return request("/generate/album-from-inputs", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Wizard (Sprint 4 v1.0 plan) — структурированный ввод для нового проекта.
 // На v1 wizard собирает textual brief и вызывает существующий

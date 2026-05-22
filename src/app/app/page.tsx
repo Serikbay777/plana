@@ -48,6 +48,7 @@ import { createProject, updateProject, uploadAsset, getProject, createRun, listP
 import HistoryPanel from "@/components/HistoryPanel";
 import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
 import { ArchitecturalDrawingsTab } from "@/components/ArchitecturalDrawingsTab";
+import { AlbumViewer } from "@/components/AlbumViewer";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -910,6 +911,7 @@ export default function AppPage() {
               onClearContour={() => { setContourResult(null); setContourError(null); }}
               onApplyContourDims={(w, d) => setForm(f => ({ ...f, site_width_m: w, site_depth_m: d, building_width_m: w, building_depth_m: d }))}
 
+              inputs={buildVisReq(form)}
               onGetMetrics={() => getFloorplanMetrics(buildVisReq(form))}
               parkingBag={parkingBag}
               parkingLevel={parkingLevel}
@@ -2502,6 +2504,7 @@ function AiPlansTab({
   contourLoading, contourResult, contourError, onContourAnalyze, onClearContour, onApplyContourDims,
   onGetMetrics, parkingBag, parkingLevel, parkingLevelsTotal, onParkingLevel, onGenerateParking,
   onExportFullReport, hasExtraSections,
+  inputs,
 }: {
   bag: AiPlansBag;
   currentFloor: number;
@@ -2513,6 +2516,7 @@ function AiPlansTab({
   onExportDxf: () => Promise<void>;
   onExportIfc: () => Promise<void>;
   cadExportLoading: CadExportKind | null;
+  inputs: VisualizeFromInputsRequest;
   dxfImportLoading: boolean;
   dxfImportResult: DxfImportResult | null;
   dxfImportError: string | null;
@@ -2543,6 +2547,30 @@ function AiPlansTab({
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [metrics, setMetrics] = useState<FloorPlanMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
+
+  // ── Album mode (Sprint 1) ──────────────────────────────────────────
+  const [albumResult, setAlbumResult] = useState<import("@/lib/engine").LayoutAlbum | null>(null);
+  const [albumLoading, setAlbumLoading] = useState(false);
+  const [albumError, setAlbumError] = useState<string | null>(null);
+
+  const handleGenerateAlbum = async () => {
+    if (albumLoading) return;
+    setAlbumLoading(true);
+    setAlbumError(null);
+    try {
+      const res = await import("@/lib/engine").then((m) => m.generateAlbumFromInputs(inputs));
+      setAlbumResult(res.album);
+    } catch (e) {
+      setAlbumError((e as Error).message);
+    } finally {
+      setAlbumLoading(false);
+    }
+  };
+
+  const handleCloseAlbum = () => {
+    setAlbumResult(null);
+    setAlbumError(null);
+  };
 
   const switchToTable = async () => {
     setViewMode("table");
@@ -2650,6 +2678,51 @@ function AiPlansTab({
     "Добавь балконы у каждой квартиры",
     "Объедини две маленькие квартиры в одну большую",
   ];
+
+  // ── Альбом-режим (Sprint 1) ─────────────────────────────────────────
+  // Если есть albumResult — перехватываем весь рендер и показываем
+  // AlbumViewer вместо обычного грида 5 вариантов.
+  if (albumResult) {
+    return (
+      <>
+        <div className="px-5 pt-4 pb-3 border-b border-white/[0.04] flex-shrink-0 flex items-center gap-3 flex-wrap">
+          <LayoutGrid size={14} className="text-emerald-300" />
+          <span className="text-[13px] font-medium text-white/85">Альбом чертежей</span>
+          <span className="text-[11.5px] text-white/40">
+            {albumResult.sheets.length} листов · {albumResult.project_name}
+          </span>
+          <div className="flex-1" />
+          <button
+            onClick={handleCloseAlbum}
+            className="h-8 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-white/15 text-white/70 hover:bg-white/[0.06] transition"
+            title="Закрыть альбом и вернуться к 5 вариантам"
+          >
+            <X size={12} /> Закрыть альбом
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <AlbumViewer
+            album={albumResult}
+            inputs={{
+              floors:           inputs.floors,
+              sections:         inputs.sections ?? 1,
+              lifts_passenger:  inputs.lifts_passenger ?? 1,
+              lifts_freight:    inputs.lifts_freight ?? 0,
+              site_width_m:     inputs.site_width_m,
+              site_depth_m:     inputs.site_depth_m,
+              setback_front_m:  inputs.setback_front_m ?? 0,
+              setback_side_m:   inputs.setback_side_m ?? 0,
+              setback_rear_m:   inputs.setback_rear_m ?? 0,
+              studio_pct:       inputs.studio_pct,
+              k1_pct:           inputs.k1_pct,
+              k2_pct:           inputs.k2_pct,
+              k3_pct:           inputs.k3_pct,
+            }}
+          />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -2871,6 +2944,15 @@ function AiPlansTab({
             Параметры → Gemma 4 → gpt-image × 5 вариантов параллельно
           </span>
           <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={handleGenerateAlbum}
+            disabled={albumLoading}
+            className="h-8 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-emerald-400/30 text-emerald-200/90 hover:bg-emerald-500/15 transition disabled:opacity-50"
+            title="Собрать полный комплект чертежей (титул, планы этажей, экспликация, спецификации)"
+          >
+            {albumLoading ? <Loader2 size={11} className="animate-spin" /> : <LayoutGrid size={11} />}
+            {albumLoading ? "Собираем альбом…" : "Альбом"}
+          </button>
           {/* Кнопки импорта скрыты по просьбе пользователя.
               State (dxfImportLoading, gpzuLoading, contourLoading), ref'ы
               (dxfInputRef, contourInputRef, gpzuInputRef) и обработчики
