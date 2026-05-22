@@ -1158,6 +1158,33 @@ export async function generateAlbumFromInputs(
   });
 }
 
+// ─── Полный gpt-image альбом (Sprint 2) ──────────────────────────────────
+
+export type AlbumImage = {
+  kind: string;
+  title: string;
+  label: string;
+  image_b64: string;
+  model_used: string;
+  extra: Record<string, unknown>;
+};
+
+export type AlbumImagesResponse = {
+  images: AlbumImage[];
+  project_name: string;
+  elapsed_ms: number;
+  failed_count: number;
+};
+
+export async function generateAlbumImages(
+  req: VisualizeFromInputsRequest,
+): Promise<AlbumImagesResponse> {
+  return request("/generate/album-images", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Wizard (Sprint 4 v1.0 plan) — структурированный ввод для нового проекта.
 // На v1 wizard собирает textual brief и вызывает существующий

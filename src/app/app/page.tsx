@@ -48,7 +48,7 @@ import { createProject, updateProject, uploadAsset, getProject, createRun, listP
 import HistoryPanel from "@/components/HistoryPanel";
 import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
 import { ArchitecturalDrawingsTab } from "@/components/ArchitecturalDrawingsTab";
-import { AlbumViewer } from "@/components/AlbumViewer";
+import { AlbumImagesViewer } from "@/components/AlbumImagesViewer";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -2548,8 +2548,8 @@ function AiPlansTab({
   const [metrics, setMetrics] = useState<FloorPlanMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
 
-  // ── Album mode (Sprint 1) ──────────────────────────────────────────
-  const [albumResult, setAlbumResult] = useState<import("@/lib/engine").LayoutAlbum | null>(null);
+  // ── Album mode (Sprint 2: full gpt-image album) ───────────────────
+  const [albumImages, setAlbumImages] = useState<import("@/lib/engine").AlbumImagesResponse | null>(null);
   const [albumLoading, setAlbumLoading] = useState(false);
   const [albumError, setAlbumError] = useState<string | null>(null);
 
@@ -2558,8 +2558,8 @@ function AiPlansTab({
     setAlbumLoading(true);
     setAlbumError(null);
     try {
-      const res = await import("@/lib/engine").then((m) => m.generateAlbumFromInputs(inputs));
-      setAlbumResult(res.album);
+      const res = await import("@/lib/engine").then((m) => m.generateAlbumImages(inputs));
+      setAlbumImages(res);
     } catch (e) {
       setAlbumError((e as Error).message);
     } finally {
@@ -2568,7 +2568,7 @@ function AiPlansTab({
   };
 
   const handleCloseAlbum = () => {
-    setAlbumResult(null);
+    setAlbumImages(null);
     setAlbumError(null);
   };
 
@@ -2679,48 +2679,37 @@ function AiPlansTab({
     "Объедини две маленькие квартиры в одну большую",
   ];
 
-  // ── Альбом-режим (Sprint 1) ─────────────────────────────────────────
-  // Если есть albumResult — перехватываем весь рендер и показываем
-  // AlbumViewer вместо обычного грида 5 вариантов.
-  if (albumResult) {
+  // ── Альбом-режим (Sprint 2): полный gpt-image альбом ────────────────
+  // Если есть albumImages — перехватываем весь рендер и показываем
+  // AlbumImagesViewer вместо обычного грида 5 вариантов.
+  if (albumImages) {
     return (
-      <>
-        <div className="px-5 pt-4 pb-3 border-b border-white/[0.04] flex-shrink-0 flex items-center gap-3 flex-wrap">
-          <LayoutGrid size={14} className="text-emerald-300" />
-          <span className="text-[13px] font-medium text-white/85">Альбом чертежей</span>
-          <span className="text-[11.5px] text-white/40">
-            {albumResult.sheets.length} листов · {albumResult.project_name}
-          </span>
-          <div className="flex-1" />
-          <button
-            onClick={handleCloseAlbum}
-            className="h-8 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-white/15 text-white/70 hover:bg-white/[0.06] transition"
-            title="Закрыть альбом и вернуться к 5 вариантам"
-          >
-            <X size={12} /> Закрыть альбом
-          </button>
+      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+        <AlbumImagesViewer album={albumImages} onClose={handleCloseAlbum} />
+      </div>
+    );
+  }
+
+  // Loading state альбома — отдельный экран с большим спиннером
+  if (albumLoading) {
+    return (
+      <div className="flex flex-col flex-1 min-h-0 grid place-items-center text-white/70">
+        <div className="text-center max-w-md p-8">
+          <Loader2 size={32} className="animate-spin text-emerald-300 mx-auto mb-4" />
+          <div className="text-[15px] font-semibold tracking-display mb-2">
+            Собираем альбом…
+          </div>
+          <div className="text-[12px] text-white/55 leading-relaxed">
+            Параллельно генерируем 13-15 листов в стиле СПДС.
+            Обычно занимает 3-7 минут. Не закрывай страницу.
+          </div>
+          {albumError && (
+            <div className="mt-4 text-[11.5px] text-rose-300/85 flex items-center justify-center gap-1.5">
+              <AlertCircle size={12} /> {albumError}
+            </div>
+          )}
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <AlbumViewer
-            album={albumResult}
-            inputs={{
-              floors:           inputs.floors,
-              sections:         inputs.sections ?? 1,
-              lifts_passenger:  inputs.lifts_passenger ?? 1,
-              lifts_freight:    inputs.lifts_freight ?? 0,
-              site_width_m:     inputs.site_width_m,
-              site_depth_m:     inputs.site_depth_m,
-              setback_front_m:  inputs.setback_front_m ?? 0,
-              setback_side_m:   inputs.setback_side_m ?? 0,
-              setback_rear_m:   inputs.setback_rear_m ?? 0,
-              studio_pct:       inputs.studio_pct,
-              k1_pct:           inputs.k1_pct,
-              k2_pct:           inputs.k2_pct,
-              k3_pct:           inputs.k3_pct,
-            }}
-          />
-        </div>
-      </>
+      </div>
     );
   }
 

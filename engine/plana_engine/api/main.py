@@ -1826,6 +1826,165 @@ def generate_album_from_brief_endpoint(req: AlbumRequest) -> AlbumResponse:
     )
 
 
+class AlbumImage(BaseModel):
+    """Один сгенерированный лист альбома: PNG из gpt-image + метаданные."""
+    kind: str
+    title: str
+    label: str
+    image_b64: str
+    model_used: str
+    extra: dict[str, Any] = {}
+
+
+class AlbumImagesResponse(BaseModel):
+    """Ответ /generate/album-images — все сгенерированные листы + meta."""
+    images: list[AlbumImage]
+    project_name: str
+    elapsed_ms: float
+    failed_count: int = 0
+
+
+@app.post("/generate/album-images", response_model=AlbumImagesResponse)
+def generate_album_images_endpoint(req: VisualizeFromInputsRequest) -> AlbumImagesResponse:
+    """Сгенерировать полный gpt-image альбом по параметрам формы.
+
+    Пайплайн (Sprint 1a — 8 базовых типов листов):
+      1. Из VisualizeFromInputsRequest строим MarketingInputs.
+      2. Из MarketingInputs строим базовые params (build_base_params).
+      3. Определяем список листов исходя из параметров (этажность,
+         количество секций — влияет на сколько планов этажей).
+      4. Для каждого листа: подставляем params в template, отправляем
+         в gpt-image-1. Пул 5 параллельных.
+      5. Возвращаем массив PNG + метаданных.
+
+    На MVP 8 типов: title, general_data, basement_plan, floor_plan (×N),
+    roof_plan, section (×2), facade (×4), windows_spec, doors_spec.
+    Для 4-этажного дома получится ~13-15 листов.
+
+    Sprint 1b добавит остальные 22 типа (узлы, эвакуация, интерьеры,
+    hero-render, мастерплан).
+    """
+    import base64 as _b64
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+    from ..visualizer.album_prompts import (
+        SHEET_KIND_BASEMENT_PLAN, SHEET_KIND_DOORS_SPEC, SHEET_KIND_FACADE,
+        SHEET_KIND_FLOOR_PLAN, SHEET_KIND_GENERAL_DATA, SHEET_KIND_ROOF_PLAN,
+        SHEET_KIND_SECTION, SHEET_KIND_TITLE, SHEET_KIND_WINDOWS_SPEC,
+        build_base_params, get_album_sheet_spec, render_album_sheet,
+    )
+
+    _validate_quality(req.quality)
+    _validate_layout_feasibility(req)
+    inputs = _inputs_from_req(req)
+
+    base_params = build_base_params(inputs)
+    project_name = base_params["project_name"]
+
+    # ── Сборка списка задач ──────────────────────────────────────────
+    tasks: list[tuple[str, str, dict[str, Any]]] = []
+    # (kind, title, extra_params)
+    tasks.append((SHEET_KIND_TITLE, "Титульный лист", {}))
+    tasks.append((SHEET_KIND_GENERAL_DATA, "Общие данные", {}))
+    tasks.append((SHEET_KIND_BASEMENT_PLAN, "План подвала", {}))
+    for fl in range(1, max(1, inputs.floors) + 1):
+        level_desc = (
+            "Ground floor with main entrance lobby" if fl == 1 else
+            "Top floor (penthouse level)" if fl >= inputs.floors else
+            "Typical floor layout"
+        )
+        tasks.append((
+            SHEET_KIND_FLOOR_PLAN,
+            f"План {fl}-го этажа",
+            {"floor_number": fl, "level_description": level_desc},
+        ))
+    tasks.append((SHEET_KIND_ROOF_PLAN, "План кровли", {}))
+    # 2 разреза (1-1 продольный, 2-2 поперечный)
+    tasks.append((
+        SHEET_KIND_SECTION, "Разрез 1-1",
+        {"section_label": "1-1", "section_axis_description": "Продольный разрез по длинной стороне здания"},
+    ))
+    tasks.append((
+        SHEET_KIND_SECTION, "Разрез 2-2",
+        {"section_label": "2-2", "section_axis_description": "Поперечный разрез по короткой стороне здания"},
+    ))
+    # 4 фасада
+    facade_sides = [
+        ("S", "Главный фасад (юг)", "Южный фасад — главная фронтальная сторона"),
+        ("N", "Дворовый фасад (север)", "Северный фасад — сторона двора"),
+        ("E", "Боковой фасад (восток)", "Восточный торец здания"),
+        ("W", "Боковой фасад (запад)", "Западный торец здания"),
+    ]
+    for side, facade_title, side_desc in facade_sides:
+        tasks.append((
+            SHEET_KIND_FACADE, facade_title,
+            {
+                "facade_title": facade_title,
+                "facade_side_description": side_desc,
+                "facade_length_m": int(inputs.site_width_m) if side in ("S", "N") else int(inputs.site_depth_m),
+                "window_width": 1500,
+                "balcony_description": "Балконы с остеклением" if side in ("E", "W") else "Лоджии в каждой квартире",
+                "entrance_description": "Главный вход с навесом spider-system" if side == "S" else "Аварийные выходы",
+            },
+        ))
+    # 2 спецификации
+    tasks.append((SHEET_KIND_WINDOWS_SPEC, "Спецификация оконных блоков", {}))
+    tasks.append((SHEET_KIND_DOORS_SPEC, "Спецификация дверных блоков", {}))
+
+    # ── Параллельная генерация ────────────────────────────────────────
+    opts = GenerationOptions(quality=req.quality)  # type: ignore[arg-type]
+    t0 = time.time()
+    results: list[AlbumImage | None] = [None] * len(tasks)
+    failed_count = 0
+
+    def _one(idx: int, kind: str, title: str, extras: dict[str, Any]) -> tuple[int, AlbumImage | None]:
+        spec = get_album_sheet_spec(kind)
+        if spec is None:
+            return idx, None
+        params = {**base_params, **extras}
+        prompt = render_album_sheet(spec, params)
+        try:
+            res = generate_image_with_meta(prompt, opts, use_cache=False)
+            return idx, AlbumImage(
+                kind=kind, title=title, label=spec.label,
+                image_b64=_b64.b64encode(res.png).decode(),
+                model_used=res.model_used,
+                extra=extras,
+            )
+        except (MissingAPIKey, OpenAIError):
+            raise
+        except Exception:
+            return idx, None
+
+    try:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {
+                pool.submit(_one, i, kind, title, extras): i
+                for i, (kind, title, extras) in enumerate(tasks)
+            }
+            for fut in _as_completed(futures):
+                idx, item = fut.result()
+                if item is None:
+                    failed_count += 1
+                else:
+                    results[idx] = item
+    except MissingAPIKey as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except OpenAIError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    images = [r for r in results if r is not None]
+    if not images:
+        raise HTTPException(status_code=502, detail="Все листы не сгенерированы")
+
+    return AlbumImagesResponse(
+        images=images,
+        project_name=project_name,
+        elapsed_ms=round((time.time() - t0) * 1000, 1),
+        failed_count=failed_count,
+    )
+
+
 @app.post("/generate/album-from-inputs", response_model=AlbumResponse)
 def generate_album_from_inputs_endpoint(req: VisualizeFromInputsRequest) -> AlbumResponse:
     """Альбом из готовой формы (PromptForm), без GPT-парсинга текста.
