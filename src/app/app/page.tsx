@@ -2867,56 +2867,63 @@ function AiPlansTab({
             Параметры → Gemma 4 → gpt-image × 5 вариантов параллельно
           </span>
           <div className="ml-auto flex items-center gap-2">
-          <input
-            ref={dxfInputRef}
-            type="file"
-            accept=".dxf,.dwg,application/dxf"
-            className="hidden"
-            onChange={onDxfChange}
-          />
-          <button
-            onClick={() => dxfInputRef.current?.click()}
-            disabled={dxfImportLoading}
-            className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
-            title="Загрузить DXF/DWG — покажем слои, entities, габариты и быстрый preview"
-          >
-            {dxfImportLoading ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
-            {dxfImportLoading ? "Читаем CAD…" : "CAD import"}
-          </button>
-
-          <input
-            ref={contourInputRef}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={onContourChange}
-          />
-          <button
-            onClick={() => contourInputRef.current?.click()}
-            disabled={contourLoading}
-            className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
-            title="Загрузить фото / PDF / эскиз участка — Vision проанализирует и предложит рекомендации"
-          >
-            {contourLoading ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />}
-            {contourLoading ? "Анализируем…" : "Анализ контура"}
-          </button>
-
-          <input
-            ref={gpzuInputRef}
-            type="file"
-            accept="application/pdf"
-            className="hidden"
-            onChange={onGpzuChange}
-          />
-          <button
-            onClick={() => gpzuInputRef.current?.click()}
-            disabled={gpzuLoading}
-            className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
-            title="Загрузить ГПЗУ-PDF — поля формы заполнятся автоматически"
-          >
-            <Upload size={12} />
-            {gpzuLoading ? "Распознаём…" : "ГПЗУ → форма"}
-          </button>
+          {/* Кнопки импорта скрыты по просьбе пользователя.
+              State (dxfImportLoading, gpzuLoading, contourLoading), ref'ы
+              (dxfInputRef, contourInputRef, gpzuInputRef) и обработчики
+              (onDxfChange, onGpzuChange, onContourChange) оставлены —
+              вернуть UI = раскоментить блок ниже. */}
+          {false && (
+            <>
+              <input
+                ref={dxfInputRef}
+                type="file"
+                accept=".dxf,.dwg,application/dxf"
+                className="hidden"
+                onChange={onDxfChange}
+              />
+              <button
+                onClick={() => dxfInputRef.current?.click()}
+                disabled={dxfImportLoading}
+                className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
+                title="Загрузить DXF/DWG — покажем слои, entities, габариты и быстрый preview"
+              >
+                {dxfImportLoading ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
+                {dxfImportLoading ? "Читаем CAD…" : "CAD import"}
+              </button>
+              <input
+                ref={contourInputRef}
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={onContourChange}
+              />
+              <button
+                onClick={() => contourInputRef.current?.click()}
+                disabled={contourLoading}
+                className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
+                title="Загрузить фото / PDF / эскиз участка — Vision проанализирует и предложит рекомендации"
+              >
+                {contourLoading ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />}
+                {contourLoading ? "Анализируем…" : "Анализ контура"}
+              </button>
+              <input
+                ref={gpzuInputRef}
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={onGpzuChange}
+              />
+              <button
+                onClick={() => gpzuInputRef.current?.click()}
+                disabled={gpzuLoading}
+                className="h-8 px-3 rounded-full surface text-[11.5px] flex items-center gap-1.5 hover:bg-white/[0.08] transition disabled:opacity-50"
+                title="Загрузить ГПЗУ-PDF — поля формы заполнятся автоматически"
+              >
+                <Upload size={12} />
+                {gpzuLoading ? "Распознаём…" : "ГПЗУ → форма"}
+              </button>
+            </>
+          )}
           {bag.state === "ready" && bag.elapsedMs && (
             <div className="flex items-center gap-1 text-[11px] text-white/35">
               <CheckCircle2 size={11} className="text-emerald-400/60" />
