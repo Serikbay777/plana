@@ -24,6 +24,7 @@ const LAYER_LABELS: Record<LayerId, string> = {
   windows: "Окна",
   furniture: "Мебель",
   dimensions: "Размеры",
+  axes: "Оси (А-Ж/1-N)",
   texts: "Подписи",
   grid: "Сетка",
   scaleBar: "Линейка",
@@ -31,7 +32,7 @@ const LAYER_LABELS: Record<LayerId, string> = {
 
 const ORDER: LayerId[] = [
   "walls", "rooms", "doors", "windows",
-  "furniture", "dimensions", "texts", "grid", "scaleBar",
+  "furniture", "dimensions", "axes", "texts", "grid", "scaleBar",
 ];
 
 const THEMES = {

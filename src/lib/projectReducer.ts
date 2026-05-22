@@ -53,6 +53,7 @@ export type LayerId =
   | "windows"
   | "furniture"
   | "dimensions"
+  | "axes"        // координатные оси А-Ж / 1-N (СПДС)
   | "texts"
   | "grid"
   | "scaleBar";
@@ -62,7 +63,7 @@ export type LayersState = Record<LayerId, LayerState>;
 
 const ALL_LAYERS: LayerId[] = [
   "walls", "rooms", "doors", "windows",
-  "furniture", "dimensions", "texts", "grid", "scaleBar",
+  "furniture", "dimensions", "axes", "texts", "grid", "scaleBar",
 ];
 
 function defaultLayers(): LayersState {

@@ -794,7 +794,7 @@ export function ArchitecturalDrawingsTab({
                       <div className="absolute top-2 left-2 z-10 h-5 px-1.5 rounded bg-black/55 text-[10px] text-white/85 grid place-items-center">
                         План {editMode && "· редактор"}
                       </div>
-                      <div style={{ aspectRatio: `${currentLayout.width_m + 6}/${currentLayout.depth_m + 6}` }}>
+                      <div style={{ aspectRatio: `${currentLayout.width_m + 10}/${currentLayout.depth_m + 10}` }}>
                         <FloorPlanSvg
                           layout={currentLayout}
                           editMode={editMode}
@@ -821,7 +821,7 @@ export function ArchitecturalDrawingsTab({
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-white rounded-lg" style={{ aspectRatio: `${currentLayout.width_m + 6}/${currentLayout.depth_m + 6}` }}>
+                  <div className="bg-white rounded-lg" style={{ aspectRatio: `${currentLayout.width_m + 10}/${currentLayout.depth_m + 10}` }}>
                     <FloorPlanSvg
                       layout={currentLayout}
                       editMode={editMode}
@@ -989,7 +989,9 @@ export function FloorPlanSvg({
     );
   };
   // Padding в метрах вокруг здания (для подписей размеров)
-  const PAD = 3;
+  // PAD = 5 для размещения координатных осей А-Ж/1-N за пределами здания
+  // (см. layer "axes"). Aspect-ratio родительского контейнера тоже использует +10.
+  const PAD = 5;
   const W = layout.width_m;
   const D = layout.depth_m;
   const viewBoxW = W + PAD * 2;
@@ -1526,6 +1528,11 @@ export function FloorPlanSvg({
 
         {/* ── Scale bar (под зданием слева) ───────────────────────────── */}
         {layerVisible("scaleBar") && <ScaleBar y={ry(0) + 0.8} color={LABEL_COLOR} />}
+
+        {/* ── Координатные оси А-Ж / 1-N (СПДС) ──────────────────────── */}
+        {layerVisible("axes") && (
+          <AxisGrid layout={layout} ry={ry} W={W} D={D} color={LABEL_COLOR} />
+        )}
       </g>
     </svg>
 
@@ -1606,6 +1613,130 @@ const zoomBtnStyle: React.CSSProperties = {
   justifyContent: "center",
   lineHeight: 1,
 };
+
+
+// ---------------------------------------------------------------------------
+// AxisGrid — координатные оси А-Ж / 1-N в стиле СПДС
+//
+// Вертикальные оси (буквы А-Ж...) — по началу каждой секции и по концу здания.
+// Горизонтальные оси (1, 2, 3, 4) — по южной стене / стенам коридора / северной.
+// Каждая ось = штрих-пунктирная линия от стены до кружка-маркера с подписью.
+// ---------------------------------------------------------------------------
+
+function AxisGrid({
+  layout, ry, W, D, color,
+}: {
+  layout: LayoutFloor;
+  ry: (archY: number, h?: number) => number;
+  W: number;
+  D: number;
+  color: string;
+}) {
+  // ── Позиции осей ──────────────────────────────────────────────────
+  // Буквенные (вертикальные оси здания, X-координаты):
+  // А = левая стена (x=0), затем границы секций, последняя = правая стена.
+  const letterPositions: number[] = [0];
+  for (const section of layout.sections) {
+    if (section.x_start > 0.01) letterPositions.push(section.x_start);
+  }
+  if (W - letterPositions[letterPositions.length - 1] > 0.01) {
+    letterPositions.push(W);
+  }
+  const letters = ["А", "Б", "В", "Г", "Д", "Е", "Ж", "З", "И", "К", "Л", "М"];
+
+  // Цифровые (горизонтальные оси, Y-координаты в архитектурной системе):
+  // 1 = южная стена (y=0), 2 = южная стена коридора, 3 = северная стена
+  // коридора, 4 = северная стена. Дубликаты подавляем.
+  const seenY = new Set<number>();
+  const numberPositions: number[] = [];
+  const pushY = (y: number) => {
+    const rounded = Math.round(y * 100) / 100;
+    if (!seenY.has(rounded) && y >= -0.01 && y <= D + 0.01) {
+      seenY.add(rounded);
+      numberPositions.push(rounded);
+    }
+  };
+  pushY(0);
+  for (const section of layout.sections) {
+    pushY(section.corridor_y);
+    pushY(section.corridor_y + section.corridor_d);
+  }
+  pushY(D);
+  numberPositions.sort((a, b) => a - b);
+
+  // ── Геометрия маркеров ─────────────────────────────────────────────
+  const CIRCLE_R = 0.5;        // радиус кружка
+  const OFFSET = 3.5;          // насколько круг отстоит от здания (м)
+  const DASH = "0.25 0.18";    // штрих-пунктир для оси
+  const lineSw = 0.04;
+  const circleSw = 0.05;
+
+  // Y-координата SVG для буквенных кружков (выше здания)
+  const letterCY = ry(D + OFFSET);
+  // X-координата SVG для цифровых кружков (левее здания)
+  const numberCX = -OFFSET;
+
+  return (
+    <g>
+      {/* ── Буквенные оси (вертикальные) ────────────────────────────── */}
+      {letterPositions.map((x, i) => (
+        <g key={`letter-${i}`}>
+          <line
+            x1={x} y1={ry(D)}
+            x2={x} y2={letterCY + CIRCLE_R}
+            stroke={color} strokeWidth={lineSw}
+            strokeDasharray={DASH}
+          />
+          <circle
+            cx={x} cy={letterCY}
+            r={CIRCLE_R}
+            fill="#fff" stroke={color} strokeWidth={circleSw}
+          />
+          <text
+            x={x} y={letterCY}
+            textAnchor="middle" dominantBaseline="central"
+            fill={color}
+            fontSize={0.55}
+            fontWeight={700}
+            letterSpacing={0.02}
+          >
+            {letters[i] ?? `?`}
+          </text>
+        </g>
+      ))}
+
+      {/* ── Цифровые оси (горизонтальные) ───────────────────────────── */}
+      {numberPositions.map((archY, i) => {
+        const y = ry(archY);
+        return (
+          <g key={`num-${i}`}>
+            <line
+              x1={0} y1={y}
+              x2={numberCX + CIRCLE_R} y2={y}
+              stroke={color} strokeWidth={lineSw}
+              strokeDasharray={DASH}
+            />
+            <circle
+              cx={numberCX} cy={y}
+              r={CIRCLE_R}
+              fill="#fff" stroke={color} strokeWidth={circleSw}
+            />
+            <text
+              x={numberCX} y={y}
+              textAnchor="middle" dominantBaseline="central"
+              fill={color}
+              fontSize={0.55}
+              fontWeight={700}
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {i + 1}
+            </text>
+          </g>
+        );
+      })}
+    </g>
+  );
+}
 
 
 // ---------------------------------------------------------------------------
