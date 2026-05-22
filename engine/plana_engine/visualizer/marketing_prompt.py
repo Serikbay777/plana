@@ -530,6 +530,67 @@ UNIVERSAL ANNOTATIONS (Kazakh CAD style)
 # ---------------------------------------------------------------------------
 
 
+def _taimas_standard() -> str:
+    """Жёсткий чек-лист ГОСТ/СПДС-элементов из реальных альбомов
+    архитектурных бюро Казахстана (например, TAIMAS-М). Вставляется в самом
+    начале промпта, после header — gpt-image воспринимает первые блоки
+    приоритетнее, поэтому здесь — самое важное.
+
+    Не дублирует _common_header (общая эстетика) и _common_footer
+    (палитра/негативы) — только конкретный КАК-должен-выглядеть чертёж.
+    """
+    return """═══════════════════════════════════════════════════════════════════
+TAIMAS-STANDARD CHECKLIST — обязательные элементы (real Kazakh DD-album)
+═══════════════════════════════════════════════════════════════════
+This drawing MUST include ALL of the following GOST/SPDS elements,
+exactly like in real Almaty/Astana design-institute albums:
+
+1. ✓ AXIS GRID — letter circles (А, Б, В, Г, Д, Е, Ж) on TOP edge and
+   number circles (1, 2, 3, 4, 5...) on LEFT edge, Ø ~600mm, connected
+   to the building outline by thin dashed grey lines extending past
+   the walls. EVERY column-line and wall-axis gets a letter/number.
+
+2. ✓ TRIPLE DIMENSION CHAINS along TOP and LEFT building edges
+   (ОБЯЗАТЕЛЬНО — без них чертёж не читается):
+   • inner chain  — wall-to-wall (between rooms)
+   • middle chain — axis-to-axis (between letter/number axes)
+   • outer chain  — total building dimension end-to-end
+   All numbers in MILLIMETRES without unit suffix:
+   «3450», «6000», «28800» — small narrow CAD font directly above
+   the chain line, with arrow ticks (not arrowheads, ticks at 45°).
+
+3. ✓ ROOM NUMBERS in small circles (Ø 500mm) inside each room,
+   placed above the room name: «1», «2», «3»... These reference
+   the EXPLICATION TABLE.
+
+4. ✓ EXPLICATION TABLE (Экспликация помещений) — simple
+   rectangular grid drawn BELOW or to the RIGHT of the plan,
+   3 columns: «№ | Наименование | Площадь, м²»
+   with one row per room. Header row in bold; uppercase column titles.
+
+5. ✓ DOOR/WINDOW SPECIFICATIONS — small italic markers near each
+   opening: «Д-1», «Д-2»... for doors, «В-1», «В-2»... for windows,
+   referencing a separate spec sheet (на других листах).
+
+6. ✓ SECTION CUT ARROWS «1—1», «2—2» — thick black arrows on plan
+   edges (NOT in the middle of rooms), with the section label in a
+   round badge. Indicate WHERE vertical sections are taken.
+
+7. ✓ NORTH ARROW — small compass-rose with letter «С» (север),
+   drawn OUTSIDE the building outline in the TOP-RIGHT margin area.
+
+8. ✓ SCALE INDICATOR «М 1:100» under the sheet title or in title
+   block — narrow CAD font.
+
+9. ✓ SHEET TITLE at top: «ПЛАН ТИПОВОГО ЭТАЖА» (or similar,
+   depending on level) — bold uppercase, large narrow CAD font.
+
+CRITICAL — без этих элементов чертёж выглядит «AI-нарисованным»,
+а не профессиональным. Treat this as a strict checklist; each item
+must be visually present and findable on the final drawing.
+═══════════════════════════════════════════════════════════════════"""
+
+
 def build_marketing_prompt(inputs: MarketingInputs) -> str:
     inner_w = inputs.site_width_m - 2 * inputs.setback_side_m
     inner_h = inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m
@@ -547,6 +608,7 @@ def build_marketing_prompt(inputs: MarketingInputs) -> str:
 
     return "\n\n".join([
         _common_header(),
+        _taimas_standard(),   # ← TAIMAS-чек-лист сразу после header
         purpose_block,
         _common_annotations(),
         _engineering_block(inputs),
