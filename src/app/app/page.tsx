@@ -2703,11 +2703,45 @@ function AiPlansTab({
             Параллельно генерируем 13-15 листов в стиле СПДС.
             Обычно занимает 3-7 минут. Не закрывай страницу.
           </div>
-          {albumError && (
-            <div className="mt-4 text-[11.5px] text-rose-300/85 flex items-center justify-center gap-1.5">
-              <AlertCircle size={12} /> {albumError}
-            </div>
-          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Ошибка генерации альбома — показываем экран с retry-кнопкой,
+  // чтобы юзер не «терял» состояние когда генерация падает.
+  if (albumError) {
+    return (
+      <div className="flex flex-col flex-1 min-h-0 grid place-items-center text-white/85">
+        <div className="text-center max-w-lg p-8">
+          <div className="mx-auto w-12 h-12 rounded-full bg-rose-500/15 grid place-items-center mb-4">
+            <AlertCircle size={22} className="text-rose-300" />
+          </div>
+          <div className="text-[15px] font-semibold tracking-display mb-2">
+            Не получилось сгенерировать альбом
+          </div>
+          <div className="text-[12px] text-rose-200/75 leading-relaxed bg-rose-500/10 border border-rose-400/20 rounded-lg p-3 mb-4 text-left whitespace-pre-wrap break-words">
+            {albumError}
+          </div>
+          <div className="text-[11.5px] text-white/45 leading-relaxed mb-4">
+            Частые причины: таймаут nginx (по умолчанию 300с), нехватка
+            памяти engine при 14 параллельных gpt-image, или содержимое
+            нарушило content-policy OpenAI. Проверь логи бэка.
+          </div>
+          <div className="flex gap-2 justify-center">
+            <button
+              onClick={handleGenerateAlbum}
+              className="h-8 px-4 rounded-full text-[12px] flex items-center gap-1.5 border border-emerald-400/30 text-emerald-200/90 hover:bg-emerald-500/15 transition"
+            >
+              <RefreshCw size={11} /> Повторить
+            </button>
+            <button
+              onClick={() => setAlbumError(null)}
+              className="h-8 px-4 rounded-full text-[12px] flex items-center gap-1.5 border border-white/15 text-white/70 hover:bg-white/[0.06] transition"
+            >
+              <X size={11} /> Закрыть
+            </button>
+          </div>
         </div>
       </div>
     );

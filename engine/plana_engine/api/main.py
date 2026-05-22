@@ -1956,22 +1956,31 @@ def generate_album_images_endpoint(req: VisualizeFromInputsRequest) -> AlbumImag
         except Exception:
             return idx, None
 
+    # max_workers=3 — компромисс между скоростью и OpenAI rate-limit.
+    # OOM на 4GB VPS при 14 параллельных base64 PNG ~30-60MB суммарно.
     try:
-        with ThreadPoolExecutor(max_workers=5) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {
                 pool.submit(_one, i, kind, title, extras): i
                 for i, (kind, title, extras) in enumerate(tasks)
             }
             for fut in _as_completed(futures):
-                idx, item = fut.result()
-                if item is None:
+                try:
+                    idx, item = fut.result()
+                    if item is None:
+                        failed_count += 1
+                    else:
+                        results[idx] = item
+                except MissingAPIKey:
+                    raise
+                except OpenAIError:
+                    # Не валим весь альбом из-за одного content-policy
+                    # или rate-limit — считаем как failed.
                     failed_count += 1
-                else:
-                    results[idx] = item
+                except Exception:
+                    failed_count += 1
     except MissingAPIKey as e:
         raise HTTPException(status_code=503, detail=str(e))
-    except OpenAIError as e:
-        raise HTTPException(status_code=502, detail=str(e))
 
     images = [r for r in results if r is not None]
     if not images:
