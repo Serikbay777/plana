@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Sparkles, Home, Briefcase, Building2, Hotel,
-  Minus, Plus, PenLine, Square,
+  Sparkles, Home, Building2,
+  Minus, Plus,
 } from "lucide-react";
-import { SitePolygonEditor, type Pt } from "@/components/SitePolygonEditor";
+import type { Pt } from "@/components/SitePolygonEditor";
 
 // ---------------------------------------------------------------------------
 // Тип формы — минимум essential полей для среза этажа.
@@ -93,16 +93,17 @@ export const DEFAULT_PROMPT_FORM: PromptFormState = {
 
 // ---------------------------------------------------------------------------
 
+// Фокус на многоквартирных домах: commercial / hotel убраны из UI
+// (тип в PromptFormState всё ещё имеет все 4 значения для совместимости
+// бэка, но юзер выбирает только из двух residential-ориентированных).
 const PURPOSE_OPTIONS: {
   v: PromptFormState["purpose"];
   label: string;
   Icon: typeof Home;
   hint: string;
 }[] = [
-  { v: "residential", label: "Жильё",     Icon: Home,       hint: "Многоквартирный дом" },
-  { v: "commercial",  label: "Офис",      Icon: Briefcase,  hint: "Бизнес-центр" },
-  { v: "mixed_use",   label: "MFC",       Icon: Building2,  hint: "Жильё + коммерция" },
-  { v: "hotel",       label: "Отель",     Icon: Hotel,      hint: "Гостиница" },
+  { v: "residential", label: "Жилой дом",  Icon: Home,       hint: "Многоквартирный" },
+  { v: "mixed_use",   label: "С коммерцией", Icon: Building2, hint: "Жильё + коммерция на 1 эт." },
 ];
 
 type Props = {
@@ -195,85 +196,38 @@ export function PromptForm({ value, onChange, onGenerate, generating }: Props) {
       </Section>
 
       {/* ─── Пятно застройки ─── */}
+      {/* Свободный контур убран ради фокуса на multifamily — 95% случаев это
+          прямоугольное пятно. SitePolygonEditor доступен через advanced (если
+          вернуть тоггл в будущем). site_polygon всегда null. */}
       <Section icon="📐" title="Пятно застройки">
-        {/* Переключатель: прямоугольник / свободный контур */}
-        <div className="inline-flex bg-white/[0.04] border border-white/[0.07] rounded-lg p-0.5 mb-3">
-          <button
-            onClick={() => { update("site_polygon", null); }}
-            className={[
-              "h-6 px-2.5 rounded-md text-[11px] transition flex items-center gap-1",
-              !local.site_polygon ? "bg-white/15 text-white font-medium" : "text-white/45 hover:text-white",
-            ].join(" ")}
-          >
-            <Square size={10} /> Прямоугольник
-          </button>
-          <button
-            onClick={() => { if (!local.site_polygon) update("site_polygon", []); }}
-            className={[
-              "h-6 px-2.5 rounded-md text-[11px] transition flex items-center gap-1",
-              local.site_polygon ? "bg-violet-500/30 text-violet-100 font-medium" : "text-white/45 hover:text-white",
-            ].join(" ")}
-          >
-            <PenLine size={10} /> Свободный контур
-          </button>
-        </div>
-
-        {!local.site_polygon ? (
-          <>
-            <FootprintVisualizer
-              width={local.building_width_m}
-              depth={local.building_depth_m}
-            />
-            <div className="grid grid-cols-2 gap-2 mt-3">
-              <NumField
-                label="Длина"
-                suffix="м"
-                value={local.building_width_m}
-                min={8}
-                max={150}
-                onChange={(v) => update("building_width_m", v)}
-              />
-              <NumField
-                label="Ширина"
-                suffix="м"
-                value={local.building_depth_m}
-                min={8}
-                max={150}
-                onChange={(v) => update("building_depth_m", v)}
-              />
-            </div>
-            <div className="flex items-center justify-between text-[11px] text-white/45 mt-2.5 pt-2.5 border-t border-white/[0.04]">
-              <span>Площадь этажа</span>
-              <span className="tabular text-white/85 font-medium">
-                {(local.building_width_m * local.building_depth_m).toLocaleString("ru-RU")} м²
-              </span>
-            </div>
-          </>
-        ) : (
-          <SitePolygonEditor
-            value={local.site_polygon}
-            onChange={(pts) => {
-              if (pts && pts.length >= 3) {
-                const xs = pts.map(p => p[0]);
-                const ys = pts.map(p => p[1]);
-                const w = Math.max(...xs) - Math.min(...xs);
-                const d = Math.max(...ys) - Math.min(...ys);
-                const next = {
-                  ...local,
-                  site_polygon: pts,
-                  building_width_m: Math.round(w),
-                  building_depth_m: Math.round(d),
-                  site_width_m: Math.round(w),
-                  site_depth_m: Math.round(d),
-                };
-                setLocal(next);
-                onChange(next);
-              } else {
-                update("site_polygon", pts ?? ([] as Pt[]));
-              }
-            }}
+        <FootprintVisualizer
+          width={local.building_width_m}
+          depth={local.building_depth_m}
+        />
+        <div className="grid grid-cols-2 gap-2 mt-3">
+          <NumField
+            label="Длина"
+            suffix="м"
+            value={local.building_width_m}
+            min={8}
+            max={150}
+            onChange={(v) => update("building_width_m", v)}
           />
-        )}
+          <NumField
+            label="Ширина"
+            suffix="м"
+            value={local.building_depth_m}
+            min={8}
+            max={150}
+            onChange={(v) => update("building_depth_m", v)}
+          />
+        </div>
+        <div className="flex items-center justify-between text-[11px] text-white/45 mt-2.5 pt-2.5 border-t border-white/[0.04]">
+          <span>Площадь этажа</span>
+          <span className="tabular text-white/85 font-medium">
+            {(local.building_width_m * local.building_depth_m).toLocaleString("ru-RU")} м²
+          </span>
+        </div>
       </Section>
 
       {/* ─── Этажность ─── */}
