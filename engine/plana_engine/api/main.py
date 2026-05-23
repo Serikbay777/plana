@@ -662,6 +662,7 @@ class FloorVariantItem(BaseModel):
     model_used: str
     enhancer_used: str
     image_b64: str
+    prompt_used: str = ""
 
 
 class CritiqueNumericalConstraint(BaseModel):
@@ -725,6 +726,7 @@ def visualize_floor_variants(req: VisualizeFromInputsRequest) -> FloorVariantsRe
             model_used=result.model_used,
             enhancer_used=enhancer_source,
             image_b64=_b64.b64encode(result.png).decode(),
+            prompt_used=prompt,
         )
 
     t0 = time.time()
@@ -857,6 +859,7 @@ def visualize_floor_by_level(req: FloorByLevelRequest) -> FloorVariantsResponse:
             model_used=result.model_used,
             enhancer_used=enhancer_source,
             image_b64=_b64.b64encode(result.png).decode(),
+            prompt_used=prompt,
         )
 
     t0 = time.time()

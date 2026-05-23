@@ -367,6 +367,7 @@ export type FloorVariantItem = {
   model_used: string;
   enhancer_used: string;
   image_b64: string;
+  prompt_used: string;
 };
 
 // Архитектурная критика из агентного enhancer'а (kz-norms)

@@ -89,6 +89,7 @@ type AiPlanVariant = {
   imageUrl: string;  // data: URL из base64
   modelUsed: string;
   enhancerUsed: string;
+  promptUsed: string;
 };
 
 const VARIANT_LABEL: Record<string, string> = {
@@ -286,7 +287,7 @@ export default function AppPage() {
         p.assets.filter((a) => a.tab === "ai_plans").forEach((a) => {
           const fl = a.floor ?? 1;
           if (!byFloor[fl]) byFloor[fl] = [];
-          byFloor[fl].push({ key: a.variant_key, label: VARIANT_LABEL[a.variant_key] ?? a.variant_key, imageUrl: a.url, modelUsed: a.model_used ?? "", enhancerUsed: "" });
+          byFloor[fl].push({ key: a.variant_key, label: VARIANT_LABEL[a.variant_key] ?? a.variant_key, imageUrl: a.url, modelUsed: a.model_used ?? "", enhancerUsed: "", promptUsed: "" });
         });
         if (Object.keys(byFloor).length > 0) {
           const bags: Record<number, AiPlansBag> = {};
@@ -621,6 +622,7 @@ export default function AppPage() {
         modelUsed: v.model_used,
         enhancerUsed: v.enhancer_used,
         imageUrl: `data:image/png;base64,${v.image_b64}`,
+        promptUsed: v.prompt_used ?? "",
       }));
       setFloorBags(prev => ({ ...prev, [fl]: { state: "ready", variants, elapsedMs: res.elapsed_ms, errorMessage: null } }));
       // авто-сохранение в фоне
@@ -694,6 +696,7 @@ export default function AppPage() {
         imageUrl: a.url,
         modelUsed: a.model_used ?? "",
         enhancerUsed: "",
+        promptUsed: "",
       }));
       setFloorBags((prev) => ({
         ...prev,
@@ -3127,6 +3130,16 @@ function AiPlansTab({
                     </button>
                   </div>
                 </div>
+                {v.promptUsed && (
+                  <details className="border-t border-white/[0.05]">
+                    <summary className="px-4 py-2 text-[10.5px] text-white/35 cursor-pointer hover:text-white/55 select-none list-none flex items-center gap-1.5">
+                      <FileText size={10} /> Промпт для gpt-image-2
+                    </summary>
+                    <pre className="px-4 pb-3 text-[10px] text-white/50 leading-relaxed whitespace-pre-wrap break-words font-mono max-h-64 overflow-y-auto">
+                      {v.promptUsed}
+                    </pre>
+                  </details>
+                )}
               </div>
             </div>
           );
