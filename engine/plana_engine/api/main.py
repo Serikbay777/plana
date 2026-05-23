@@ -224,8 +224,6 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         fire_evacuation_max_m=req.fire_evacuation_max_m,
         fire_evacuation_exits_per_section=req.fire_evacuation_exits_per_section,
         fire_dead_end_corridor_max_m=req.fire_dead_end_corridor_max_m,
-        lifts_passenger=req.lifts_passenger,
-        lifts_freight=req.lifts_freight,
         insolation_priority=req.insolation_priority,
         insolation_min_hours=req.insolation_min_hours,
         max_coverage_pct=req.max_coverage_pct,
@@ -632,12 +630,13 @@ _FLOOR_VARIANTS = [
             "Central staircase-lift core, short dead-end corridors (≤12 m). "
             "Apartments on both sides of the core. Standard СНиП room proportions.\n"
             "КОНТРОЛЬ ПЕРЕД ВЫВОДОМ:\n"
-            "  1) Пересчитай жилые комнаты в каждой квартире и сверь с подписью "
-            "(«1-комнатная» = 1 жилая, «2-комнатная» = 2 жилые, «3-комнатная» = 3 жилые). Кухня не в счёт.\n"
-            "  2) Если есть «Спальня 1» — обязана быть и «Спальня 2» (в 4-комн. — и «Спальня 3»).\n"
-            "  3) Сумма площадей жилых комнат = S жил. квартиры (расхождение = пропущенная комната).\n"
-            "  4) Сумма пролётов размерной цепочки = длине здания; площадь застройки = длина×ширина.\n"
-            "  5) (число квартир ÷ число секций) ≥ 3, иначе — одна точечная секция."
+            "  1) Этажность ≤5 → лифтов НЕТ (только лестница). Иначе лифты по этажности.\n"
+            "  2) Жилых комнат в каждой квартире = числу в подписи (кухня НЕ комната).\n"
+            "  3) Есть «Спальня 1» → есть и «Спальня 2» (4-комн. — и «Спальня 3»).\n"
+            "  4) Σ площадей жилых комнат = S жил. квартиры.\n"
+            "  5) Σ пролётов цепочки = длине здания; площадь застройки = длина×ширина.\n"
+            "  6) (квартир ÷ секций) ≥ 3, иначе одна точечная секция; общее ≤ жилого.\n"
+            "  7) Средняя площадь квартиры в реалистичном диапазоне по типу."
         ),
     },
     {
