@@ -17,7 +17,7 @@ from .openai_client import (
     MissingAPIKey, OpenAIError,
 )
 
-_DEFAULT_MODEL = "gpt-image-1"
+_DEFAULT_MODEL = "gpt-image-2"
 
 _IMAGE_CACHE: dict[str, bytes] = {}
 _CACHE_LIMIT = 32
