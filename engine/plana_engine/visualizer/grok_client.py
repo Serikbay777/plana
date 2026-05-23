@@ -1,59 +1,26 @@
-"""Тонкая обёртка над xAI Images API (grok-imagine-image*).
+"""Text→image генерация листов альбома через OpenAI gpt-image-1.
 
-Используется для **text→image листов альбома**. Image-edit и inpainting
-по-прежнему живут в [openai_client.py][] — xAI image-edit API мы не
-используем по решению (см. историю чата).
-
-Ключ читается из ENV `XAI_API_KEY` (можно также `GROK_API_KEY` для
-совместимости). Если ключа нет — `generate_image` бросает `MissingAPIKey`.
-
-API совместим с OpenAI SDK через `base_url="https://api.x.ai/v1"` —
-поэтому используем тот же пакет `openai`.
-
-Параметры `size`/`quality`/`n` в публичной документации xAI не описаны —
-передаём только `model` + `prompt`. По умолчанию xAI возвращает
-квадратное изображение (≈1024×1024) и url-ссылку (не b64).
+Ранее здесь был xAI/Grok клиент. Переключились обратно на OpenAI:
+- лимит промпта 32 000 символов (vs 8 000 у xAI)
+- знакомый API, уже проверен в edits/inpaint
+- ключ: OPENAI_API_KEY (тот же что и в openai_client.py)
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 
-# Переиспользуем общие типы — чтобы вызывающий код не различал провайдеров.
 from .openai_client import (
     GenerationOptions, GenerationResult,
     MissingAPIKey, OpenAIError,
 )
 
+_DEFAULT_MODEL = "gpt-image-1"
 
-# Доступные модели xAI (январь 2026):
-#   grok-imagine-image           — $0.02/img (standard, дефолт)
-#   grok-imagine-image-quality   — $0.05/img (если standard слабоват)
-# Переключить можно через ENV GROK_IMAGE_MODEL.
-_DEFAULT_GROK_MODEL = "grok-imagine-image"
-_XAI_BASE_URL = "https://api.x.ai/v1"
-
-
-# Свой кэш — отдельный от openai_client, чтобы edits/inpaint не пересекались
-# с text-gen по хэшу.
 _IMAGE_CACHE: dict[str, bytes] = {}
 _CACHE_LIMIT = 32
-
-
-def _resolve_model(opts: GenerationOptions) -> str:
-    """Резолв модели Grok с учётом обратной совместимости.
-
-    Если код где-то ещё передаёт `GenerationOptions(model="gpt-image-...")`,
-    мы молча перепишем на дефолтный Grok — иначе xAI вернёт 404.
-    """
-    override = os.environ.get("GROK_IMAGE_MODEL")
-    if override:
-        return override
-    m = opts.model or ""
-    if m.startswith("grok-"):
-        return m
-    return _DEFAULT_GROK_MODEL
 
 
 def _cache_key(prompt: str, model: str) -> str:
@@ -64,30 +31,15 @@ def _cache_key(prompt: str, model: str) -> str:
 
 
 def _api_key() -> str:
-    key = os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY")
+    key = os.environ.get("OPENAI_API_KEY")
     if not key:
         raise MissingAPIKey(
-            "XAI_API_KEY не задан. Получите ключ на https://console.x.ai/ "
-            "и добавьте в .env перед запуском движка."
+            "OPENAI_API_KEY не задан. Добавьте его в .env перед запуском движка."
         )
     return key
 
 
-def _fetch_url_png(url: str) -> bytes:
-    """Скачать PNG с Bearer-токеном xAI.
-
-    Картинки лежат на приватном CDN xAI — без Authorization → 403.
-    """
-    import urllib.request
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {_api_key()}"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read()
-
-
-def _call_grok(prompt: str, model: str) -> bytes:
+def _call_openai(prompt: str, model: str) -> bytes:
     try:
         from openai import OpenAI
     except ImportError as e:
@@ -95,59 +47,40 @@ def _call_grok(prompt: str, model: str) -> bytes:
             "Пакет openai не установлен. `pip install openai>=1.40` в engine/.venv"
         ) from e
 
-    client = OpenAI(api_key=_api_key(), base_url=_XAI_BASE_URL)
-
-    # Сначала пытаемся попросить base64 напрямую — экономит второй HTTP
-    # запрос и обходит auth-проблему с CDN. Если xAI этот параметр не
-    # поддерживает — упадём в обычный вызов и скачаем по url с Bearer.
+    client = OpenAI(api_key=_api_key())
     try:
         response = client.images.generate(
-            model=model, prompt=prompt, response_format="b64_json",
+            model=model,
+            prompt=prompt,
+            response_format="b64_json",
+            size="1536x1024",
+            quality="medium",
+            n=1,
         )
-    except Exception as e_b64:
-        msg = str(e_b64).lower()
-        if "response_format" in msg or "invalid argument" in msg or "unknown" in msg:
-            try:
-                response = client.images.generate(model=model, prompt=prompt)
-            except Exception as e:
-                raise OpenAIError(f"xAI image API error: {e}") from e
-        else:
-            raise OpenAIError(f"xAI image API error: {e_b64}") from e_b64
+    except Exception as e:
+        raise OpenAIError(f"OpenAI image API error: {e}") from e
 
     if not response.data:
-        raise OpenAIError("xAI returned empty data")
+        raise OpenAIError("OpenAI returned empty data")
     item = response.data[0]
     if hasattr(item, "b64_json") and item.b64_json:
-        import base64
         return base64.b64decode(item.b64_json)
-    if hasattr(item, "url") and item.url:
-        return _fetch_url_png(item.url)
-    raise OpenAIError("xAI response had neither b64_json nor url")
+    raise OpenAIError("OpenAI response had no b64_json")
 
 
 def generate_image_with_meta(
     prompt: str,
-    opts: GenerationOptions | None = None,
+    opts: GenerationOptions | None = None,  # noqa: ARG001
     *,
     use_cache: bool = True,
 ) -> GenerationResult:
-    """Сгенерировать лист альбома через Grok.
-
-    `opts.size`/`opts.quality`/`opts.fallback_models` игнорируются — xAI
-    их не документирует. Если в `opts.model` указан старый `gpt-image-*`,
-    он переписывается на дефолт `grok-imagine-image`.
-
-    При любой ошибке xAI (rate limit, 5xx, content policy) бросает
-    `OpenAIError` — UI ловит и показывает пользователю.
-    """
-    options = opts or GenerationOptions()
-    model = _resolve_model(options)
+    model = _DEFAULT_MODEL
 
     key = _cache_key(prompt, model)
     if use_cache and key in _IMAGE_CACHE:
         return GenerationResult(png=_IMAGE_CACHE[key], model_used="cache")
 
-    png = _call_grok(prompt, model)
+    png = _call_openai(prompt, model)
 
     if use_cache:
         if len(_IMAGE_CACHE) >= _CACHE_LIMIT:
@@ -159,13 +92,12 @@ def generate_image_with_meta(
 
 def generate_image(
     prompt: str,
-    opts: GenerationOptions | None = None,
+    opts: GenerationOptions | None = None,  # noqa: ARG001
     *,
     use_cache: bool = True,
 ) -> bytes:
-    """Backward-compat wrapper: вернуть только bytes."""
     return generate_image_with_meta(prompt, opts, use_cache=use_cache).png
 
 
 def has_api_key() -> bool:
-    return bool(os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY"))
+    return bool(os.environ.get("OPENAI_API_KEY"))
