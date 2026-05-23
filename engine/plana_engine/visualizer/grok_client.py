@@ -52,7 +52,6 @@ def _call_openai(prompt: str, model: str) -> bytes:
         response = client.images.generate(
             model=model,
             prompt=prompt,
-            response_format="b64_json",
             size="1536x1024",
             quality="medium",
             n=1,
@@ -65,7 +64,11 @@ def _call_openai(prompt: str, model: str) -> bytes:
     item = response.data[0]
     if hasattr(item, "b64_json") and item.b64_json:
         return base64.b64decode(item.b64_json)
-    raise OpenAIError("OpenAI response had no b64_json")
+    if hasattr(item, "url") and item.url:
+        import urllib.request
+        with urllib.request.urlopen(item.url, timeout=60) as resp:
+            return resp.read()
+    raise OpenAIError("OpenAI response had neither b64_json nor url")
 
 
 def generate_image_with_meta(
