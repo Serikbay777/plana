@@ -120,6 +120,57 @@ _STATIC_ROOM_DEFINITION = """\
  Use the post-Soviet / Kazakh convention defined above without exception.)
 ═══════════════════════════════════════════════════════════════════"""
 
+_STATIC_SECTION_RATIO = """\
+═══════════════════════════════════════════════════════════════════
+⚠️⚠️ ПРОПОРЦИЯ СЕКЦИЙ И КВАРТИР (АНТИ-АБСУРД — соблюдать при компоновке)
+═══════════════════════════════════════════════════════════════════
+Лифтово-лестничное ядро (лифты + лестница + холл) ДОРОГОЕ и занимает много
+площади. Оно оправдано только при ДОСТАТОЧНОМ числе квартир, которые его
+обслуживают. Соблюдай здравые пропорции:
+
+• МИНИМУМ КВАРТИР НА СЕКЦИЮ: ≥ 3–4. НЕ рисуй полноценное ядро
+  (2 пасс. + 1 груз. лифт + лестница) ради ОДНОЙ квартиры в секции —
+  в реальности так не строят.
+• ЕСЛИ квартир мало (всего 2–4 на этаж) — используй ОДНУ секцию
+  (точечную башню, point-tower) с ЕДИНЫМ ядром на все квартиры этажа,
+  а НЕ несколько секций с отдельными ядрами в каждой.
+• НЕСКОЛЬКО секций (2+) применять только когда на КАЖДУЮ секцию приходится
+  ≥ 3–4 квартиры (т.е. от ~6–8 квартир на этаж и больше).
+• БАЛАНС ПЛОЩАДЕЙ: суммарная площадь ОБЩИХ помещений (ядро + коридоры +
+  холлы + тамбуры + техпомещения) НЕ должна превышать суммарную площадь
+  КВАРТИР на этаже. Если «общее» > «жилого» — значит ядер/секций слишком
+  много на слишком мало квартир: уменьши число секций или увеличь число квартир.
+• ЛИФТЫ ПО ЭТАЖНОСТИ: до 5 этажей лестница может быть без лифта; 5–9 этажей —
+  обычно 1 пасс. лифт на секцию; 10+ этажей — 2 пасс. + 1 груз. на секцию.
+  НЕ ставь 2 пасс. + груз. лифт в 4-этажке без необходимости.
+
+ПРОВЕРКА перед компоновкой: (число квартир на этаж ÷ число секций) ≥ 3.
+Если меньше — пересобери как одну точечную секцию.
+═══════════════════════════════════════════════════════════════════"""
+
+_STATIC_DIMENSION_ARITH = """\
+═══════════════════════════════════════════════════════════════════
+⚠️⚠️ РАЗМЕРНЫЕ ЦЕПОЧКИ — АРИФМЕТИКА И СОГЛАСОВАННОСТЬ С ПЛОЩАДЯМИ
+═══════════════════════════════════════════════════════════════════
+Размеры на чертеже должны быть ВНУТРЕННЕ согласованы:
+
+• СУММА всех пролётов в наружной размерной цепочке по ВЕРХНЕМУ фасаду
+  ОБЯЗАНА равняться общей длине здания (итоговому числу над цепочкой).
+  Пример для длины 29 000 мм на 8 пролётов:
+  3600+3600+3600+3600+3600+3600+3600+3200 = 29 000. Сумма СХОДИТСЯ.
+  НЕ выдумывай произвольные пролёты, сумма которых не равна итогу.
+• СУММА пролётов по ЛЕВОМУ фасаду ОБЯЗАНА равняться ширине здания.
+• ПЛОЩАДЬ ЗАСТРОЙКИ в ТЭП = длина × ширина по наружным осям.
+  Сверяй: «Площадь застройки» = длина(м) × ширина(м) — точное число.
+• «Жилая площадь этажа» в ТЭП = СУММА всех S жил. квартир этажа.
+• «Общая площадь этажа» ≈ сумма S общ. квартир + площадь общих помещений.
+• Итоговое число над цепочкой и аспект-ratio рисунка ДОЛЖНЫ соответствовать
+  заданному футпринту.
+
+ПРИМЕЧАНИЕ: держи арифметику согласованной; цифры на чертеже — не декор,
+а данные, которые читатель складывает и проверяет.
+═══════════════════════════════════════════════════════════════════"""
+
 _STATIC_LINE_WEIGHTS = """\
 ═══════════════════════════════════════════════════════════════════
 LINE WEIGHTS (CRITICAL — like real Kazakh CAD)
@@ -185,9 +236,10 @@ UNIVERSAL ANNOTATIONS (Kazakh CAD style)
   - Vertical axes: «А», «Б», «В», «Г», «Д», «Е», «Ж», «И» (avoid «З» — looks like 3)
   - Horizontal axes: «1», «2», «3»… up to «10»
 
-• DIMENSION CHAINS:
+• DIMENSION CHAINS (см. также блок «РАЗМЕРНЫЕ ЦЕПОЧКИ — АРИФМЕТИКА» выше):
   - Numbers in mm WITHOUT unit symbol: «1500», «2100», «2700», «4500», «7200»
   - Total building dimension in larger text: «25 200» or «60 000»
+  - СУММА пролётов = итоговому размеру здания (обязательно сходится!)
   - All dimension text in narrow CAD font (ISOCPEUR/GOST), horizontal
 
 • CUT-SECTION MARKERS «1—1» and «2—2»:
@@ -244,6 +296,11 @@ ABSOLUTE NEGATIVES (must NOT appear)
 × NO «2-комнатная» that actually contains only гостиная + кухня (that is a 1-комнатная)
 × NO «3-комнатная» with fewer than THREE distinct жилые комнаты
 × NO label «Спальня 1» without a paired «Спальня 2» (and «Спальня 3» for 4-room) — каждая трёшка обязана иметь ДВЕ нарисованные спальни
+× NO dimension chain whose bay sum does NOT equal the building total (числа обязаны складываться в итог)
+× NO площадь застройки, not equal to длина×ширина — сверяй арифметически
+× NO multi-section split (противопожарная стена, 2+ подъезда) when apartments-per-section < 3
+× NO full lift core (2 пасс. + грузовой) serving just 1 apartment per section
+× NO «общая площадь» общих помещений превышает суммарную площадь квартир
 × NO watercolor, painted illustration, Pinterest interior overlay
 × NO photorealistic furniture (everything is line-drawing block diagrams)
 × NO wood grain, parquet, marble textures, ceramic tile patterns
@@ -252,7 +309,6 @@ ABSOLUTE NEGATIVES (must NOT appear)
 × NO Latin/English labels — все надписи на русском кириллицей
 × NO marketing brochure aesthetic, NO Pinterest pastel colors
 × NO narrow vertical strip layout when wide footprint is requested
-× NO single-corridor layout when multi-section is required
 × NO unrealistically small rooms (kitchen 5 m², bedroom 4 m² — violates СНиП РК)
 × NO missing elevator/staircase core in the center of the section
 × NO COLORED ROOM FILLS (pale yellow/green/pink/etc — real Kazakh CAD has white rooms)
@@ -414,39 +470,53 @@ def _build_apartment_block(inputs: MarketingInputs, n_units: int) -> str:
 def _build_section_block(inputs: MarketingInputs, n_units: int, inner_w: float, inner_h: float) -> str:
     """Описание секционности: точечный или многосекционный дом."""
     n_sections = max(1, inputs.sections)
-    apts_per_section = max(1, n_units // n_sections)
+    footprint_area = inner_w * inner_h
+    apts_per_core = n_units / max(1, n_sections)
+    # If ratio < 3, collapse to single point-tower regardless of requested sections
+    effective_sections = n_sections if apts_per_core >= 3 else 1
 
-    if n_sections == 1:
+    if effective_sections == 1:
+        note = (
+            f" (см. правило «ПРОПОРЦИЯ СЕКЦИЙ»: при {n_units} кв. на {n_sections} секций"
+            f" → {apts_per_core:.1f} кв./ядро < 3, поэтому одна точечная башня)"
+            if n_sections > 1 else ""
+        )
         return (
             f"⚠️ APARTMENT COUNT — STRICT: EXACTLY {n_units} apartments per floor "
             f"(EXACTLY {n_units * inputs.floors} total for {inputs.floors} floors). "
             f"DO NOT draw more or fewer apartments than this number. "
-            f"Single-section point tower with {n_units} apartments per floor.\n\n"
-            f"POINT-TOWER LAYOUT (1 section): central reinforced-concrete core with "
-            f"{inputs.lifts_passenger} passenger + {inputs.lifts_freight} freight elevator + "
-            f"Л-1 staircase. All {n_units} apartments arranged AROUND the central core."
+            f"Single-section point tower with {n_units} apartments per floor{note}.\n\n"
+            f"Площадь застройки = {inner_w:.0f} × {inner_h:.0f} = {footprint_area:.0f} м² "
+            f"(используй именно это число в ТЭП).\n\n"
+            f"POINT-TOWER LAYOUT (1 section): central reinforced-concrete core. "
+            f"Лифты по этажности: {inputs.floors} этажей → "
+            f"{'лестница без лифта (до 5 эт.)' if inputs.floors < 5 else f'{inputs.lifts_passenger} пасс. + {inputs.lifts_freight} груз. лифт'}. "
+            f"All {n_units} apartments arranged AROUND the central core. "
+            f"НЕ делить на секции."
         )
     else:
-        section_w = inner_w / n_sections
+        section_w = inner_w / effective_sections
+        apts_per_section_eff = max(1, n_units // effective_sections)
         numbering = "\n".join(
-            f"  • Section {s}: «Кв. {s}-1»…«Кв. {s}-{apts_per_section}»"
-            for s in range(1, n_sections + 1)
+            f"  • Section {s}: «Кв. {s}-1»…«Кв. {s}-{apts_per_section_eff}»"
+            for s in range(1, effective_sections + 1)
         )
         return (
             f"⚠️ APARTMENT COUNT — STRICT: EXACTLY {n_units} apartments per floor "
             f"(EXACTLY {n_units * inputs.floors} total for {inputs.floors} floors). "
             f"DO NOT draw more or fewer.\n\n"
-            f"⚠️ CRITICAL — SECTIONAL LAYOUT: {n_sections}-SECTION building "
-            f"(многосекционный, {n_sections} подъезда). "
-            f"Floor plate {inner_w:.0f}×{inner_h:.0f} м divided into {n_sections} EQUAL sections, "
+            f"Площадь застройки = {inner_w:.0f} × {inner_h:.0f} = {footprint_area:.0f} м² "
+            f"(используй именно это число в ТЭП).\n\n"
+            f"⚠️ CRITICAL — SECTIONAL LAYOUT: {effective_sections}-SECTION building "
+            f"(многосекционный, {effective_sections} подъезда). "
+            f"Floor plate {inner_w:.0f}×{inner_h:.0f} м divided into {effective_sections} EQUAL sections, "
             f"each ~{section_w:.1f}×{inner_h:.0f} м.\n\n"
             f"SECTION BOUNDARIES: THICK FIRE-RATED WALLS REI 60 (double parallel lines ≥0.7 mm, "
             f"diagonal hatching). NO doorways crossing these walls.\n\n"
             f"EACH SECTION CONTAINS:\n"
-            f"  • Central core: {inputs.lifts_passenger} passenger elevator(s) + "
-            f"{inputs.lifts_freight} freight elevator + 1 staircase Л-1\n"
+            f"  • Central core: лифты по этажности ({inputs.floors} эт.) + 1 staircase Л-1\n"
             f"  • Short dead-end corridor ≤12 м\n"
-            f"  • {apts_per_section} apartments around the core\n"
+            f"  • {apts_per_section_eff} apartments around the core\n"
             f"  • Section label: «СЕКЦИЯ 1», «СЕКЦИЯ 2»…\n\n"
             f"APARTMENT NUMBERING:\n{numbering}"
         )
@@ -522,8 +592,10 @@ def build_marketing_prompt(inputs: MarketingInputs) -> str:
     return "\n\n".join([
         _STATIC_HEADER,
         _STATIC_ROOM_DEFINITION,
+        _STATIC_SECTION_RATIO,
         _STATIC_LINE_WEIGHTS,
         _STATIC_TAIMAS,
+        _STATIC_DIMENSION_ARITH,
         subject_block,
         _STATIC_ANNOTATIONS,
         _build_engineering_block(inputs, n_units),
