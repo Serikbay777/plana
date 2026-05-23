@@ -276,9 +276,11 @@ Standard Kazakh CAD title block in BOTTOM-RIGHT corner (small rectangular frame 
 
 Building footprint EXACTLY {inner_w:.0f} × {inner_h:.0f} м — DRAW THE PLAN AT THIS EXACT ASPECT RATIO with the entire plan filling the sheet.
 One typical floor of a {inputs.floors}-storey residential building.
-~{n_units} apartments per floor (~{n_units * inputs.floors} total).{sectional_intro}{section_breakdown}
+⚠️ APARTMENT COUNT — STRICT: EXACTLY {n_units} apartments per floor (EXACTLY {n_units * inputs.floors} total for {inputs.floors} floors). DO NOT draw more or fewer apartments than this number.{sectional_intro}{section_breakdown}
 
-UNITS: apartments, mix — {mix}.
+⚠️ APARTMENT MIX — STRICT (from user parameters, do NOT override):
+{mix}
+These percentages are FIXED. Do NOT add apartment types not listed above.
 
 ⚠️ MINIMUM ROOM SIZES (СНиП РК 3.02-43-2007 — STRICT):
   • Living room (гостиная): ≥ 16 м² for 2-3-room apts, ≥ 15 м² for 1-room

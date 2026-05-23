@@ -603,54 +603,58 @@ _FLOOR_VARIANTS = [
         "key": "max_useful_area",
         "label": "Макс. жилая площадь",
         "suffix": (
-            "\n\n═══ ВАРИАНТ ОПТИМИЗАЦИИ: МАКСИМАЛЬНАЯ ЖИЛАЯ ПЛОЩАДЬ ═══\n"
-            "Компактное инженерное ядро (≤15% площади этажа). Минимальная ширина коридора 1.4 м. "
-            "Квартиры пронизывают всю глубину здания. Меньше, но крупнее квартир. "
-            "Несущих стен минимум — стараемся поставить только торцевые и стену ядра."
+            "\n\n═══ ПЛАНИРОВОЧНАЯ СТРАТЕГИЯ: МАКСИМАЛЬНАЯ ЖИЛАЯ ПЛОЩАДЬ ═══\n"
+            "IMPORTANT: Keep EXACTLY the apartment count and mix specified above — do NOT change them.\n"
+            "Layout strategy: compact engineering core (≤15% of floor area). "
+            "Apartments span the full building depth (two-facade orientation). "
+            "Minimize interior load-bearing walls — only perimeter and core walls. "
+            "Maximize net living area per apartment."
         ),
     },
     {
         "key": "max_apt_count",
         "label": "Макс. кол-во квартир",
         "suffix": (
-            "\n\n═══ ВАРИАНТ ОПТИМИЗАЦИИ: МАКСИМУМ КВАРТИР ═══\n"
-            "Цель — максимум единиц жилья. Преимущественно студии (25–32 м²) и однокомнатные (38–48 м²). "
-            "Центральный двусторонний коридор. 8–12 квартир на этаже в этом пятне. "
-            "Лифтовое ядро компактное, секции короткие."
+            "\n\n═══ ПЛАНИРОВОЧНАЯ СТРАТЕГИЯ: КОМПАКТНАЯ ПЛАНИРОВКА ═══\n"
+            "IMPORTANT: Keep EXACTLY the apartment count and mix specified above — do NOT change them.\n"
+            "Layout strategy: central double-loaded corridor. "
+            "Compact lift core. Efficient use of every square metre. "
+            "Short section lengths to maximize unit count per floor area."
         ),
     },
     {
         "key": "balanced_mix",
         "label": "Классическая секция",
         "suffix": (
-            "\n\n═══ ВАРИАНТ ОПТИМИЗАЦИИ: КЛАССИЧЕСКАЯ ЖИЛАЯ СЕКЦИЯ ═══\n"
-            "Советский/российский жилой микс — 20% студий, 30% однокомнатных, "
-            "35% двухкомнатных, 15% трёхкомнатных. Стандартная секция с двусторонним коридором. "
-            "Планировочные решения по СНиП. Традиционная российская жилая типология."
+            "\n\n═══ ПЛАНИРОВОЧНАЯ СТРАТЕГИЯ: КЛАССИЧЕСКАЯ СЕКЦИЯ ═══\n"
+            "IMPORTANT: Keep EXACTLY the apartment count and mix specified above — do NOT change them.\n"
+            "Layout strategy: traditional Kazakh/Soviet section layout. "
+            "Central staircase-lift core, short dead-end corridors (≤12 m). "
+            "Apartments on both sides of the core. Standard СНиП room proportions."
         ),
     },
     {
         "key": "max_insolation",
         "label": "Инсоляция (юг)",
         "suffix": (
-            "\n\n═══ ВАРИАНТ ОПТИМИЗАЦИИ: МАКСИМАЛЬНАЯ ИНСОЛЯЦИЯ ═══\n"
-            "Все жилые комнаты и спальни ориентированы НА ЮГ (нижняя сторона листа = ЮГ). "
-            "Технические помещения (ванная, кухня, прихожая) — на север. "
-            "Широкий южный фасад с крупным остеклением. "
-            "Добавить на план стрелку ориентации «☀ ЮГ». "
-            "Квартиры вытянуты в направлении С-Ю."
+            "\n\n═══ ПЛАНИРОВОЧНАЯ СТРАТЕГИЯ: МАКСИМАЛЬНАЯ ИНСОЛЯЦИЯ ═══\n"
+            "IMPORTANT: Keep EXACTLY the apartment count and mix specified above — do NOT change them.\n"
+            "Layout strategy: all living rooms and bedrooms face SOUTH (bottom of sheet = SOUTH). "
+            "Service spaces (bathrooms, kitchens, hallways) face north. "
+            "Wide south facade with large glazing. Add orientation arrow «☀ ЮГ» on plan. "
+            "Apartments elongated in N-S direction."
         ),
     },
     {
         "key": "open_plan",
         "label": "Евроформат",
         "suffix": (
-            "\n\n═══ ВАРИАНТ ОПТИМИЗАЦИИ: ЕВРОФОРМАТ / OPEN PLAN ═══\n"
-            "Европейские квартиры с открытой планировкой. "
-            "Кухня-гостиная ≥ 22 м² как единое социальное пространство. "
-            "3–5 просторных премиальных квартир на этаже. "
-            "Спальня-мастер ≥ 18 м², ванная ≥ 6 м². "
-            "Панорамное остекление южного фасада. Минимум несущих перегородок."
+            "\n\n═══ ПЛАНИРОВОЧНАЯ СТРАТЕГИЯ: ЕВРОФОРМАТ / OPEN PLAN ═══\n"
+            "IMPORTANT: Keep EXACTLY the apartment count and mix specified above — do NOT change them.\n"
+            "Layout strategy: European open-plan kitchens. "
+            "Kitchen-living room ≥ 22 м² as unified social space. "
+            "Master bedroom ≥ 18 м², bathroom ≥ 6 м². "
+            "Panoramic south glazing. Minimal load-bearing partitions inside apartments."
         ),
     },
 ]
