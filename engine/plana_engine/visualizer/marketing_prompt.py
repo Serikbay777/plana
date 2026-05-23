@@ -1,17 +1,7 @@
-"""Marketing-grade prompt-builder, purpose-aware.
+"""Prompt-builder на основе master-prompt-kz-fixed.
 
-Принцип: каждый выбор юзера на форме реально меняет содержание промпта.
-Назначение здания (жилой / коммерческий / mixed / hotel) переключает не только
-заголовок, а блоки про единицы (квартиры/офисы/номера), мебель, подписи.
-
-Структура промпта:
-  1. COMMON HEADER         — STRICT AutoCAD intro + drafting standards (всегда одно)
-  2. SUBJECT BLOCK         — варьируется по purpose (контент)
-  3. UNITS BLOCK           — что внутри здания (квартиры/офисы/номера)
-  4. FURNITURE BLOCK       — что в каждой единице (мебель)
-  5. ANNOTATIONS BLOCK     — какие подписи внутри плана
-  6. ENGINEERING BLOCK     — лифты/пожарка/инсоляция/паркинг/ГПЗУ (общее)
-  7. COMMON FOOTER         — цвета, NEGATIVES, REFERENCE (всегда одно)
+Структура: статические блоки (стиль, TAIMAS, негативы) + динамические
+(пятно, квартирография с точной программой помещений, инженерия).
 """
 
 from __future__ import annotations
@@ -31,11 +21,6 @@ class MarketingInputs:
 
     floors: int = 1
     purpose: str = "residential"
-    # Тип здания. Влияет на типологию плана в layout_generator:
-    # • "single_family" — частный дом / коттедж, БЕЗ ядер и БЕЗ
-    #   коридора подъезда, одна «квартира» на весь этаж.
-    # • "multi_family" — секционная застройка (default — старое
-    #   поведение).
     building_type: str = "multi_family"
 
     studio_pct: float = 0.0
@@ -43,7 +28,6 @@ class MarketingInputs:
     k2_pct: float = 0.0
     k3_pct: float = 0.0
 
-    # Подъездность — количество секций на этаже (1=точечный, 2-4=линейный)
     sections: int = 1
 
     parking_spaces_per_apt: float = 1.0
@@ -62,46 +46,15 @@ class MarketingInputs:
     max_coverage_pct: float = 50.0
     max_height_m: float = 30.0
 
-    # Свободный контур участка [[x, y], ...] в метрах. None = прямоугольник W×D.
     site_polygon: tuple[tuple[float, float], ...] | None = None
 
 
 # ---------------------------------------------------------------------------
-# Универсальные хелперы
+# Статические блоки (не зависят от параметров пользователя)
 # ---------------------------------------------------------------------------
 
-
-def _approx_unit_count(inputs: MarketingInputs) -> int:
-    """Грубая оценка кол-ва «единиц» (квартир/офисов/номеров) на этаже."""
-    inner_w = max(0.0, inputs.site_width_m - 2 * inputs.setback_side_m)
-    inner_h = max(0.0, inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m)
-    floor_area = inner_w * inner_h
-    if floor_area <= 0:
-        return 6
-    saleable = floor_area * 0.55
-    if inputs.purpose == "residential" or inputs.purpose == "mixed_use":
-        avg = (
-            25 * inputs.studio_pct +
-            45 * inputs.k1_pct +
-            65 * inputs.k2_pct +
-            90 * inputs.k3_pct
-        ) or 50
-    elif inputs.purpose == "hotel":
-        avg = 28        # типовой гостиничный номер
-    elif inputs.purpose == "commercial":
-        avg = 30        # типовой офисный блок
-    else:
-        avg = 50
-    return max(2, min(round(saleable / avg), 30))
-
-
-# ---------------------------------------------------------------------------
-# 1+7. ОБЩИЕ ШАПКА И ПОДВАЛ
-# ---------------------------------------------------------------------------
-
-
-def _common_header() -> str:
-    return """STRICT AutoCAD architectural floor plan, technical engineering drawing on white paper.
+_STATIC_HEADER = """\
+STRICT AutoCAD architectural floor plan, technical engineering drawing on white paper.
 NOT a marketing brochure. NOT a Pinterest illustration. NOT watercolor.
 Pure CAD-grade vector line work — IDENTICAL in style to drawings from leading Kazakh architectural design institutes. Sheet format A3 landscape, scale 1:100. Top-down orthographic view ONLY.
 
@@ -113,8 +66,45 @@ Pure CAD-grade vector line work — IDENTICAL in style to drawings from leading 
 • All text in CAD-style Cyrillic font (ISOCPEUR / GOST / Arial Narrow), uppercase or capitalized, narrow letterforms
 • Narrow black arrows for cut-section markers «1-1», «2-2» pointing inward from sides
 
-⚠️ CRITICAL — DRAWING ASPECT RATIO: The plan MUST be drawn at the EXACT building footprint ratio specified below. If footprint is 60×40, the drawing rectangle must be 1.5:1 (wide). DO NOT draw a narrow vertical strip when a wide rectangle is requested. Use the FULL sheet area. Match the requested floor dimensions precisely.
+⚠️ CRITICAL — DRAWING ASPECT RATIO: The plan MUST be drawn at the EXACT building footprint ratio specified below. If footprint is 60×40, the drawing rectangle must be 1.5:1 (wide). DO NOT draw a narrow vertical strip when a wide rectangle is requested. Use the FULL sheet area. Match the requested floor dimensions precisely."""
 
+_STATIC_ROOM_DEFINITION = """\
+═══════════════════════════════════════════════════════════════════
+⚠️⚠️ ОПРЕДЕЛЕНИЕ КОМНАТНОСТИ КВАРТИР (КАЗАХСТАНСКИЙ / ПОСТСОВЕТСКИЙ СТАНДАРТ)
+ЭТО САМОЕ ВАЖНОЕ ПРАВИЛО ПЛАНИРОВКИ — НАРУШАТЬ НЕЛЬЗЯ
+═══════════════════════════════════════════════════════════════════
+В Казахстане «N-комнатная квартира» = N ЖИЛЫХ комнат.
+
+ЖИЛЫЕ комнаты (считаются в N):
+  • Гостиная
+  • Спальни
+  • Детская
+  • Кабинет (если используется как жилая комната)
+  • «Жилая комната» (для 1-комнатных)
+
+НЕ ЯВЛЯЮТСЯ КОМНАТАМИ и НЕ ВХОДЯТ в счёт N (никогда):
+  • Кухня (kitchen) — это НЕ комната
+  • Санузел / ванная / туалет / С/у — это НЕ комната
+  • Прихожая (entry hall)
+  • Коридор / Холл / Гардеробная / Кладовая / Лоджия / Балкон / Тамбур
+
+ПОЭТОМУ обязательный состав по типам:
+  → Студия       = единая жилая зона ≥22 м² + кухня-ниша + с/у совмещённый + прихожая
+  → 1-комнатная  = 1 ЖИЛАЯ КОМНАТА + кухня + с/у + прихожая (+ лоджия)
+  → 2-комнатная  = ГОСТИНАЯ + 1 СПАЛЬНЯ + кухня + с/у + прихожая (+ лоджия)
+  → 3-комнатная  = ГОСТИНАЯ + 2 СПАЛЬНИ + кухня + с/у (или 2 с/у) + прихожая (+ лоджия)
+  → 4-комнатная  = ГОСТИНАЯ + 3 СПАЛЬНИ + кухня + 2 с/у + прихожая (+ лоджия)
+
+❌ КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО считать кухню жилой комнатой.
+   «2-комнатная» = ОБЯЗАТЕЛЬНО гостиная + спальня + кухня (отдельно).
+   «3-комнатная» = ОБЯЗАТЕЛЬНО гостиная + 2 спальни + кухня (отдельно).
+   Это самая частая ошибка — НЕ допускать её.
+
+(US convention where kitchen counts toward "bedroom count" is WRONG here.
+ Use the post-Soviet / Kazakh convention defined above without exception.)
+═══════════════════════════════════════════════════════════════════"""
+
+_STATIC_LINE_WEIGHTS = """\
 ═══════════════════════════════════════════════════════════════════
 LINE WEIGHTS (CRITICAL — like real Kazakh CAD)
 ═══════════════════════════════════════════════════════════════════
@@ -125,423 +115,11 @@ LINE WEIGHTS (CRITICAL — like real Kazakh CAD)
 • WINDOWS: pale-blue triple parallel lines on facade (frame–glass–frame), 1200-1800 mm typical, glass area filled with very light blue #d8e7ef
 • FURNITURE & FIXTURES: 0.15 mm SIMPLE TOP-DOWN BLOCK ICONS like in real DWG — no photorealism, no shading
 • AXIS GRID LINES: dashed thin grey, ends in 600-mm circles with letter (А-Б-В) or number (1-2-3)
-• DIMENSION LINES: thin black 0.13 mm with arrowheads, numbers in mm (no decimals)"""
+• DIMENSION LINES: thin black 0.13 mm with arrowheads, numbers in mm (no decimals)
+═══════════════════════════════════════════════════════════════════"""
 
-
-def _common_footer() -> str:
-    return """═══════════════════════════════════════════════════════════════════
-COLOR PALETTE (Kazakh CAD style — strict, NOT marketing)
+_STATIC_TAIMAS = """\
 ═══════════════════════════════════════════════════════════════════
-• Background: pure white #ffffff (paper)
-• All structural lines: pure black #000000
-• Wall diagonal hatching: red-orange #c14d3d / terracotta — this is the signature Kazakh CAD style for bearing walls
-• Window glass: very pale blue #d8e7ef (wash effect, ~30% opacity)
-• Window frames: pale steel blue #6b95b3 thin lines
-• Bathroom fixtures (tub, toilet, sink): pale blue accent #b8d4e0 outlines
-• Bathroom floors: very subtle pale blue tile pattern hatching
-• Floor textures (kitchen, hallway): light grey #e8e8e8 simple square tile pattern (sparingly)
-• ROOM INTERIORS: pure white background — NO pastel fills, NO color rotation between rooms
-• NO wood grain, NO parquet, NO marble, NO photorealistic textures, NO gradients, NO shadows
-
-TYPOGRAPHY (critical — must look like authentic Kazakh CAD):
-• ALL labels in narrow CAD-style Cyrillic font: ISOCPEUR, GOST type A, or Arial Narrow as fallback
-• Room names: bold-ish, e.g. «Гостиная», «Кухня», «Спальня», «С/у», «Тамбур», «Холл»
-• Areas underneath room name: «32,7 м²», «80,1 м²» (comma as decimal separator, м² with superscript ²)
-• Apartment numbers: «Кв. №14», «S общ. = 65,10 м²», «S жил. = 30,70 м²»
-• Section labels: «СЕКЦИЯ 1», «СЕКЦИЯ 2» — bold, larger height
-• Cut markers: small black thick arrow + circle with «1» or «2», double label like «1-1», «2-2»
-
-═══════════════════════════════════════════════════════════════════
-ABSOLUTE NEGATIVES (must NOT appear)
-═══════════════════════════════════════════════════════════════════
-× NO watercolor, painted illustration, Pinterest interior overlay
-× NO photorealistic furniture (everything is line-drawing block diagrams)
-× NO wood grain, parquet, marble textures, ceramic tile patterns
-× NO 3D, isometric, perspective — strict 2D top-down only
-× NO shadows, gradients, soft lighting effects, glow effects
-× NO Latin/English labels — все надписи на русском кириллицей
-× NO marketing brochure aesthetic, NO Pinterest pastel colors
-× NO narrow vertical strip layout when wide footprint is requested
-× NO single-corridor layout when multi-section is required
-× NO unrealistically small rooms (kitchen 5 m², bedroom 4 m² — these violate СНиП РК)
-× NO missing elevator/staircase core in the center of the section
-× NO COLORED ROOM FILLS (pale yellow/green/pink/etc — these look amateur, real Kazakh CAD has white rooms)
-× NO sans-serif modern fonts like Roboto, Inter — only narrow CAD fonts (ISOCPEUR/GOST/Arial Narrow)
-
-═══════════════════════════════════════════════════════════════════
-REFERENCE — exact visual style to match
-═══════════════════════════════════════════════════════════════════
-Reference: real architectural floor plans from Kazakh design institutes (Almaty/Astana firms). Key visual cues:
-
-• White A3 sheet, landscape orientation
-• Axis numbering circles (600 mm dia) at perimeter: «1»…«10» horizontal bottom, «А»-«Б»-«В»-«Г»-«Д»-«Е»-«Ж»-«И» vertical left
-• External dimension chains (mm without units): «1500», «2100», «2700», «4500», «7200» — printed directly above the line
-• Bearing walls with red-orange diagonal hatching (signature feature)
-• Pale blue tinted glass in window openings
-• Pale blue accent in bathroom fixtures
-• Inside each room: room name + area beneath, e.g. «Гостиная / 80,1 м²», «Кухня / 32,7 м²»
-• Cut-section markers «1—1» and «2—2» as small thick arrows pointing inward
-• Standard Cyrillic title block bottom-right with EMPTY/BLANK fields (no real firm or person names): «Изм. / Кол.уч. / Лист / N.док. / Подпись / Дата | Стадия / Лист / Листов | Разработал / [пусто] / [пусто] / [пусто]» and «Строительство [пусто] / г.Астана / План [N]-го этажа / [пусто] / Лицензия [пусто]» — render the cells visually but leave content empty or with placeholder dashes «—»
-• Overall feeling: official, technical, ready to be stamped «УТВЕРЖДАЮ»
-
-The drawing should look indistinguishable from a real Kazakh DWG printout printed at A3.
-Ratio 16:10, ultra-high resolution, every line crisp, every dimension legible. Pure engineering aesthetic."""
-
-
-# ---------------------------------------------------------------------------
-# 2-5. PURPOSE-AWARE БЛОКИ
-# ---------------------------------------------------------------------------
-
-
-def _residential_blocks(inputs: MarketingInputs, n_units: int, inner_w: float, inner_h: float) -> str:
-    """Квартиры — что внутри жилого этажа.
-
-    Учитывает секционность: если sections > 1, рисуется N подъездов
-    разделённых противопожарными стенами, каждый со своим лифтовым узлом.
-    """
-    mix_parts = []
-    if inputs.studio_pct > 0.01:
-        mix_parts.append(f"{int(inputs.studio_pct*100)}% studios (28-32 м²)")
-    if inputs.k1_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k1_pct*100)}% 1-bedroom (40-50 м²)")
-    if inputs.k2_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k2_pct*100)}% 2-bedroom (55-70 м²)")
-    if inputs.k3_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k3_pct*100)}% 3-bedroom (80-95 м²)")
-    mix = ", ".join(mix_parts) if mix_parts else "balanced typology"
-
-    # ── секционная декомпозиция ────────────────────────────────────────────
-    n_sections = max(1, inputs.sections)
-    apts_per_section = n_units // n_sections
-    section_width_m = inner_w / n_sections
-
-    if n_sections > 1:
-        # многосекционный дом — рисуем явно
-        section_breakdown = (
-            f"\n\n⚠️ CRITICAL — SECTIONAL LAYOUT (важнейшее требование):\n"
-            f"This is a {n_sections}-SECTION residential building "
-            f"(многосекционный жилой дом, {n_sections} подъезда). "
-            f"The {inner_w:.0f}×{inner_h:.0f} м floor plate is divided "
-            f"horizontally into {n_sections} EQUAL sections, each "
-            f"approximately {section_width_m:.1f} × {inner_h:.0f} м.\n\n"
-            f"SECTION BOUNDARIES: between sections — THICK FIRE-RATED WALLS "
-            f"(REI 60), drawn as DOUBLE PARALLEL LINES (≥ 0.7 mm thick) "
-            f"with diagonal hatching, NO doorways or corridors crossing "
-            f"these walls. Sections are completely independent.\n\n"
-            f"EACH SECTION CONTAINS:\n"
-            f"  • Central core in the middle of the section: "
-            f"{inputs.lifts_passenger} passenger elevator(s) + "
-            f"{inputs.lifts_freight} freight elevator + 1 staircase Л-1 "
-            f"(U-shape, parallel tread lines), all inside a reinforced-concrete shaft\n"
-            f"  • A short central corridor (≤ 12 м tupik / dead-end) "
-            f"connecting the core with apartments\n"
-            f"  • {apts_per_section} apartments arranged AROUND the core "
-            f"(2-4 per side, total {apts_per_section}/section)\n"
-            f"  • Section number visibly marked: «СЕКЦИЯ 1», «СЕКЦИЯ 2»"
-            f"{'…«СЕКЦИЯ ' + str(n_sections) + '»' if n_sections > 2 else ''}\n\n"
-            f"APARTMENT NUMBERING (per section):\n"
-        )
-        # Поэтажный номер: 1.1, 1.2... для секции 1; 2.1, 2.2... для секции 2
-        for s in range(1, n_sections + 1):
-            section_breakdown += (
-                f"  • Section {s}: «Кв. {s}-1», «Кв. {s}-2»…"
-                f"«Кв. {s}-{apts_per_section}»\n"
-            )
-        sectional_intro = (
-            f" Building consists of {n_sections} sections side-by-side, "
-            f"~{apts_per_section} apartments per section "
-            f"(total ~{n_units} apartments per floor)."
-        )
-    else:
-        # односекционный (точечный)
-        section_breakdown = (
-            "\n\nPOINT-TOWER LAYOUT (1 section): central reinforced-concrete "
-            f"core with {inputs.lifts_passenger} passenger + "
-            f"{inputs.lifts_freight} freight elevator + Л-1 staircase. "
-            f"All {n_units} apartments arranged AROUND the central core."
-        )
-        sectional_intro = (
-            f" Single-section point tower with {n_units} apartments per floor."
-        )
-
-    return f"""═══════════════════════════════════════════════════════════════════
-SUBJECT — RESIDENTIAL FLOOR (типовой этаж жилого здания)
-═══════════════════════════════════════════════════════════════════
-Standard Kazakh CAD title block in BOTTOM-RIGHT corner (small rectangular frame with subdivisions, ALL NAME/COMPANY CELLS EMPTY OR DASHED «—»):
-  Top row fields (header labels only, body empty): «Изм. | Кол.уч. | Лист | N.док. | Подпись | Дата»
-  Middle row: «Разработал | — | — | —»  (empty cells, NO real names)
-  Right side: «Стадия: ЭП | Лист: — | Листов: —»
-  Bottom rows: «Строительство [—]», «г.Астана», «План типового этажа», «[—]», «Лицензия [—]»
-  IMPORTANT: leave personal-name and company-name cells BLANK or with dash «—» placeholders — do NOT invent firm names, do NOT insert «ТОО ...», do NOT add signatures or specific person names. The block is for layout demonstration only.
-
-Building footprint EXACTLY {inner_w:.0f} × {inner_h:.0f} м — DRAW THE PLAN AT THIS EXACT ASPECT RATIO with the entire plan filling the sheet.
-One typical floor of a {inputs.floors}-storey residential building.
-⚠️ APARTMENT COUNT — STRICT: EXACTLY {n_units} apartments per floor (EXACTLY {n_units * inputs.floors} total for {inputs.floors} floors). DO NOT draw more or fewer apartments than this number.{sectional_intro}{section_breakdown}
-
-⚠️ APARTMENT MIX — STRICT (from user parameters, do NOT override):
-{mix}
-These percentages are FIXED. Do NOT add apartment types not listed above.
-
-⚠️ MINIMUM ROOM SIZES (СНиП РК 3.02-43-2007 — STRICT):
-  • Living room (гостиная): ≥ 16 м² for 2-3-room apts, ≥ 15 м² for 1-room
-  • Master bedroom (спальня на 2 человека): ≥ 10 м²
-  • Single bedroom: ≥ 8 м²
-  • Kitchen: ≥ 9 м² for 2+ room apts (≥ 6 м² only for studios as kitchen-niche)
-  • Bathroom (ванная): width ≥ 1.5 м
-  • Combined WC (с/у совмещённый): ≥ 1.7 м wide
-  • Hallway (прихожая): width ≥ 1.4 м
-  • Internal corridor: ≥ 1.0 м
-
-FURNITURE inside each apartment (simple top-down block icons, NOT photoreal):
-  • Bedrooms: rectangle bed with «X» for pillow, bedside table, wardrobe long thin rectangle
-  • Living rooms: L-shape sofa, round table, armchair circle, TV thin rectangle on wall
-  • Kitchens: counter L along wall with sink + stove (square with 4 burner circles), fridge rectangle
-  • Bathrooms: oval tub OR shower square, oval toilet, vanity rectangle
-  • Hallways: built-in wardrobe rectangle, shoe storage
-  • Loggias: small rectangles outside facade wall, labeled «Лоджия», 3-6 м²
-
-ANNOTATIONS inside the plan:
-  • Apartment numbers (per section if sectional, else sequential)
-  • «S общ. = 45.20 м²», «S жил. = 32.10 м²» — areas under each apartment number
-  • Room labels above each room: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Лоджия»
-  • Room areas inside each room: «18.4 м²», «12.6 м²», «7.2 м²» — REALISTIC values, not too small
-  • Section labels «СЕКЦИЯ 1», «СЕКЦИЯ 2»… in BOLD if multi-section"""
-
-
-def _commercial_blocks(inputs: MarketingInputs, n_units: int, inner_w: float, inner_h: float) -> str:
-    """Офисы — что внутри коммерческого этажа."""
-    return f"""═══════════════════════════════════════════════════════════════════
-SUBJECT — COMMERCIAL OFFICE FLOOR
-═══════════════════════════════════════════════════════════════════
-Title block (Cyrillic): «ПЛАН ЭТАЖА · Бизнес-центр · М 1:100». Footprint {inner_w:.0f} × {inner_h:.0f} м (after setbacks). One typical floor of a {inputs.floors}-storey office building. Approximately {n_units} office blocks per floor.
-
-UNITS: open-spaces (40%), private offices (30%), meeting rooms (15%), break/kitchen zones (10%), restrooms+utilities (5%).
-
-FURNITURE inside the floor (simple top-down block icons):
-  • Open-space areas: workstation desks in rows (rectangles with chair circles), partitions as thin lines
-  • Private offices: single executive desk, 1-2 visitor chairs, bookcase rectangle along wall
-  • Meeting rooms: oval/rectangular conference table with 6-12 chair circles, screen rectangle on wall
-  • Break/kitchen zone: counter with sink + microwave + coffee machine, dining table with 4-6 chairs
-  • Restrooms (М/Ж): sinks, toilet stalls (small rectangles)
-  • Reception (near main entrance): curved counter, waiting sofa, plants
-  • Server room: rack rectangles in a row, labeled «СЕРВЕРНАЯ»
-  • Archive: tall shelving rectangles, labeled «АРХИВ»
-
-ANNOTATIONS inside the plan:
-  • «Офис №1», «Офис №2»…«Офис №{n_units}» — office block numbers
-  • «S = 28.5 м²» — area under each office number
-  • Zone labels: «Open-space», «Переговорная», «Кабинет», «Кухня», «С/у М», «С/у Ж», «Ресепшен», «Серверная», «Архив»
-  • Workstation count in open-space: «12 рабочих мест»"""
-
-
-def _hotel_blocks(inputs: MarketingInputs, n_units: int, inner_w: float, inner_h: float) -> str:
-    """Гостиничные номера — что внутри этажа отеля."""
-    return f"""═══════════════════════════════════════════════════════════════════
-SUBJECT — HOTEL FLOOR
-═══════════════════════════════════════════════════════════════════
-Title block (Cyrillic): «ПЛАН ЭТАЖА · Гостиница · М 1:100». Footprint {inner_w:.0f} × {inner_h:.0f} м (after setbacks). One typical floor of a {inputs.floors}-storey hotel. Approximately {n_units} hotel rooms per floor.
-
-UNITS: hotel rooms, mix — 60% Standard (single king bed), 25% Twin (two beds), 10% Junior Suite, 5% Suite.
-
-FURNITURE inside each room (simple top-down block icons):
-  • Standard / Suite: large bed (rectangle with «X» for pillows), bedside tables, work desk + chair, armchair, wardrobe rectangle, TV thin rectangle on wall, mini-bar
-  • Twin: two single beds parallel, single bedside table between, same desk/chair/wardrobe
-  • Junior Suite & Suite: + small lounge area with sofa and coffee table
-  • Bathroom (compact in standard, larger in suite): oval tub or shower square, oval toilet, vanity rectangle
-  • Each room's entrance has a short hallway with wardrobe and luggage zone
-
-ANNOTATIONS inside the plan:
-  • «Номер 101», «Номер 102»…«Номер 1{n_units:02d}» (Cyrillic «Номер»)
-  • Room type label: «Standard», «Twin», «Junior Suite», «Suite»
-  • «S = 28 м²», «S = 45 м²» — area under each room number
-  • Common areas labels: «Лифтовый холл», «Сервисный коридор», «Кладовая горничных», «Лёд / Прачечная»"""
-
-
-def _mixed_use_blocks(inputs: MarketingInputs, n_units: int, inner_w: float, inner_h: float) -> str:
-    """МФК — типовой этаж (как жилой, с пометкой про подиум)."""
-    mix_parts = []
-    if inputs.studio_pct > 0.01:
-        mix_parts.append(f"{int(inputs.studio_pct*100)}% studios (28-32 м²)")
-    if inputs.k1_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k1_pct*100)}% 1-bedroom (40-50 м²)")
-    if inputs.k2_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k2_pct*100)}% 2-bedroom (55-70 м²)")
-    if inputs.k3_pct > 0.01:
-        mix_parts.append(f"{int(inputs.k3_pct*100)}% 3-bedroom (80-95 м²)")
-    mix = ", ".join(mix_parts) if mix_parts else "balanced typology"
-
-    n_sections = max(1, inputs.sections)
-    apts_per_section = n_units // n_sections
-    section_width_m = inner_w / n_sections
-
-    if n_sections > 1:
-        section_block = (
-            f"\n\n⚠️ SECTIONAL LAYOUT: {n_sections} sections side-by-side, each "
-            f"~{section_width_m:.1f} × {inner_h:.0f} м with own central core "
-            f"({inputs.lifts_passenger} pass + {inputs.lifts_freight} freight elevator "
-            f"+ Л-1 staircase). Sections separated by FIRE-RATED WALLS "
-            f"(thick double parallel lines with diagonal hatching). "
-            f"~{apts_per_section} apartments per section."
-        )
-    else:
-        section_block = (
-            "\n\nPOINT-TOWER LAYOUT (1 section): central core with elevators+staircase, "
-            f"{n_units} apartments around it."
-        )
-
-    return f"""═══════════════════════════════════════════════════════════════════
-SUBJECT — MIXED-USE FLOOR (TYPICAL)
-═══════════════════════════════════════════════════════════════════
-Title block (Cyrillic): «ПЛАН ЭТАЖА · МФК · М 1:100 · Типовой жилой этаж».
-Building footprint EXACTLY {inner_w:.0f} × {inner_h:.0f} м — DRAW AT THIS EXACT ASPECT RATIO.
-One typical RESIDENTIAL floor of a {inputs.floors}-storey mixed-use building (ground floor is retail/F&B, podium is parking, this is the typical residential level above podium).{section_block}
-
-UNITS: apartments, mix — {mix}.
-
-⚠️ MINIMUM ROOM SIZES (СНиП РК 3.02-43-2007 — STRICT):
-  • Living room: ≥ 16 м² for 2-3-room, ≥ 15 м² for 1-room
-  • Bedroom: ≥ 8 м² (single), ≥ 10 м² (double)
-  • Kitchen: ≥ 9 м² for 2+ room apts
-  • Bathroom width: ≥ 1.5 м, combined WC: ≥ 1.7 м wide
-  • Hallway: ≥ 1.4 м wide
-
-FURNITURE inside each apartment (simple top-down block icons):
-  • Bedrooms: rectangle bed with «X», bedside tables, wardrobe long thin rectangle
-  • Living rooms: L-shape sofa, round/rectangular table, armchair, TV
-  • Kitchens: counter with sink + stove + fridge
-  • Bathrooms: tub or shower, toilet, vanity
-  • Hallways: built-in wardrobe, shoe storage
-  • Loggias: small rectangles outside facade, labeled «Лоджия»
-
-ANNOTATIONS:
-  • Apartment numbers (per section: «Кв. 1-1»…«Кв. {n_sections}-{apts_per_section}» if sectional)
-  • «S общ. = 45.20 м²», «S жил. = 32.10 м²»
-  • Room labels: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Лоджия»
-  • Realistic room areas — NOT too small (kitchen ≥ 9 m², not 5 m²)
-  • Section labels «СЕКЦИЯ 1»…«СЕКЦИЯ {n_sections}» if multi-section
-  • Note in the corner: «На 1 этаже — коммерция. Подземный паркинг.»"""
-
-
-# ---------------------------------------------------------------------------
-# 6. ENGINEERING BLOCK — общий, но с покраской под назначение
-# ---------------------------------------------------------------------------
-
-
-def _engineering_block(inputs: MarketingInputs) -> str:
-    """Лифты, пожарка, инсоляция, паркинг, ГПЗУ — универсально по форме."""
-    purpose_unit = "apartment" if inputs.purpose in ("residential", "mixed_use") else (
-        "hotel room" if inputs.purpose == "hotel" else "office block"
-    )
-
-    # Секционность (важно для жилых)
-    is_sectional = inputs.purpose in ("residential", "mixed_use") and inputs.sections > 1
-    if is_sectional:
-        section_block = (
-            f"\n\nSECTIONAL LAYOUT: building consists of {inputs.sections} SECTIONS "
-            f"(подъезды) divided by FIRE-RATED PARTITIONS (REI 60 walls, drawn as "
-            f"thick double lines with diagonal hatching). Each section has its OWN "
-            f"central lift-stair core: {inputs.lifts_passenger} passenger elevator(s) + "
-            f"{inputs.lifts_freight} freight elevator + a U-shaped staircase (Л-1). "
-            f"Section borders are clearly marked on the plan with section numbers «Секция 1», "
-            f"«Секция 2»…«Секция {inputs.sections}». No through-corridor between sections."
-        )
-        total_pass = inputs.lifts_passenger * inputs.sections
-        total_freight = inputs.lifts_freight * inputs.sections
-        lift_summary = (
-            f"{inputs.lifts_passenger} passenger + {inputs.lifts_freight} freight "
-            f"PER SECTION (total in building: {total_pass} passenger + {total_freight} freight)"
-        )
-    else:
-        section_block = ""
-        lift_summary = (
-            f"{inputs.lifts_passenger} passenger elevators + "
-            f"{inputs.lifts_freight} freight elevator"
-        )
-
-    return f"""═══════════════════════════════════════════════════════════════════
-ENGINEERING & SAFETY (visible on the plan)
-═══════════════════════════════════════════════════════════════════
-LIFT GROUP: {lift_summary} (rectangles with diagonal cross «×», labeled «ЛИФТ») + U-shaped staircase (parallel tread lines 300 mm apart, upward arrow «↑», labeled «Л-1»). Concentrated in central reinforced-concrete core(s).{section_block}
-
-FIRE SAFETY: maximum evacuation distance from any {purpose_unit} door to staircase ≤ {inputs.fire_evacuation_max_m:.0f} м (evacuation distance counted PER SECTION when sectional). {inputs.fire_evacuation_exits_per_section} evacuation exits per section. Dead-end corridor segments ≤ {inputs.fire_dead_end_corridor_max_m:.0f} м. Show evacuation arrows from each unit toward the staircase.
-
-INSOLATION: {"large units (suites, 2-3 bedroom apartments) face south or south-west, smaller units face north" if inputs.insolation_priority else f"all units receive at least {inputs.insolation_min_hours:.1f} h of direct sunlight at equinox, no preferential orientation"}.
-
-PARKING: {inputs.parking_underground_levels} underground level(s), approximately {int(_approx_unit_count(inputs) * inputs.floors * inputs.parking_spaces_per_apt)} parking spaces total ({inputs.parking_spaces_per_apt:.1f} per {purpose_unit}). Parking layout NOT shown on this floor (typical level), but the engineering shaft from the underground garage rises through the central core.
-
-GPZU CONSTRAINTS: maximum site coverage {inputs.max_coverage_pct:.0f}%, height regulation up to {inputs.max_height_m:.0f} м. Setbacks shown as red dashed lines: {inputs.setback_front_m:.1f} м front, {inputs.setback_rear_m:.1f} м rear, {inputs.setback_side_m:.1f} м on each side.
-
-TECH ZONES (mark on plan): «ВЕНТ» (vent shaft, 0.6×0.6 м, near core), «ЭЩ» (electrical, ~1.5×1.5 м, near core), «СС» (weak-current), «МСП» (trash chute, 0.4×0.4 м, near core, residential only), «ВКР» (water riser, 0.3×0.3 м, near each wet zone)."""
-
-
-def _common_annotations() -> str:
-    """Универсальные аннотации в стиле Kazakh CAD.
-
-    Соответствует визуальному стилю эскизных проектов казахстанских
-    проектных фирм (Алматы/Астана). Все personal-name и company-name
-    поля штампа оставляются пустыми.
-    """
-    return """═══════════════════════════════════════════════════════════════════
-UNIVERSAL ANNOTATIONS (Kazakh CAD style)
-═══════════════════════════════════════════════════════════════════
-• AXIS GRID:
-  - Dashed thin grey lines extending beyond the plan
-  - Each axis ends in a CIRCLE (~600 mm dia, drawn as 12-15 mm on sheet) with letter or number inside
-  - Vertical axes (left/right of plan): «А», «Б», «В», «Г», «Д», «Е», «Ж», «И» (avoid «З» — looks like 3)
-  - Horizontal axes (top/bottom): «1», «2», «3»… up to «10»
-
-• DIMENSION CHAINS (very specific Kazakh format):
-  - Outer chain along ENTIRE bottom and left facades
-  - Numbers in mm WITHOUT unit symbol: «1500», «2100», «2700», «4500», «7200»
-  - Total building dimension in larger text below: «25 200» or «60 000»
-  - Inner chains along walls for individual room dimensions
-  - All dimension text in narrow CAD font (ISOCPEUR/GOST), horizontal regardless of line orientation
-
-• CUT-SECTION MARKERS «1—1» and «2—2»:
-  - Small thick black arrow (12 mm) pointing INWARD to the plan from outside
-  - Adjacent to arrow: small numbered tag «1» or «2»
-  - Place 2 sets at strategic locations (across long axis and short axis)
-
-• ELEVATION MARKS: triangle markers «±0.000» at main floor level, «-0.150» at entrance steps
-
-• COMPASS «С» (north arrow) in top-right corner — small thin black arrow pointing up with «С» label, NOT decorative
-
-• ROOM LABELS (inside each room):
-  - Room name first line: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Тамбур», «Холл», «Гардеробная», «Терраса»
-  - Area below: «80,1 м²», «32,7 м²» (Russian comma decimal, м² with superscript)
-  - Stack vertically, centered in room
-  - Use narrow Cyrillic CAD font (ISOCPEUR/Arial Narrow), all-caps optional
-
-• TITLE BLOCK (bottom-right corner — Kazakh standard format):
-  Tabular box subdivided into cells. RENDER FIELD LABELS but LEAVE NAME/COMPANY CELLS EMPTY (placeholder «—» or blank):
-  Top row (header labels): «Изм.» | «Кол.уч.» | «Лист» | «N.док.» | «Подпись» | «Дата»
-  Below: «Разработал» | «—» | «—» | «—»  ← DO NOT invent personal names
-  Right column: «Стадия | Лист | Листов»
-  Body: «Строительство [—]», «г.Астана район [—]», «План типового этажа»
-  Bottom-right small: «[—]», «Лицензия [—]»  ← DO NOT invent firm names or license numbers
-  IMPORTANT: never insert real-looking names like «Анферов», «Иванов», never insert real firm acronyms like «ТОО ASTETIKA» or «КазГОР» — keep the block as a TEMPLATE with empty fields.
-
-• AREA SUMMARY (right side or bottom):
-  «Общая площадь — XXX м²»
-  «Площадь застройки — XXX м²»
-  «Жилая площадь — XXX м²» (right-aligned, narrow font)"""
-
-
-# ---------------------------------------------------------------------------
-# Главный билдер
-# ---------------------------------------------------------------------------
-
-
-def _taimas_standard() -> str:
-    """Жёсткий чек-лист ГОСТ/СПДС-элементов из реальных альбомов
-    архитектурных бюро Казахстана (например, TAIMAS-М). Вставляется в самом
-    начале промпта, после header — gpt-image воспринимает первые блоки
-    приоритетнее, поэтому здесь — самое важное.
-
-    Не дублирует _common_header (общая эстетика) и _common_footer
-    (палитра/негативы) — только конкретный КАК-должен-выглядеть чертёж.
-    """
-    return """═══════════════════════════════════════════════════════════════════
 TAIMAS-STANDARD CHECKLIST — обязательные элементы (real Kazakh DD-album)
 ═══════════════════════════════════════════════════════════════════
 This drawing MUST include ALL of the following GOST/SPDS elements,
@@ -562,57 +140,370 @@ exactly like in real Almaty/Astana design-institute albums:
    the chain line, with arrow ticks (not arrowheads, ticks at 45°).
 
 3. ✓ ROOM NUMBERS in small circles (Ø 500mm) inside each room,
-   placed above the room name: «1», «2», «3»... These reference
-   the EXPLICATION TABLE.
+   placed above the room name: «1», «2», «3»... (reference to explication table)
 
-4. ✓ EXPLICATION TABLE (Экспликация помещений) — simple
-   rectangular grid drawn BELOW or to the RIGHT of the plan,
+4. ✓ EXPLICATION TABLE (Экспликация помещений) — rectangular grid
+   BELOW or to the RIGHT of the plan:
    3 columns: «№ | Наименование | Площадь, м²»
-   with one row per room. Header row in bold; uppercase column titles.
 
-5. ✓ DOOR/WINDOW SPECIFICATIONS — small italic markers near each
-   opening: «Д-1», «Д-2»... for doors, «В-1», «В-2»... for windows,
-   referencing a separate spec sheet (на других листах).
+5. ✓ DOOR/WINDOW SPECIFICATIONS — «Д-1», «Д-2»... for doors, «В-1», «В-2»... for windows
 
-6. ✓ SECTION CUT ARROWS «1—1», «2—2» — thick black arrows on plan
-   edges (NOT in the middle of rooms), with the section label in a
-   round badge. Indicate WHERE vertical sections are taken.
+6. ✓ SECTION CUT ARROWS «1—1», «2—2» — thick black arrows on plan edges
 
-7. ✓ NORTH ARROW — small compass-rose with letter «С» (север),
-   drawn OUTSIDE the building outline in the TOP-RIGHT margin area.
+7. ✓ NORTH ARROW — small «С» (север) compass outside building outline, TOP-RIGHT margin
 
-8. ✓ SCALE INDICATOR «М 1:100» under the sheet title or in title
-   block — narrow CAD font.
+8. ✓ SCALE INDICATOR «М 1:100» in title block or under sheet title
 
-9. ✓ SHEET TITLE at top: «ПЛАН ТИПОВОГО ЭТАЖА» (or similar,
-   depending on level) — bold uppercase, large narrow CAD font.
+9. ✓ SHEET TITLE at top: «ПЛАН ТИПОВОГО ЭТАЖА» — bold uppercase, large narrow CAD font
 
-CRITICAL — без этих элементов чертёж выглядит «AI-нарисованным»,
-а не профессиональным. Treat this as a strict checklist; each item
-must be visually present and findable on the final drawing.
+CRITICAL — без этих элементов чертёж выглядит «AI-нарисованным», а не профессиональным.
 ═══════════════════════════════════════════════════════════════════"""
 
+_STATIC_ANNOTATIONS = """\
+═══════════════════════════════════════════════════════════════════
+UNIVERSAL ANNOTATIONS (Kazakh CAD style)
+═══════════════════════════════════════════════════════════════════
+• AXIS GRID:
+  - Dashed thin grey lines extending beyond the plan
+  - Each axis ends in a CIRCLE (~600 mm dia) with letter or number inside
+  - Vertical axes: «А», «Б», «В», «Г», «Д», «Е», «Ж», «И» (avoid «З» — looks like 3)
+  - Horizontal axes: «1», «2», «3»… up to «10»
+
+• DIMENSION CHAINS:
+  - Numbers in mm WITHOUT unit symbol: «1500», «2100», «2700», «4500», «7200»
+  - Total building dimension in larger text: «25 200» or «60 000»
+  - All dimension text in narrow CAD font (ISOCPEUR/GOST), horizontal
+
+• CUT-SECTION MARKERS «1—1» and «2—2»:
+  - Small thick black arrow pointing INWARD to the plan from outside
+  - Place 2 sets at strategic locations (across long axis and short axis)
+
+• ELEVATION MARKS: triangle markers «±0.000» at main floor level, «-0.150» at entrance steps
+
+• COMPASS «С» (north arrow) in top-right corner — small thin black arrow with «С» label
+
+• ROOM LABELS (inside each room):
+  - Room name: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Тамбур», «Холл»
+  - Area below: «80,1 м²», «32,7 м²» (Russian comma decimal, м² with superscript ²)
+  - Narrow Cyrillic CAD font (ISOCPEUR/Arial Narrow)
+
+• TITLE BLOCK (bottom-right — Kazakh standard):
+  RENDER FIELD LABELS but LEAVE NAME/COMPANY CELLS EMPTY (placeholder «—»):
+  «Изм. | Кол.уч. | Лист | N.док. | Подпись | Дата»
+  «Разработал | — | — | —»  ← NO real names
+  «Стадия: ЭП | Лист: — | Листов: —»
+  «Строительство [—]», «г.Астана», «План типового этажа», «Лицензия [—]»
+  NEVER insert real firm names (ТОО...) or real person names.
+
+• AREA SUMMARY (right side or bottom):
+  «Общая площадь — XXX м²», «Площадь застройки — XXX м²», «Жилая площадь — XXX м²»
+═══════════════════════════════════════════════════════════════════"""
+
+_STATIC_COLOR = """\
+═══════════════════════════════════════════════════════════════════
+COLOR PALETTE (Kazakh CAD style — strict, NOT marketing)
+═══════════════════════════════════════════════════════════════════
+• Background: pure white #ffffff (paper)
+• All structural lines: pure black #000000
+• Wall diagonal hatching: red-orange #c14d3d / terracotta — signature Kazakh CAD style
+• Window glass: very pale blue #d8e7ef (wash effect, ~30% opacity)
+• Window frames: pale steel blue #6b95b3 thin lines
+• Bathroom fixtures (tub, toilet, sink): pale blue accent #b8d4e0 outlines
+• ROOM INTERIORS: pure white background — NO pastel fills, NO color rotation between rooms
+• NO wood grain, NO parquet, NO marble, NO photorealistic textures, NO gradients, NO shadows
+
+TYPOGRAPHY (critical — must look like authentic Kazakh CAD):
+• ALL labels in narrow CAD-style Cyrillic font: ISOCPEUR, GOST type A, or Arial Narrow
+• Areas: «32,7 м²», «80,1 м²» (comma as decimal separator, м² with superscript ²)
+• Apartment numbers: «Кв. №14», «S общ. = 65,10 м²», «S жил. = 30,70 м²»
+• Section labels: «СЕКЦИЯ 1», «СЕКЦИЯ 2» — bold, larger height
+═══════════════════════════════════════════════════════════════════"""
+
+_STATIC_NEGATIVES = """\
+═══════════════════════════════════════════════════════════════════
+ABSOLUTE NEGATIVES (must NOT appear)
+═══════════════════════════════════════════════════════════════════
+× NO counting the kitchen (кухня) as a жилая комната — kitchen is NEVER a room
+× NO counting bathroom/WC/санузел, hallway/прихожая, corridor, loggia/лоджия as rooms
+× NO «2-комнатная» that actually contains only гостиная + кухня (that is a 1-комнатная)
+× NO «3-комнатная» with fewer than THREE distinct жилые комнаты
+× NO watercolor, painted illustration, Pinterest interior overlay
+× NO photorealistic furniture (everything is line-drawing block diagrams)
+× NO wood grain, parquet, marble textures, ceramic tile patterns
+× NO 3D, isometric, perspective — strict 2D top-down only
+× NO shadows, gradients, soft lighting effects, glow effects
+× NO Latin/English labels — все надписи на русском кириллицей
+× NO marketing brochure aesthetic, NO Pinterest pastel colors
+× NO narrow vertical strip layout when wide footprint is requested
+× NO single-corridor layout when multi-section is required
+× NO unrealistically small rooms (kitchen 5 m², bedroom 4 m² — violates СНиП РК)
+× NO missing elevator/staircase core in the center of the section
+× NO COLORED ROOM FILLS (pale yellow/green/pink/etc — real Kazakh CAD has white rooms)
+× NO sans-serif modern fonts like Roboto, Inter — only narrow CAD fonts
+═══════════════════════════════════════════════════════════════════"""
+
+_STATIC_REFERENCE = """\
+═══════════════════════════════════════════════════════════════════
+REFERENCE — exact visual style to match
+═══════════════════════════════════════════════════════════════════
+Real architectural floor plans from Kazakh design institutes (Almaty/Astana). Key visual cues:
+• White A3 sheet, landscape orientation
+• Axis numbering circles at perimeter: «1»…«10» horizontal, «А»-«Ж»-«И» vertical
+• External dimension chains (mm without units) printed directly above the line
+• Bearing walls with red-orange diagonal hatching (signature feature)
+• Pale blue tinted glass in window openings
+• Pale blue accent in bathroom fixtures
+• Inside each room: room name + area: «Гостиная / 80,1 м²», «Кухня / 32,7 м²»
+• Standard Cyrillic title block bottom-right with EMPTY fields (no real names)
+• Overall feeling: official, technical, ready to be stamped «УТВЕРЖДАЮ»
+
+The drawing should look indistinguishable from a real Kazakh DWG printout printed at A3.
+Ratio 16:10, ultra-high resolution, every line crisp, every dimension legible. Pure engineering aesthetic.
+═══════════════════════════════════════════════════════════════════"""
+
+_STATIC_FURNITURE = """\
+FURNITURE inside each apartment (simple top-down block icons, NOT photoreal):
+  • Bedrooms: rectangle bed with «X» for pillow, bedside table, wardrobe long thin rectangle
+  • Living rooms: L-shape sofa, round table, armchair circle, TV thin rectangle on wall
+  • Kitchens: counter L along wall with sink + stove (square with 4 burner circles), fridge rectangle
+  • Bathrooms: oval tub OR shower square, oval toilet, vanity rectangle
+  • Hallways: built-in wardrobe rectangle, shoe storage
+  • Loggias: small rectangles outside facade wall, labeled «Лоджия», 3-6 м²"""
+
+_STATIC_MIN_ROOMS = """\
+⚠️ MINIMUM ROOM SIZES (СНиП РК 3.02-43-2007 — STRICT):
+  • Living room (гостиная): ≥ 16 м² for 2-3-room apts, ≥ 15 м² for 1-room
+  • Master bedroom (спальня на 2 человека): ≥ 10 м²
+  • Single bedroom: ≥ 8 м²
+  • Kitchen: ≥ 9 м² for 2+ room apts (≥ 6 м² only for studios as kitchen-niche)
+  • Bathroom (ванная): width ≥ 1.5 м
+  • Combined WC (с/у совмещённый): ≥ 1.7 м wide
+  • Hallway (прихожая): width ≥ 1.4 м
+  • Internal corridor: ≥ 1.0 м"""
+
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции
+# ---------------------------------------------------------------------------
+
+def _approx_unit_count(inputs: MarketingInputs) -> int:
+    """Грубая оценка кол-ва квартир на этаже по площади пятна и миксу."""
+    inner_w = max(0.0, inputs.site_width_m - 2 * inputs.setback_side_m)
+    inner_h = max(0.0, inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m)
+    floor_area = inner_w * inner_h
+    if floor_area <= 0:
+        return 4
+    saleable = floor_area * 0.55
+    if inputs.purpose in ("residential", "mixed_use"):
+        avg = (
+            28 * inputs.studio_pct +
+            45 * inputs.k1_pct +
+            65 * inputs.k2_pct +
+            90 * inputs.k3_pct
+        ) or 55
+    elif inputs.purpose == "hotel":
+        avg = 28
+    elif inputs.purpose == "commercial":
+        avg = 30
+    else:
+        avg = 55
+    return max(2, min(round(saleable / avg), 30))
+
+
+def _distribute_apartments(n_units: int, inputs: MarketingInputs) -> list[str]:
+    """Разбивает n_units квартир на конкретные типы по процентам и возвращает список типов."""
+    n_studio = round(inputs.studio_pct * n_units)
+    n_k1 = round(inputs.k1_pct * n_units)
+    n_k2 = round(inputs.k2_pct * n_units)
+    n_k3 = n_units - n_studio - n_k1 - n_k2
+    # Корректируем если вышло отрицательным
+    if n_k3 < 0:
+        n_k2 = max(0, n_k2 + n_k3)
+        n_k3 = 0
+    types: list[str] = (
+        ["studio"] * n_studio +
+        ["k1"] * n_k1 +
+        ["k2"] * n_k2 +
+        ["k3"] * n_k3
+    )
+    # Заполняем до n_units если что-то пошло не так
+    while len(types) < n_units:
+        types.append("k2")
+    return types[:n_units]
+
+
+def _apt_program(apt_type: str, apt_num: int) -> str:
+    """Генерирует строку с программой помещений для одной квартиры."""
+    if apt_type == "studio":
+        return (
+            f"  • Кв. №{apt_num} — СТУДИЯ (28–38 м²):\n"
+            f"      Единая жилая зона ≥22 м² (гостиная + спальная зона совмещены)\n"
+            f"      + Кухня-ниша ≥6 м² + С/у совмещённый + Прихожая"
+        )
+    elif apt_type == "k1":
+        return (
+            f"  • Кв. №{apt_num} — 1-КОМНАТНАЯ (40–50 м²):\n"
+            f"      1 жилая комната → ЖИЛАЯ КОМНАТА (≥15 м²)\n"
+            f"      + Кухня (≥9 м²) + С/у + Прихожая (+ Лоджия)"
+        )
+    elif apt_type == "k2":
+        return (
+            f"  • Кв. №{apt_num} — 2-КОМНАТНАЯ (55–70 м²):\n"
+            f"      ОБЯЗАТЕЛЬНО 2 жилые комнаты → ГОСТИНАЯ (≥16 м²) + СПАЛЬНЯ (≥10 м²)\n"
+            f"      + Кухня (≥9 м²) + С/у + Прихожая (+ Лоджия)"
+        )
+    else:  # k3
+        return (
+            f"  • Кв. №{apt_num} — 3-КОМНАТНАЯ (80–95 м²):\n"
+            f"      ОБЯЗАТЕЛЬНО 3 жилые комнаты → ГОСТИНАЯ (≥16 м²) + СПАЛЬНЯ-1 (≥10 м²) + СПАЛЬНЯ-2 (≥8 м²)\n"
+            f"      + Кухня (≥9 м²) + С/у (можно 2) + Прихожая (+ Лоджия)"
+        )
+
+
+def _pct_summary(types: list[str]) -> str:
+    """Текстовое резюме квартирографии."""
+    n = len(types)
+    parts = []
+    for t, label in [("studio", "студий"), ("k1", "1-комн."), ("k2", "2-комн."), ("k3", "3-комн.")]:
+        c = types.count(t)
+        if c > 0:
+            parts.append(f"{label}: {c} шт. ({round(c/n*100)}%)")
+    return ", ".join(parts)
+
+
+def _build_apartment_block(inputs: MarketingInputs, n_units: int) -> str:
+    """Блок с точной программой помещений каждой квартиры."""
+    types = _distribute_apartments(n_units, inputs)
+    programs = "\n".join(_apt_program(t, i + 1) for i, t in enumerate(types))
+    summary = _pct_summary(types)
+    return (
+        f"⚠️ APARTMENT MIX — STRICT (комнатность по казахстанскому стандарту, кухня и санузел НЕ комнаты):\n"
+        f"Состав {n_units} квартир на этаж — точная программа помещений (НЕ менять, НЕ добавлять типы):\n\n"
+        f"{programs}\n\n"
+        f"Итого: {summary}.\n"
+        f"These room programs are FIXED. Do NOT add apartment types not listed above.\n"
+        f"ПРОВЕРКА перед отрисовкой: в каждой 2-комнатной видны ДВЕ жилые комнаты (гостиная + спальня),\n"
+        f"в 3-комнатной — ТРИ жилые комнаты. Кухня нигде НЕ засчитывается как комната."
+    )
+
+
+def _build_section_block(inputs: MarketingInputs, n_units: int, inner_w: float, inner_h: float) -> str:
+    """Описание секционности: точечный или многосекционный дом."""
+    n_sections = max(1, inputs.sections)
+    apts_per_section = max(1, n_units // n_sections)
+
+    if n_sections == 1:
+        return (
+            f"⚠️ APARTMENT COUNT — STRICT: EXACTLY {n_units} apartments per floor "
+            f"(EXACTLY {n_units * inputs.floors} total for {inputs.floors} floors). "
+            f"DO NOT draw more or fewer apartments than this number. "
+            f"Single-section point tower with {n_units} apartments per floor.\n\n"
+            f"POINT-TOWER LAYOUT (1 section): central reinforced-concrete core with "
+            f"{inputs.lifts_passenger} passenger + {inputs.lifts_freight} freight elevator + "
+            f"Л-1 staircase. All {n_units} apartments arranged AROUND the central core."
+        )
+    else:
+        section_w = inner_w / n_sections
+        numbering = "\n".join(
+            f"  • Section {s}: «Кв. {s}-1»…«Кв. {s}-{apts_per_section}»"
+            for s in range(1, n_sections + 1)
+        )
+        return (
+            f"⚠️ APARTMENT COUNT — STRICT: EXACTLY {n_units} apartments per floor "
+            f"(EXACTLY {n_units * inputs.floors} total for {inputs.floors} floors). "
+            f"DO NOT draw more or fewer.\n\n"
+            f"⚠️ CRITICAL — SECTIONAL LAYOUT: {n_sections}-SECTION building "
+            f"(многосекционный, {n_sections} подъезда). "
+            f"Floor plate {inner_w:.0f}×{inner_h:.0f} м divided into {n_sections} EQUAL sections, "
+            f"each ~{section_w:.1f}×{inner_h:.0f} м.\n\n"
+            f"SECTION BOUNDARIES: THICK FIRE-RATED WALLS REI 60 (double parallel lines ≥0.7 mm, "
+            f"diagonal hatching). NO doorways crossing these walls.\n\n"
+            f"EACH SECTION CONTAINS:\n"
+            f"  • Central core: {inputs.lifts_passenger} passenger elevator(s) + "
+            f"{inputs.lifts_freight} freight elevator + 1 staircase Л-1\n"
+            f"  • Short dead-end corridor ≤12 м\n"
+            f"  • {apts_per_section} apartments around the core\n"
+            f"  • Section label: «СЕКЦИЯ 1», «СЕКЦИЯ 2»…\n\n"
+            f"APARTMENT NUMBERING:\n{numbering}"
+        )
+
+
+def _build_engineering_block(inputs: MarketingInputs, n_units: int) -> str:
+    """Инженерный блок: лифты, пожарка, паркинг, ГПЗУ, техзоны."""
+    total_parking = round(n_units * inputs.floors * inputs.parking_spaces_per_apt)
+    height = inputs.floors * 3.0  # примерно
+    return (
+        f"═══════════════════════════════════════════════════════════════════\n"
+        f"ENGINEERING & SAFETY (visible on the plan)\n"
+        f"═══════════════════════════════════════════════════════════════════\n"
+        f"LIFT GROUP: {inputs.lifts_passenger} passenger elevator(s) + "
+        f"{inputs.lifts_freight} freight elevator "
+        f"(rectangles with diagonal cross «×», labeled «ЛИФТ») + "
+        f"U-shaped staircase (parallel tread lines 300 mm apart, upward arrow «↑», labeled «Л-1»). "
+        f"Concentrated in central reinforced-concrete core(s).\n\n"
+        f"FIRE SAFETY: maximum evacuation distance ≤{inputs.fire_evacuation_max_m:.0f} м "
+        f"from any apartment door to staircase. "
+        f"{inputs.fire_evacuation_exits_per_section} evacuation exits per section. "
+        f"Dead-end corridor ≤{inputs.fire_dead_end_corridor_max_m:.0f} м. "
+        f"Show evacuation arrows from each unit toward the staircase.\n\n"
+        f"INSOLATION: large units (2-3 bedroom) face south or south-west, smaller units face north.\n\n"
+        f"PARKING: {inputs.parking_underground_levels} underground level(s), "
+        f"~{total_parking} parking spaces total "
+        f"({inputs.parking_spaces_per_apt:.1f} per apartment). "
+        f"Parking NOT shown on this floor; engineering shaft rises through central core.\n\n"
+        f"GPZU CONSTRAINTS: max site coverage {inputs.max_coverage_pct:.0f}%, "
+        f"height ≤{inputs.max_height_m:.0f} м (~{inputs.floors} floors, ~{height:.0f} м). "
+        f"Setbacks: {inputs.setback_front_m:.1f} м front, {inputs.setback_rear_m:.1f} м rear, "
+        f"{inputs.setback_side_m:.1f} м sides.\n\n"
+        f"TECH ZONES (mark on plan): «ВЕНТ» (vent shaft, 0.6×0.6 м), «ЭЩ» (electrical ~1.5×1.5 м), "
+        f"«СС» (weak-current), «МСП» (trash chute, 0.4×0.4 м, near core), "
+        f"«ВКР» (water riser, 0.3×0.3 м, near each wet zone)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Главная функция
+# ---------------------------------------------------------------------------
 
 def build_marketing_prompt(inputs: MarketingInputs) -> str:
-    inner_w = inputs.site_width_m - 2 * inputs.setback_side_m
-    inner_h = inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m
+    """Собирает полный промпт для gpt-image-2 на основе параметров пользователя."""
+    inner_w = max(1.0, inputs.site_width_m - 2 * inputs.setback_side_m)
+    inner_h = max(1.0, inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m)
     n_units = _approx_unit_count(inputs)
 
-    # — выбираем purpose-specific блок
-    if inputs.purpose == "commercial":
-        purpose_block = _commercial_blocks(inputs, n_units, inner_w, inner_h)
-    elif inputs.purpose == "hotel":
-        purpose_block = _hotel_blocks(inputs, n_units, inner_w, inner_h)
-    elif inputs.purpose == "mixed_use":
-        purpose_block = _mixed_use_blocks(inputs, n_units, inner_w, inner_h)
-    else:
-        purpose_block = _residential_blocks(inputs, n_units, inner_w, inner_h)
+    subject_block = (
+        f"═══════════════════════════════════════════════════════════════════\n"
+        f"SUBJECT — RESIDENTIAL FLOOR (типовой этаж жилого здания)\n"
+        f"═══════════════════════════════════════════════════════════════════\n"
+        f"Standard Kazakh CAD title block in BOTTOM-RIGHT corner (ALL NAME/COMPANY CELLS EMPTY OR «—»):\n"
+        f"  «Изм. | Кол.уч. | Лист | N.док. | Подпись | Дата»\n"
+        f"  «Разработал | — | — | —»  (NO real names)\n"
+        f"  «Стадия: ЭП | Лист: — | Листов: —»\n"
+        f"  «Строительство [—]», «г.Астана», «План типового этажа», «Лицензия [—]»\n\n"
+        f"Building footprint EXACTLY {inner_w:.0f} × {inner_h:.0f} м — "
+        f"DRAW THE PLAN AT THIS EXACT ASPECT RATIO with the entire plan filling the sheet.\n"
+        f"One typical floor of a {inputs.floors}-storey residential building.\n\n"
+        f"{_build_section_block(inputs, n_units, inner_w, inner_h)}\n\n"
+        f"{_build_apartment_block(inputs, n_units)}\n\n"
+        f"{_STATIC_MIN_ROOMS}\n\n"
+        f"{_STATIC_FURNITURE}\n\n"
+        f"ANNOTATIONS inside the plan:\n"
+        f"  • Apartment numbers per section (Кв. №1, Кв. №2…)\n"
+        f"  • «S общ. = 45.20 м²», «S жил. = 32.10 м²» — areas under each apartment number\n"
+        f"    (S жил. = сумма площадей ТОЛЬКО жилых комнат, БЕЗ кухни/с-у/прихожей/лоджии)\n"
+        f"  • Room labels: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Лоджия»\n"
+        f"  • Room areas inside each room: realistic values in м²"
+    )
 
     return "\n\n".join([
-        _common_header(),
-        _taimas_standard(),   # ← TAIMAS-чек-лист сразу после header
-        purpose_block,
-        _common_annotations(),
-        _engineering_block(inputs),
-        _common_footer(),
+        _STATIC_HEADER,
+        _STATIC_ROOM_DEFINITION,
+        _STATIC_LINE_WEIGHTS,
+        _STATIC_TAIMAS,
+        subject_block,
+        _STATIC_ANNOTATIONS,
+        _build_engineering_block(inputs, n_units),
+        _STATIC_COLOR,
+        _STATIC_NEGATIVES,
+        _STATIC_REFERENCE,
     ])
