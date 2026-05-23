@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,14 @@ class MarketingInputs:
     fire_evacuation_exits_per_section: int = 2
     fire_dead_end_corridor_max_m: float = 12.0
 
+    # Слайдеры лифтов — используются agent_enhancer'ом для контекста.
+    # Промпт их ИГНОРИРУЕТ и всегда использует _lifts_by_floors(floors).
+    lifts_passenger: int = 2
+    lifts_freight: int = 1
+
     insolation_priority: bool = True
+    insolation_min_hours: float = 2.0
+
     max_coverage_pct: float = 50.0
     max_height_m: float = 30.0
 
@@ -283,7 +290,7 @@ def _approx_unit_count(inputs: MarketingInputs, inner_w: float, inner_h: float) 
     return max(2, min(round(saleable / avg), 30))
 
 
-def _distribute(n_units: int, s_pct: float, k1_pct: float, k2_pct: float, k3_pct: float) -> list[str]:
+def _distribute(n_units: int, s_pct: float, k1_pct: float, k2_pct: float) -> list[str]:
     """Разбивает n_units на конкретные типы по нормированным процентам."""
     n_s  = round(s_pct  * n_units)
     n_k1 = round(k1_pct * n_units)
@@ -345,8 +352,8 @@ def _prepare(inputs: MarketingInputs) -> PromptData:
 
     # Квартиры
     n_units = _approx_unit_count(inputs, inner_w, inner_h)
-    s_pct, k1_pct, k2_pct, k3_pct = _normalize_pcts(inputs)
-    types = _distribute(n_units, s_pct, k1_pct, k2_pct, k3_pct)
+    s_pct, k1_pct, k2_pct, _ = _normalize_pcts(inputs)
+    types = _distribute(n_units, s_pct, k1_pct, k2_pct)
     programs = [_apt_program(t, i + 1) for i, t in enumerate(types)]
     summary = _pct_summary(types)
 
