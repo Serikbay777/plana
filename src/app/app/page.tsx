@@ -2547,41 +2547,6 @@ function AiPlansTab({
   hasExtraSections: boolean;
 }) {
   const [lightbox, setLightbox] = useState<AiPlanVariant | null>(null);
-  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
-  const [metrics, setMetrics] = useState<FloorPlanMetrics | null>(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-
-  // ── Album mode (Sprint 2: full gpt-image album) ───────────────────
-  const [albumImages, setAlbumImages] = useState<import("@/lib/engine").AlbumImagesResponse | null>(null);
-  const [albumLoading, setAlbumLoading] = useState(false);
-  const [albumError, setAlbumError] = useState<string | null>(null);
-
-  const handleGenerateAlbum = async () => {
-    if (albumLoading) return;
-    setAlbumLoading(true);
-    setAlbumError(null);
-    try {
-      const res = await import("@/lib/engine").then((m) => m.generateAlbumImages(inputs));
-      setAlbumImages(res);
-    } catch (e) {
-      setAlbumError((e as Error).message);
-    } finally {
-      setAlbumLoading(false);
-    }
-  };
-
-  const handleCloseAlbum = () => {
-    setAlbumImages(null);
-    setAlbumError(null);
-  };
-
-  const switchToTable = async () => {
-    setViewMode("table");
-    if (!metrics && !metricsLoading) {
-      setMetricsLoading(true);
-      try { setMetrics(await onGetMetrics()); } catch { /* ignore */ } finally { setMetricsLoading(false); }
-    }
-  };
   // Интерактивная корректировка (Этап 4 ТЗ): юзер пишет инструкцию,
   // gpt-image-edit перерисовывает чертёж, результат показываем поверх оригинала.
   const [editInstruction, setEditInstruction] = useState("");
@@ -2681,74 +2646,6 @@ function AiPlansTab({
     "Добавь балконы у каждой квартиры",
     "Объедини две маленькие квартиры в одну большую",
   ];
-
-  // ── Альбом-режим (Sprint 2): полный gpt-image альбом ────────────────
-  // Если есть albumImages — перехватываем весь рендер и показываем
-  // AlbumImagesViewer вместо обычного грида 5 вариантов.
-  if (albumImages) {
-    return (
-      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
-        <AlbumImagesViewer album={albumImages} onClose={handleCloseAlbum} />
-      </div>
-    );
-  }
-
-  // Loading state альбома — отдельный экран с большим спиннером
-  if (albumLoading) {
-    return (
-      <div className="flex flex-col flex-1 min-h-0 grid place-items-center text-white/70">
-        <div className="text-center max-w-md p-8">
-          <Loader2 size={32} className="animate-spin text-emerald-300 mx-auto mb-4" />
-          <div className="text-[15px] font-semibold tracking-display mb-2">
-            Собираем альбом…
-          </div>
-          <div className="text-[12px] text-white/55 leading-relaxed">
-            Параллельно генерируем 13-15 листов в стиле СПДС.
-            Обычно занимает 3-7 минут. Не закрывай страницу.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Ошибка генерации альбома — показываем экран с retry-кнопкой,
-  // чтобы юзер не «терял» состояние когда генерация падает.
-  if (albumError) {
-    return (
-      <div className="flex flex-col flex-1 min-h-0 grid place-items-center text-white/85">
-        <div className="text-center max-w-lg p-8">
-          <div className="mx-auto w-12 h-12 rounded-full bg-rose-500/15 grid place-items-center mb-4">
-            <AlertCircle size={22} className="text-rose-300" />
-          </div>
-          <div className="text-[15px] font-semibold tracking-display mb-2">
-            Не получилось сгенерировать альбом
-          </div>
-          <div className="text-[12px] text-rose-200/75 leading-relaxed bg-rose-500/10 border border-rose-400/20 rounded-lg p-3 mb-4 text-left whitespace-pre-wrap break-words">
-            {albumError}
-          </div>
-          <div className="text-[11.5px] text-white/45 leading-relaxed mb-4">
-            Частые причины: невалидный XAI_API_KEY, недоступная модель
-            grok-imagine-image, rate-limit xAI, или таймаут nginx (300с).
-            Точный текст ошибки от провайдера — в красной плашке выше.
-          </div>
-          <div className="flex gap-2 justify-center">
-            <button
-              onClick={handleGenerateAlbum}
-              className="h-8 px-4 rounded-full text-[12px] flex items-center gap-1.5 border border-emerald-400/30 text-emerald-200/90 hover:bg-emerald-500/15 transition"
-            >
-              <RefreshCw size={11} /> Повторить
-            </button>
-            <button
-              onClick={() => setAlbumError(null)}
-              className="h-8 px-4 rounded-full text-[12px] flex items-center gap-1.5 border border-white/15 text-white/70 hover:bg-white/[0.06] transition"
-            >
-              <X size={11} /> Закрыть
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <>
@@ -2967,18 +2864,9 @@ function AiPlansTab({
             <span className="text-[13px] font-medium text-white/85">AI Чертежи планировки</span>
           </div>
           <span className="text-[11.5px] text-white/40">
-            Параметры → Gemma 4 → gpt-image × 5 вариантов параллельно
+            Превью плана типового этажа для питча
           </span>
           <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={handleGenerateAlbum}
-            disabled={albumLoading}
-            className="h-8 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-emerald-400/30 text-emerald-200/90 hover:bg-emerald-500/15 transition disabled:opacity-50"
-            title="Собрать полный комплект чертежей (титул, планы этажей, экспликация, спецификации)"
-          >
-            {albumLoading ? <Loader2 size={11} className="animate-spin" /> : <LayoutGrid size={11} />}
-            {albumLoading ? "Собираем альбом…" : "Альбом"}
-          </button>
           {/* Кнопки импорта скрыты по просьбе пользователя.
               State (dxfImportLoading, gpzuLoading, contourLoading), ref'ы
               (dxfInputRef, contourInputRef, gpzuInputRef) и обработчики
@@ -3167,24 +3055,15 @@ function AiPlansTab({
       <div className="flex-1 min-h-0 overflow-y-auto relative">
         {bag.state === "idle" && (
           <div className="absolute inset-0 grid place-items-center">
-            <div className="text-center max-w-lg px-8">
+            <div className="text-center max-w-md px-8">
               <div className="size-16 rounded-full bg-gradient-to-br from-violet-500/25 to-fuchsia-500/20 border border-white/10 grid place-items-center mx-auto mb-5">
                 <Sparkles size={26} className="text-violet-200" />
               </div>
               <div className="text-[21px] font-semibold tracking-display mb-3">
-                5 AI-вариантов планировки
+                AI план типового этажа
               </div>
-              <div className="text-[13px] text-white/50 leading-relaxed mb-6">
-                Введи параметры слева и нажми «Сгенерировать». Движок обогатит промпт через Gemma 4, затем
-                запустит gpt-image параллельно в&nbsp;5 направлениях — макс. площадь, плотность,
-                классическая секция, инсоляция, евроформат.
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-[11.5px]">
-                {["Макс. жилая S", "Макс. квартир", "Классика", "Инсоляция (юг)", "Евроформат"].map((lbl) => (
-                  <div key={lbl} className="h-8 rounded-lg bg-white/[0.04] border border-white/[0.07] flex items-center justify-center text-white/55 px-2">
-                    {lbl}
-                  </div>
-                ))}
+              <div className="text-[13px] text-white/50 leading-relaxed">
+                Введи параметры слева и нажми «Сгенерировать» — получишь готовый план этажа для питча инвесторам.
               </div>
             </div>
           </div>
@@ -3195,52 +3074,21 @@ function AiPlansTab({
             <div className="flex flex-col items-center gap-4 text-center">
               <div className="size-12 rounded-full border-2 border-white/15 border-t-violet-400 animate-spin" />
               <div>
-                <div className="text-[14px] text-white/80 font-medium mb-1">Генерируем 5 чертежей…</div>
-                <div className="text-[12px] text-white/45">Gemma 4 → gpt-image × 5 параллельно · 30–90 сек</div>
+                <div className="text-[14px] text-white/80 font-medium mb-1">Генерируем план…</div>
+                <div className="text-[12px] text-white/45">30–90 сек</div>
               </div>
-              {/* Скелетон карточек */}
-              <div className="grid grid-cols-2 gap-3 mt-4 w-[480px] opacity-40">
-                {[...Array(5)].map((_, i) => (
-                  <div
-                    key={i}
-                    className={[
-                      "rounded-xl bg-white/[0.04] border border-white/[0.06] animate-pulse",
-                      i === 4 ? "col-span-2 h-28" : "h-36",
-                    ].join(" ")}
-                  />
-                ))}
-              </div>
+              <div className="w-80 h-52 rounded-xl bg-white/[0.04] border border-white/[0.06] animate-pulse mt-2 opacity-40" />
             </div>
           </div>
         )}
 
         {bag.state === "error" && <ErrorState message={bag.errorMessage} onRetry={onGenerate} />}
 
-        {bag.state === "ready" && bag.variants.length > 0 && viewMode === "table" && (
-          <ComparisonTable
-            variants={bag.variants}
-            metrics={metrics}
-            metricsLoading={metricsLoading}
-            onOpenLightbox={setLightbox}
-            onExportDxf={onExportDxf}
-            onExportIfc={onExportIfc}
-            cadExportLoading={cadExportLoading}
-          />
-        )}
-
-        {bag.state === "ready" && bag.variants.length > 0 && viewMode === "grid" && (
-          <div className="p-5 grid grid-cols-2 gap-4">
-            {bag.variants.map((v, i) => (
-              <div
-                key={v.key}
-                className={[
-                  "group rounded-2xl border border-white/[0.07] bg-white/[0.02] overflow-hidden",
-                  "hover:border-white/15 hover:bg-white/[0.04] transition-all duration-200",
-                  // 5-й вариант — полная ширина (в 2-колонной сетке)
-                  i === 4 ? "col-span-2" : "",
-                ].join(" ")}
-              >
-                {/* Image */}
+        {bag.state === "ready" && bag.variants.length > 0 && (() => {
+          const v = bag.variants.find((x) => x.key === "balanced_mix") ?? bag.variants[0];
+          return (
+            <div className="p-6 flex justify-center">
+              <div className="w-full max-w-2xl group rounded-2xl border border-white/[0.07] bg-white/[0.02] overflow-hidden hover:border-white/15 transition-all duration-200">
                 <div
                   className="relative overflow-hidden cursor-zoom-in"
                   onClick={() => setLightbox(v)}
@@ -3248,84 +3096,41 @@ function AiPlansTab({
                   <img
                     src={v.imageUrl}
                     alt={v.label}
-                    className={[
-                      "w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]",
-                      i === 4 ? "max-h-64" : "max-h-52",
-                    ].join(" ")}
+                    className="w-full object-contain transition-transform duration-300 group-hover:scale-[1.01]"
                     loading="lazy"
                   />
-                  {/* Overlay with zoom hint */}
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-200 flex items-center justify-center">
                     <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/60 backdrop-blur-sm rounded-full px-3 py-1.5 text-[11px] text-white/90 flex items-center gap-1.5">
                       <Eye size={12} /> Открыть
                     </div>
                   </div>
                 </div>
-
-                {/* Footer */}
                 <div className="px-4 py-3 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-[12.5px] font-medium text-white/90">{v.label}</div>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      {v.enhancerUsed && v.enhancerUsed !== "fallback" && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 border border-violet-400/25 text-violet-300">
-                          ✨ {v.enhancerUsed}
-                        </span>
-                      )}
-                      <span className="text-[10px] text-white/35">{v.modelUsed}</span>
-                    </div>
+                  <div>
+                    <div className="text-[12.5px] font-medium text-white/90">Оптимальный план типового этажа</div>
+                    <div className="text-[10px] text-white/35 mt-0.5">{v.modelUsed}</div>
                   </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="flex items-center gap-2">
                     <a
                       href={v.imageUrl}
-                      download={`plana-ai-${v.key}.png`}
+                      download={`plana-ai-plan.png`}
                       className="h-8 px-2.5 rounded-full surface text-[11px] flex items-center gap-1 hover:bg-white/[0.08] transition text-white/55 hover:text-white/85"
                       onClick={(e) => e.stopPropagation()}
-                      title="Скачать PNG"
                     >
                       <Download size={11} /> PNG
                     </a>
                     <button
-                      onClick={(e) => { e.stopPropagation(); exportAiPlansPdf([v], `plana-ai-${v.key}`); }}
+                      onClick={(e) => { e.stopPropagation(); exportAiPlansPdf([v], "plana-ai-plan"); }}
                       className="h-8 px-2.5 rounded-full surface text-[11px] flex items-center gap-1 hover:bg-white/[0.08] transition text-white/55 hover:text-white/85"
-                      title="Скачать PDF"
                     >
                       <Download size={11} /> PDF
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onExportDxf(); }}
-                      disabled={cadExportLoading !== null}
-                      className={[
-                        "h-8 px-2.5 rounded-full text-[11px] flex items-center gap-1 transition border border-violet-400/30 text-violet-200/85",
-                        cadExportLoading === null ? "hover:bg-violet-500/15 hover:text-white" : "opacity-60 cursor-wait",
-                      ].join(" ")}
-                      title="DXF — реальный CAD-чертёж для AutoCAD"
-                    >
-                      {cadExportLoading === "dxf" ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} DXF
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onExportIfc(); }}
-                      disabled={cadExportLoading !== null}
-                      className={[
-                        "h-8 px-2.5 rounded-full text-[11px] flex items-center gap-1 transition border border-cyan-400/30 text-cyan-200/85",
-                        cadExportLoading === null ? "hover:bg-cyan-500/15 hover:text-white" : "opacity-60 cursor-wait",
-                      ].join(" ")}
-                      title="IFC4 BIM-модель — открывается в Revit/ArchiCAD/BIMcollab"
-                    >
-                      {cadExportLoading === "ifc" ? <Loader2 size={11} className="animate-spin" /> : <Network size={11} />} IFC
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onGoToViz(); }}
-                      className="h-8 px-3 rounded-full btn-apple text-[11px] flex items-center gap-1.5"
-                    >
-                      <Sparkles size={11} /> Визуализировать
                     </button>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Паркинг — секция под вариантами */}
@@ -3341,74 +3146,13 @@ function AiPlansTab({
 
       {/* Bottom bar */}
       {bag.state === "ready" && (
-        <div className="border-t border-white/[0.05] px-5 py-3 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-lg border border-white/[0.07] bg-white/[0.02] p-0.5">
-              <button
-                onClick={() => setViewMode("grid")}
-                className={["h-7 px-2.5 rounded-md text-[11.5px] flex items-center gap-1.5 transition", viewMode === "grid" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/70"].join(" ")}
-              ><LayoutGrid size={12} /> Сетка</button>
-              <button
-                onClick={switchToTable}
-                className={["h-7 px-2.5 rounded-md text-[11.5px] flex items-center gap-1.5 transition", viewMode === "table" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/70"].join(" ")}
-              ><List size={12} /> Таблица</button>
-            </div>
-            <span className="text-[11px] text-white/30">{bag.variants.length} вариантов</span>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button
-              onClick={onGenerate}
-              className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition"
-            >
-              <RefreshCw size={12} /> Перегенерировать
-            </button>
-            <button
-              onClick={onExportDxf}
-              disabled={cadExportLoading !== null}
-              className={[
-                "h-9 px-3.5 rounded-full text-[12px] flex items-center gap-1.5 transition border border-violet-400/30 text-violet-200/90",
-                cadExportLoading === null ? "hover:bg-violet-500/15 hover:text-white" : "opacity-60 cursor-wait",
-              ].join(" ")}
-              title="Реальный CAD-чертёж — открывается в AutoCAD/ArchiCAD/Revit"
-            >
-              {cadExportLoading === "dxf" ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} DXF
-              <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-violet-500/20 ml-0.5">CAD</span>
-            </button>
-            <button
-              onClick={onExportIfc}
-              disabled={cadExportLoading !== null}
-              className={[
-                "h-9 px-3.5 rounded-full text-[12px] flex items-center gap-1.5 transition border border-cyan-400/30 text-cyan-200/90",
-                cadExportLoading === null ? "hover:bg-cyan-500/15 hover:text-white" : "opacity-60 cursor-wait",
-              ].join(" ")}
-              title="IFC4 BIM-модель — открывается в Revit/ArchiCAD/BIMcollab"
-            >
-              {cadExportLoading === "ifc" ? <Loader2 size={12} className="animate-spin" /> : <Network size={12} />} IFC
-              <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-500/20 ml-0.5">BIM</span>
-            </button>
-            <button
-              onClick={() => exportAiPlansPdf(bag.variants)}
-              className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/70 hover:text-white"
-              title="Только AI-чертежи (5 страниц)"
-            >
-              <Download size={12} /> Только чертежи
-            </button>
-            <button
-              onClick={onExportFullReport}
-              className="h-9 px-4 rounded-full btn-apple text-[12px] flex items-center gap-1.5"
-              title={hasExtraSections
-                ? "Полный отчёт: обложка + ГПЗУ + контур + чертежи + посадка + экстерьер + интерьеры"
-                : "Сейчас в отчёт попадут только AI-чертежи. Сгенерируй визуализации/посадку для полного отчёта."}
-            >
-              <Download size={12} /> Полный отчёт PDF
-            </button>
-            <button
-              onClick={onGoToViz}
-              className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/70 hover:text-white"
-            >
-              Визуализации <ArrowRight size={12} />
-            </button>
-          </div>
+        <div className="border-t border-white/[0.05] px-5 py-3 flex items-center justify-end gap-2 flex-shrink-0">
+          <button
+            onClick={onGenerate}
+            className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition"
+          >
+            <RefreshCw size={12} /> Перегенерировать
+          </button>
         </div>
       )}
     </>
