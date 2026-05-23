@@ -2724,9 +2724,9 @@ function AiPlansTab({
             {albumError}
           </div>
           <div className="text-[11.5px] text-white/45 leading-relaxed mb-4">
-            Частые причины: таймаут nginx (по умолчанию 300с), нехватка
-            памяти engine при 14 параллельных gpt-image, или содержимое
-            нарушило content-policy OpenAI. Проверь логи бэка.
+            Частые причины: невалидный XAI_API_KEY, недоступная модель
+            grok-imagine-image, rate-limit xAI, или таймаут nginx (300с).
+            Точный текст ошибки от провайдера — в красной плашке выше.
           </div>
           <div className="flex gap-2 justify-center">
             <button

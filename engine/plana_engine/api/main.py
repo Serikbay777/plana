@@ -1948,11 +1948,12 @@ def generate_album_images_endpoint(req: VisualizeFromInputsRequest) -> AlbumImag
     t0 = time.time()
     results: list[AlbumImage | None] = [None] * len(tasks)
     failed_count = 0
+    errors: list[str] = []  # реальные сообщения провайдеров — для дебага
 
-    def _one(idx: int, kind: str, title: str, extras: dict[str, Any]) -> tuple[int, AlbumImage | None]:
+    def _one(idx: int, kind: str, title: str, extras: dict[str, Any]) -> tuple[int, AlbumImage | None, str | None]:
         spec = get_album_sheet_spec(kind)
         if spec is None:
-            return idx, None
+            return idx, None, f"[{kind}] нет spec"
         params = {**base_params, **extras}
         prompt = render_album_sheet(spec, params)
         try:
@@ -1962,13 +1963,15 @@ def generate_album_images_endpoint(req: VisualizeFromInputsRequest) -> AlbumImag
                 image_b64=_b64.b64encode(res.png).decode(),
                 model_used=res.model_used,
                 extra=extras,
-            )
-        except (MissingAPIKey, OpenAIError):
+            ), None
+        except MissingAPIKey:
             raise
-        except Exception:
-            return idx, None
+        except OpenAIError as e:
+            return idx, None, f"[{kind}] {e}"
+        except Exception as e:
+            return idx, None, f"[{kind}] {type(e).__name__}: {e}"
 
-    # max_workers=3 — компромисс между скоростью и OpenAI rate-limit.
+    # max_workers=3 — компромисс между скоростью и rate-limit провайдера.
     # OOM на 4GB VPS при 14 параллельных base64 PNG ~30-60MB суммарно.
     try:
         with ThreadPoolExecutor(max_workers=3) as pool:
@@ -1978,25 +1981,33 @@ def generate_album_images_endpoint(req: VisualizeFromInputsRequest) -> AlbumImag
             }
             for fut in _as_completed(futures):
                 try:
-                    idx, item = fut.result()
+                    idx, item, err = fut.result()
                     if item is None:
                         failed_count += 1
+                        if err:
+                            errors.append(err)
                     else:
                         results[idx] = item
                 except MissingAPIKey:
                     raise
-                except OpenAIError:
-                    # Не валим весь альбом из-за одного content-policy
-                    # или rate-limit — считаем как failed.
+                except Exception as e:
                     failed_count += 1
-                except Exception:
-                    failed_count += 1
+                    errors.append(f"executor: {type(e).__name__}: {e}")
     except MissingAPIKey as e:
         raise HTTPException(status_code=503, detail=str(e))
 
     images = [r for r in results if r is not None]
     if not images:
-        raise HTTPException(status_code=502, detail="Все листы не сгенерированы")
+        # Логируем все ошибки в stdout (Render/docker logs), а в UI отдаём
+        # первую — обычно она же причина для всех 14 листов.
+        import logging
+        for err in errors:
+            logging.warning("album generation failed: %s", err)
+        first = errors[0] if errors else "unknown"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Все листы не сгенерированы. Первая ошибка: {first}",
+        )
 
     return AlbumImagesResponse(
         images=images,
