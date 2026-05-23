@@ -50,10 +50,22 @@ from ..visualizer import (
     enhance_prompt, enhance_with_kz_norms, has_llm_key,
 )
 from ..visualizer.openai_client import (
-    MissingAPIKey, OpenAIError, has_api_key,
-    generate_image_edit_with_meta, generate_image_with_meta,
+    MissingAPIKey, OpenAIError,
+    has_api_key as has_openai_key,
+    generate_image_edit_with_meta,
     generate_image_inpaint_with_meta,
 )
+# Text→image листов альбома — через xAI Grok (см. grok_client.py).
+# Image-edit и inpaint остаются на OpenAI gpt-image.
+from ..visualizer.grok_client import (
+    generate_image_with_meta,
+    has_api_key as has_grok_key,
+)
+
+
+def has_api_key() -> bool:
+    """True если есть ХОТЯ БЫ один image-провайдер (OpenAI или xAI)."""
+    return has_openai_key() or has_grok_key()
 
 
 @asynccontextmanager

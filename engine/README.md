@@ -1,7 +1,8 @@
 # Plana Engine
 
-Prompt-driven визуализатор планировок. Параметры формы → промпт → `gpt-image-1`.
-Никакой алгоритмической геометрии — все картинки выдаёт OpenAI.
+Prompt-driven визуализатор планировок. Параметры формы → промпт → image API.
+Никакой алгоритмической геометрии — все картинки выдаёт LLM-провайдер
+(xAI Grok для листов альбома, OpenAI gpt-image для edit/inpaint).
 
 ## Архитектура
 
@@ -12,7 +13,8 @@ plana_engine/
 │   ├── marketing_prompt.py — base prompt builder из MarketingInputs
 │   ├── extra_prompts.py    — exterior / floorplan-furniture / interior / site-placement
 │   ├── enhancer.py         — опциональный enhancer через Gemma 4 (LLM_API_KEY)
-│   └── openai_client.py    — generate_image / generate_image_edit + кэш
+│   ├── grok_client.py      — generate_image (text→image) через xAI Grok
+│   └── openai_client.py    — generate_image_edit / inpaint (OpenAI gpt-image) + кэш
 ├── importers/
 │   └── gpzu.py         — ГПЗУ-PDF → JSON-параметры через OpenAI Vision
 └── api/main.py         — FastAPI: /visualize/*, /import/gpzu, /health
@@ -30,7 +32,8 @@ pip install -e .
 ## ENV
 
 ```
-OPENAI_API_KEY=sk-...      # для gpt-image-1 + Vision (ГПЗУ)
+XAI_API_KEY=xai-...        # text→image листов альбома (grok-imagine-image, $0.02/img)
+OPENAI_API_KEY=sk-...      # image-edit (посадка), inpainting (MaskCanvas), Vision (ГПЗУ)
 LLM_API_KEY=...            # опционально, для Gemma 4 enhancer
 ```
 

@@ -1,10 +1,17 @@
-"""Тонкая обёртка над OpenAI Images API (gpt-image-1).
+"""Тонкая обёртка над OpenAI Images API — **только** image-edit и inpainting.
 
-Ключ читается из ENV `OPENAI_API_KEY`. Если нет — `generate_image` бросает
-`MissingAPIKey` (UI ловит и говорит «настройте ключ»).
+Text→image (генерация листов альбома) переехала в [grok_client.py][] на
+xAI `grok-imagine-image`. Здесь остались операции, которых у xAI либо
+нет, либо мы их не используем:
 
-Кэш PNG-байтов на process-память, чтобы не пересчитывать один и тот же
-запрос (генерация занимает 15–30 сек и стоит $0.04–0.17).
+* `generate_image_edit_with_meta` — image-to-image («Посадка на участок»):
+  скармливаем аэрофото + промпт «впишите сюда здание...»
+* `generate_image_inpaint_with_meta` — inpainting с маской из MaskCanvas:
+  прозрачные пиксели маски перерисовываются, белые остаются.
+
+Ключ — `OPENAI_API_KEY`. Если нет — `MissingAPIKey` (UI ловит и говорит
+«настройте ключ»). Общие типы (`GenerationOptions`, `GenerationResult`,
+`MissingAPIKey`, `OpenAIError`) переиспользует [grok_client.py][].
 """
 
 from __future__ import annotations
@@ -17,11 +24,11 @@ from typing import Literal
 
 
 class MissingAPIKey(RuntimeError):
-    """Нет OPENAI_API_KEY в окружении."""
+    """Нет API ключа в окружении (OPENAI_API_KEY или XAI_API_KEY)."""
 
 
 class OpenAIError(RuntimeError):
-    """Ошибка от OpenAI (rate limit, content policy, network, и т.д.)."""
+    """Ошибка от провайдера (rate limit, content policy, network, и т.д.)."""
 
 
 Quality = Literal["low", "medium", "high"]
@@ -32,12 +39,11 @@ Size = Literal["1024x1024", "1024x1536", "1536x1024", "1792x1024"]
 class GenerationOptions:
     """Параметры генерации с auto-fallback цепочкой моделей.
 
-    `model` теперь не одна, а **первая в цепочке**. Если модель недоступна
-    (403 verification, 404 not found, etc.) — клиент пробует `fallback_models`
-    по порядку. Это даёт лучший рендер на доступной модели без ручных
-    переключений.
+    Используется обоими провайдерами: для edits/inpaint (OpenAI gpt-image)
+    `fallback_models` реально работают; для text-gen (Grok) поля
+    `quality`/`size`/`fallback_models` игнорируются.
 
-    По умолчанию: gpt-image-2 → gpt-image-1.5 → gpt-image-1.
+    По умолчанию для edits: gpt-image-2 → gpt-image-1.5 → gpt-image-1.
     """
     model: str = "gpt-image-2"
     fallback_models: tuple[str, ...] = ("gpt-image-1.5", "gpt-image-1")
@@ -46,23 +52,16 @@ class GenerationOptions:
     n: int = 1
 
 
-# Простой in-memory cache: {prompt_hash: png_bytes}
-_IMAGE_CACHE: dict[str, bytes] = {}
-_CACHE_LIMIT = 32
-
-
-def _cache_key(prompt: str, opts: GenerationOptions) -> str:
-    h = hashlib.sha256()
-    h.update(prompt.encode("utf-8"))
-    h.update(f"|{opts.model}|{opts.size}|{opts.quality}".encode("utf-8"))
-    return h.hexdigest()[:32]
-
-
 @dataclass(frozen=True)
 class GenerationResult:
     """Результат генерации: PNG + какая модель сработала."""
     png: bytes
     model_used: str
+
+
+# In-memory cache для edits/inpaint. Text-gen имеет свой кэш в grok_client.
+_IMAGE_CACHE: dict[str, bytes] = {}
+_CACHE_LIMIT = 32
 
 
 # Ошибки, при которых имеет смысл фоллбэкать на следующую модель в цепочке
@@ -78,27 +77,6 @@ _FALLBACKABLE_PATTERNS = (
 def _is_fallbackable(err: Exception) -> bool:
     s = str(err).lower()
     return any(p in s for p in _FALLBACKABLE_PATTERNS)
-
-
-def _try_one_model(client, model: str, prompt: str, opts: GenerationOptions) -> bytes:
-    """Один вызов с конкретной моделью (text-to-image)."""
-    response = client.images.generate(
-        model=model,
-        prompt=prompt,
-        size=opts.size,
-        quality=opts.quality,
-        n=opts.n,
-    )
-    if not response.data:
-        raise OpenAIError("OpenAI returned empty data")
-    item = response.data[0]
-    if hasattr(item, "b64_json") and item.b64_json:
-        return base64.b64decode(item.b64_json)
-    if hasattr(item, "url") and item.url:
-        import urllib.request
-        with urllib.request.urlopen(item.url, timeout=30) as resp:
-            return resp.read()
-    raise OpenAIError("OpenAI response had neither b64_json nor url")
 
 
 def _try_one_model_edit(
@@ -129,73 +107,6 @@ def _try_one_model_edit(
         with urllib.request.urlopen(item.url, timeout=30) as resp:
             return resp.read()
     raise OpenAIError("OpenAI response had neither b64_json nor url")
-
-
-def generate_image_with_meta(
-    prompt: str,
-    opts: GenerationOptions | None = None,
-    *,
-    use_cache: bool = True,
-) -> GenerationResult:
-    """Сгенерировать картинку с auto-fallback цепочкой моделей.
-
-    Возвращает `GenerationResult` — PNG + имя модели, которая сработала.
-    """
-    options = opts or GenerationOptions()
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise MissingAPIKey(
-            "OPENAI_API_KEY не задан. Получите ключ на https://platform.openai.com/api-keys "
-            "и добавьте в окружение перед запуском движка."
-        )
-
-    key = _cache_key(prompt, options)
-    if use_cache and key in _IMAGE_CACHE:
-        cached = _IMAGE_CACHE[key]
-        return GenerationResult(png=cached, model_used="cache")
-
-    try:
-        from openai import OpenAI
-    except ImportError as e:
-        raise RuntimeError(
-            "Пакет openai не установлен. `pip install openai>=1.40` в engine/.venv"
-        ) from e
-
-    client = OpenAI(api_key=api_key)
-
-    # Цепочка: основная модель + фоллбэки
-    chain = (options.model,) + tuple(options.fallback_models)
-    last_error: Exception | None = None
-    for model in chain:
-        try:
-            png = _try_one_model(client, model, prompt, options)
-            if use_cache:
-                if len(_IMAGE_CACHE) >= _CACHE_LIMIT:
-                    _IMAGE_CACHE.pop(next(iter(_IMAGE_CACHE)))
-                _IMAGE_CACHE[key] = png
-            return GenerationResult(png=png, model_used=model)
-        except Exception as e:
-            last_error = e
-            if _is_fallbackable(e):
-                # пробуем следующую модель в цепочке
-                continue
-            # фатальная ошибка (rate limit, content policy и т.д.) — наружу
-            raise OpenAIError(f"OpenAI API error: {e}") from e
-
-    # Цепочка исчерпана
-    raise OpenAIError(
-        f"All models in fallback chain failed. Last error: {last_error}"
-    )
-
-
-def generate_image(
-    prompt: str,
-    opts: GenerationOptions | None = None,
-    *,
-    use_cache: bool = True,
-) -> bytes:
-    """Backward-compat wrapper: вернуть только bytes без metadata."""
-    return generate_image_with_meta(prompt, opts, use_cache=use_cache).png
 
 
 def _try_one_model_edit_mask(

@@ -1,16 +1,17 @@
-"""Marketing-grade визуализация через OpenAI gpt-image-1.
+"""Marketing-grade визуализация — гибрид xAI Grok + OpenAI gpt-image.
 
 Пайплайн чисто prompt-driven:
     параметры формы → MarketingInputs → build_marketing_prompt
     → enhance_prompt (опционально, через Gemma 4)
-    → openai_client.generate_image() → PNG bytes
+    → grok_client.generate_image() → PNG bytes
 
-Стоимость по состоянию на 2026:
-    gpt-image-1 standard 1024×1024: ~$0.04
-    gpt-image-1 high     1024×1024: ~$0.17
-    1792×1024:                      ~$0.08–0.32
+Провайдеры:
+    * Text→image (листы альбома)     — xAI `grok-imagine-image` ($0.02/img)
+    * Image-edit («Посадка на участок») — OpenAI `gpt-image-2`
+    * Inpainting (MaskCanvas)         — OpenAI `gpt-image-2`
 
-Ключ ожидается в `OPENAI_API_KEY` env var (см. `.env.example`).
+Ключи: `XAI_API_KEY` (для Grok) + `OPENAI_API_KEY` (для edits/inpaint
+и vision-задач) — см. `.env.example`.
 """
 
 from .agent_enhancer import (
@@ -27,7 +28,8 @@ from .kz_norms import (
     list_available_sections, select_relevant_norms,
 )
 from .marketing_prompt import MarketingInputs, build_marketing_prompt
-from .openai_client import generate_image, GenerationOptions
+from .openai_client import GenerationOptions
+from .grok_client import generate_image
 
 __all__ = [
     # промпт-билдеры
