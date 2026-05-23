@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import replace
 
 # Переиспользуем общие типы — чтобы вызывающий код не различал провайдеров.
 from .openai_client import (
@@ -28,8 +27,11 @@ from .openai_client import (
 )
 
 
-_DEFAULT_GROK_MODEL = "grok-imagine-image"            # $0.02/img (standard)
-_GROK_QUALITY_MODEL = "grok-imagine-image-quality"    # $0.05/img (если standard слабоват)
+# Доступные модели xAI (январь 2026):
+#   grok-imagine-image           — $0.02/img (standard, дефолт)
+#   grok-imagine-image-quality   — $0.05/img (если standard слабоват)
+# Переключить можно через ENV GROK_IMAGE_MODEL.
+_DEFAULT_GROK_MODEL = "grok-imagine-image"
 _XAI_BASE_URL = "https://api.x.ai/v1"
 
 
@@ -72,8 +74,16 @@ def _api_key() -> str:
 
 
 def _fetch_url_png(url: str) -> bytes:
+    """Скачать PNG с Bearer-токеном xAI.
+
+    Картинки лежат на приватном CDN xAI — без Authorization → 403.
+    """
     import urllib.request
-    with urllib.request.urlopen(url, timeout=30) as resp:
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {_api_key()}"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read()
 
 
@@ -86,10 +96,23 @@ def _call_grok(prompt: str, model: str) -> bytes:
         ) from e
 
     client = OpenAI(api_key=_api_key(), base_url=_XAI_BASE_URL)
+
+    # Сначала пытаемся попросить base64 напрямую — экономит второй HTTP
+    # запрос и обходит auth-проблему с CDN. Если xAI этот параметр не
+    # поддерживает — упадём в обычный вызов и скачаем по url с Bearer.
     try:
-        response = client.images.generate(model=model, prompt=prompt)
-    except Exception as e:
-        raise OpenAIError(f"xAI image API error: {e}") from e
+        response = client.images.generate(
+            model=model, prompt=prompt, response_format="b64_json",
+        )
+    except Exception as e_b64:
+        msg = str(e_b64).lower()
+        if "response_format" in msg or "invalid argument" in msg or "unknown" in msg:
+            try:
+                response = client.images.generate(model=model, prompt=prompt)
+            except Exception as e:
+                raise OpenAIError(f"xAI image API error: {e}") from e
+        else:
+            raise OpenAIError(f"xAI image API error: {e_b64}") from e_b64
 
     if not response.data:
         raise OpenAIError("xAI returned empty data")
