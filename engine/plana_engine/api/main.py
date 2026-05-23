@@ -627,10 +627,15 @@ _FLOOR_VARIANTS = [
         "label": "Классическая секция",
         "suffix": (
             "\n\n═══ ПЛАНИРОВОЧНАЯ СТРАТЕГИЯ: КЛАССИЧЕСКАЯ СЕКЦИЯ ═══\n"
-            "IMPORTANT: Keep EXACTLY the apartment count and mix specified above — do NOT change them.\n"
+            "IMPORTANT: Keep EXACTLY the apartment count, mix AND room programs specified above — do NOT change them.\n"
             "Layout strategy: traditional Kazakh/Soviet section layout. "
             "Central staircase-lift core, short dead-end corridors (≤12 m). "
-            "Apartments on both sides of the core. Standard СНиП room proportions."
+            "Apartments on both sides of the core. Standard СНиП room proportions.\n"
+            "КОНТРОЛЬ ПЕРЕД ВЫВОДОМ: пересчитай жилые комнаты в каждой квартире и сверь с подписью "
+            "(«1-комнатная» = 1 жилая, «2-комнатная» = 2 жилые, «3-комнатная» = 3 жилые). Кухня не в счёт.\n"
+            "ДОПОЛНИТЕЛЬНО: если где-то есть подпись «Спальня 1» — ОБЯЗАНА присутствовать и «Спальня 2» "
+            "(а в 4-комнатных — и «Спальня 3»). Сверь сумму площадей жилых комнат с указанной S жил.: "
+            "они должны совпадать. Расхождение = пропущенная комната, дорисовать её."
         ),
     },
     {
