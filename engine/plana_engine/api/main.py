@@ -225,7 +225,6 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         fire_evacuation_exits_per_section=req.fire_evacuation_exits_per_section,
         fire_dead_end_corridor_max_m=req.fire_dead_end_corridor_max_m,
         insolation_priority=req.insolation_priority,
-        insolation_min_hours=req.insolation_min_hours,
         max_coverage_pct=req.max_coverage_pct,
         max_height_m=req.max_height_m,
         site_polygon=tuple(tuple(p) for p in req.site_polygon) if req.site_polygon else None,
