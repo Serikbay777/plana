@@ -13,8 +13,9 @@
 import { useState, useRef, useCallback, useEffect, useReducer, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
-  Pencil, RefreshCw, Undo2, Redo2, Send, MessageSquare, Grid3x3,
+  Pencil, RefreshCw, Undo2, Redo2, Send, MessageSquare, Grid3x3, Box,
 } from "lucide-react";
+import { IfcViewerModal } from "@/components/IfcViewerModal";
 import {
   generateLayoutFromBrief, generateLayoutFromWizard,
   exportFloorplanDxf, exportFloorplanIfc,
@@ -78,6 +79,7 @@ export function ArchitecturalDrawingsTab({
   const [exportBusy, setExportBusy] = useState<ExportKind | null>(null);
   const [vizImageUrl, setVizImageUrl] = useState<string | null>(null);
   const [enhancing, setEnhancing] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   // ── Editor state via useReducer (Sprint 1 v1.0 plan) ───────────────
   // Один reducer над всем editor state: project (с multi-floor),
@@ -372,7 +374,11 @@ export function ArchitecturalDrawingsTab({
     if (!result || exportBusy) return;
     setExportBusy("ifc");
     try {
-      const { blob, filename } = await exportFloorplanIfc(result.inputs);
+      // Передаём текущий layout (с правками редактора), чтобы получить
+      // богатый IFC с реальными IfcSpace на каждую комнату, а не
+      // параметрическую коробку из marketing_to_project.
+      const layoutToExport = currentLayout ?? result.layout;
+      const { blob, filename } = await exportFloorplanIfc(result.inputs, layoutToExport);
       downloadBlob(blob, filename);
     } catch (e) {
       setError(`IFC: ${(e as Error).message}`);
@@ -380,6 +386,16 @@ export function ArchitecturalDrawingsTab({
       setExportBusy(null);
     }
   };
+
+  // Лениво грузит IFC байты для встроенного 3D-вьюера. Та же логика что и
+  // handleExportIfc, но без download — модель идёт прямо в web-ifc-парсер.
+  const fetchIfcBytes = useCallback(async (): Promise<Uint8Array> => {
+    if (!result) throw new Error("Нет сгенерированного плана");
+    const layoutToExport = currentLayout ?? result.layout;
+    const { blob } = await exportFloorplanIfc(result.inputs, layoutToExport);
+    const buf = await blob.arrayBuffer();
+    return new Uint8Array(buf);
+  }, [result, currentLayout]);
 
   const handleAiViz = async () => {
     if (!result || exportBusy) return;
@@ -518,6 +534,14 @@ export function ArchitecturalDrawingsTab({
               className="h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-cyan-400/30 text-cyan-200/90 hover:bg-cyan-500/15 transition disabled:opacity-40"
             >
               {exportBusy === "ifc" ? <Loader2 size={11} className="animate-spin" /> : <Network size={11} />} IFC
+            </button>
+            <button
+              onClick={() => setViewerOpen(true)}
+              disabled={!result}
+              className="h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-emerald-400/30 text-emerald-200/90 hover:bg-emerald-500/15 transition disabled:opacity-40"
+              title="Открыть 3D-просмотр IFC прямо в браузере"
+            >
+              <Box size={11} /> 3D
             </button>
             <button
               onClick={handleAiViz}
@@ -859,6 +883,13 @@ export function ArchitecturalDrawingsTab({
         onPng={handleExportPng}
         onJson={handleExportJson}
         onDxf={handleExportDxfModal}
+      />
+      <IfcViewerModal
+        open={viewerOpen}
+        onClose={() => setViewerOpen(false)}
+        onDownload={handleExportIfc}
+        getIfcBytes={fetchIfcBytes}
+        modelName="plana-floorplan"
       />
     </>
   );
