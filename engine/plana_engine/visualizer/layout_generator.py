@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import logging
-import math
 
 from ..cad.layout_schema import (
     LayoutApartment,
@@ -35,72 +34,80 @@ _CORE_D      = 5.50
 
 
 def _rooms_for_studio(w: float, d: float) -> list[dict]:
-    """Студия: кухня-гостиная + сан.узел + прихожая."""
+    """Студия: Кухня-гостиная у фасада (y=0), прихожая+санузел у коридора.
+
+    Жилые комнаты у фасадной кромки (y=0) → получают окна автоматически.
+    """
     hall_d = min(2.0, d * 0.25)
     bath_w = min(2.5, w * 0.35)
+    living_d = d - hall_d
     return [
-        {"kind": "hallway",  "name_ru": "Прихожая",       "x": 0,      "y": 0,      "w": w,           "d": hall_d},
-        {"kind": "bathroom", "name_ru": "Сан.узел",        "x": 0,      "y": hall_d, "w": bath_w,      "d": d - hall_d},
-        {"kind": "living",   "name_ru": "Кухня-гостиная",  "x": bath_w, "y": hall_d, "w": w - bath_w,  "d": d - hall_d},
+        # Фасадный ряд (y=0): кухня-гостиная во всю ширину
+        {"kind": "living",   "name_ru": "Кухня-гостиная", "x": 0,      "y": 0,        "w": w,          "d": living_d},
+        # Тыльный ряд (к коридору): прихожая + санузел
+        {"kind": "hallway",  "name_ru": "Прихожая",      "x": 0,      "y": living_d, "w": w - bath_w, "d": hall_d},
+        {"kind": "bathroom", "name_ru": "Сан.узел",       "x": w - bath_w, "y": living_d, "w": bath_w, "d": hall_d},
     ]
 
 
 def _rooms_for_1k(w: float, d: float) -> list[dict]:
-    """1К: гостиная / спальня / кухня / сан.узел / прихожая."""
-    hall_d  = min(2.0, d * 0.22)
+    """1К: Спальня + Гостиная-кухня у фасада, Прихожая+Санузел у коридора."""
+    hall_d  = min(2.0, d * 0.30)
     bath_w  = min(2.5, w * 0.30)
-    kit_w   = min(3.5, w * 0.35)
-    rem_d   = d - hall_d
-    bed_d   = rem_d * 0.50
-    liv_d   = rem_d - bed_d
+    living_d = d - hall_d
+    bed_w   = max(2.5, w * 0.42)
+    liv_w   = w - bed_w
     return [
-        {"kind": "hallway",  "name_ru": "Прихожая", "x": 0,           "y": 0,      "w": w,               "d": hall_d},
-        {"kind": "kitchen",  "name_ru": "Кухня",    "x": 0,           "y": hall_d, "w": kit_w,           "d": bed_d},
-        {"kind": "bathroom", "name_ru": "Сан.узел", "x": 0,           "y": hall_d + bed_d, "w": bath_w,  "d": liv_d},
-        {"kind": "bedroom",  "name_ru": "Спальня",  "x": kit_w,       "y": hall_d, "w": w - kit_w,       "d": bed_d},
-        {"kind": "living",   "name_ru": "Гостиная", "x": bath_w,      "y": hall_d + bed_d, "w": w - bath_w, "d": liv_d},
+        # Фасадный ряд: спальня | гостиная-кухня
+        {"kind": "bedroom",  "name_ru": "Спальня",      "x": 0,         "y": 0,        "w": bed_w, "d": living_d},
+        {"kind": "living",   "name_ru": "Гостиная-кухня","x": bed_w,    "y": 0,        "w": liv_w, "d": living_d},
+        # Тыльный ряд: прихожая | санузел
+        {"kind": "hallway",  "name_ru": "Прихожая",     "x": 0,         "y": living_d, "w": w - bath_w, "d": hall_d},
+        {"kind": "bathroom", "name_ru": "Сан.узел",     "x": w - bath_w,"y": living_d, "w": bath_w,     "d": hall_d},
     ]
 
 
 def _rooms_for_2k(w: float, d: float) -> list[dict]:
-    """2К: гостиная / 2 спальни / кухня / 2 сан.узла / прихожая."""
-    hall_d  = min(2.0, d * 0.20)
-    bath_w  = min(2.5, w * 0.28)
-    kit_w   = min(4.0, w * 0.36)
-    rem_d   = d - hall_d
-    bed_d   = rem_d * 0.45
-    mid_d   = rem_d * 0.30
-    liv_d   = rem_d - bed_d - mid_d
+    """2К: Спальня + Гостиная + Кухня у фасада, остальное у коридора."""
+    hall_d  = min(2.0, d * 0.28)
+    bath_w  = min(2.0, w * 0.20)
+    living_d = d - hall_d
+    # Фасадный ряд из трёх комнат: спальня (35%), гостиная (35%), кухня (30%)
+    bed_w   = max(2.5, w * 0.36)
+    liv_w   = max(2.5, w * 0.34)
+    kit_w   = w - bed_w - liv_w
     return [
-        {"kind": "hallway",  "name_ru": "Прихожая",   "x": 0,        "y": 0,                    "w": w,              "d": hall_d},
-        {"kind": "bedroom",  "name_ru": "Спальня 1",  "x": 0,        "y": hall_d,               "w": kit_w,          "d": bed_d},
-        {"kind": "bedroom",  "name_ru": "Спальня 2",  "x": kit_w,    "y": hall_d,               "w": w - kit_w,      "d": bed_d},
-        {"kind": "kitchen",  "name_ru": "Кухня",      "x": 0,        "y": hall_d + bed_d,       "w": kit_w,          "d": mid_d},
-        {"kind": "bathroom", "name_ru": "Сан.узел 1", "x": kit_w,    "y": hall_d + bed_d,       "w": bath_w,         "d": mid_d},
-        {"kind": "bathroom", "name_ru": "Сан.узел 2", "x": kit_w + bath_w, "y": hall_d + bed_d, "w": w - kit_w - bath_w, "d": mid_d},
-        {"kind": "living",   "name_ru": "Гостиная",   "x": 0,        "y": hall_d + bed_d + mid_d, "w": w,            "d": liv_d},
+        # Фасадный ряд: спальня | гостиная | кухня
+        {"kind": "bedroom",  "name_ru": "Спальня",   "x": 0,                 "y": 0,        "w": bed_w, "d": living_d},
+        {"kind": "living",   "name_ru": "Гостиная",  "x": bed_w,             "y": 0,        "w": liv_w, "d": living_d},
+        {"kind": "kitchen",  "name_ru": "Кухня",     "x": bed_w + liv_w,     "y": 0,        "w": kit_w, "d": living_d},
+        # Тыльный ряд: прихожая | 2 санузла
+        {"kind": "hallway",  "name_ru": "Прихожая",  "x": 0,                 "y": living_d, "w": w - 2 * bath_w, "d": hall_d},
+        {"kind": "bathroom", "name_ru": "Сан.узел 1","x": w - 2 * bath_w,    "y": living_d, "w": bath_w,          "d": hall_d},
+        {"kind": "bathroom", "name_ru": "Сан.узел 2","x": w - bath_w,        "y": living_d, "w": bath_w,          "d": hall_d},
     ]
 
 
 def _rooms_for_3k(w: float, d: float) -> list[dict]:
-    """3К: гостиная / 3 спальни / кухня / 2 сан.узла / прихожая."""
-    hall_d  = min(2.0, d * 0.18)
-    bath_w  = min(2.5, w * 0.26)
-    kit_w   = min(4.2, w * 0.36)
-    rem_d   = d - hall_d
-    bed_d   = rem_d * 0.40
-    mid_d   = rem_d * 0.28
-    liv_d   = rem_d - bed_d - mid_d
-    bed_w   = w / 3
+    """3К: 2 Спальни + Гостиная + Кухня у фасада, остальное у коридора."""
+    hall_d  = min(2.0, d * 0.26)
+    bath_w  = min(2.0, w * 0.18)
+    living_d = d - hall_d
+    # 4 комнаты у фасада: спальня1 | спальня2 | гостиная | кухня
+    bed1_w  = max(2.3, w * 0.22)
+    bed2_w  = max(2.3, w * 0.22)
+    liv_w   = max(2.5, w * 0.30)
+    kit_w   = w - bed1_w - bed2_w - liv_w
     return [
-        {"kind": "hallway",  "name_ru": "Прихожая",   "x": 0,          "y": 0,                    "w": w,           "d": hall_d},
-        {"kind": "bedroom",  "name_ru": "Спальня 1",  "x": 0,          "y": hall_d,               "w": bed_w,       "d": bed_d},
-        {"kind": "bedroom",  "name_ru": "Спальня 2",  "x": bed_w,      "y": hall_d,               "w": bed_w,       "d": bed_d},
-        {"kind": "bedroom",  "name_ru": "Спальня 3",  "x": 2 * bed_w,  "y": hall_d,               "w": w - 2*bed_w, "d": bed_d},
-        {"kind": "kitchen",  "name_ru": "Кухня",      "x": 0,          "y": hall_d + bed_d,       "w": kit_w,       "d": mid_d},
-        {"kind": "bathroom", "name_ru": "Сан.узел 1", "x": kit_w,      "y": hall_d + bed_d,       "w": bath_w,      "d": mid_d},
-        {"kind": "bathroom", "name_ru": "Сан.узел 2", "x": kit_w+bath_w,"y": hall_d + bed_d,      "w": w-kit_w-bath_w, "d": mid_d},
-        {"kind": "living",   "name_ru": "Гостиная",   "x": 0,          "y": hall_d+bed_d+mid_d,   "w": w,           "d": liv_d},
+        # Фасадный ряд из 4 комнат
+        {"kind": "bedroom",  "name_ru": "Спальня 1", "x": 0,                              "y": 0,        "w": bed1_w, "d": living_d},
+        {"kind": "bedroom",  "name_ru": "Спальня 2", "x": bed1_w,                         "y": 0,        "w": bed2_w, "d": living_d},
+        {"kind": "living",   "name_ru": "Гостиная",  "x": bed1_w + bed2_w,                "y": 0,        "w": liv_w,  "d": living_d},
+        {"kind": "kitchen",  "name_ru": "Кухня",     "x": bed1_w + bed2_w + liv_w,        "y": 0,        "w": kit_w,  "d": living_d},
+        # Тыльный ряд: прихожая + 2 санузла + спальня 3 (без окна — внутренняя)
+        {"kind": "hallway",  "name_ru": "Прихожая",  "x": 0,                              "y": living_d, "w": w - 2 * bath_w, "d": hall_d},
+        {"kind": "bathroom", "name_ru": "Сан.узел 1","x": w - 2 * bath_w,                 "y": living_d, "w": bath_w,          "d": hall_d},
+        {"kind": "bathroom", "name_ru": "Сан.узел 2","x": w - bath_w,                     "y": living_d, "w": bath_w,          "d": hall_d},
     ]
 
 
@@ -297,6 +304,15 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
                 # В галерейном — квартиры только с юга, коридор N.
                 exterior_side: str = "S" if side_y < corr_y else "N"
                 interior_side: str = "N" if side_y < corr_y else "S"
+
+                # Раскладки _rooms_for_* кладут жилые комнаты на y=0
+                # (фасадная кромка квартиры) и Прихожую на y=d. Это правильно
+                # для южных квартир (y=0 = south = facade). Для северных
+                # инвертируем — там фасад это y=d (north).
+                if exterior_side == "N":
+                    for r in rooms:
+                        r.y = round(apt_d - r.y - r.d, 3)
+
                 _add_apertures(rooms, apt_d, exterior_side, interior_side)
                 for room in rooms:
                     _add_furniture(room, exterior_side)

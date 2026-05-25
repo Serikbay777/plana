@@ -97,6 +97,9 @@ _PUBLIC_PATHS = {"/health", "/auth/login", "/auth/register", "/docs", "/openapi.
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next: Any) -> Any:
+    # CORS preflight (OPTIONS) пропускаем — CORSMiddleware ответит сам.
+    if request.method == "OPTIONS":
+        return await call_next(request)
     if request.url.path in _PUBLIC_PATHS or request.url.path.startswith("/static/"):
         return await call_next(request)
     auth_header = request.headers.get("Authorization", "")
@@ -2341,6 +2344,7 @@ def export_floorplan_ifc(req: ExportIfcRequest) -> Response:
     from ..domain import marketing_to_project
 
     inputs = _inputs_from_req(req)
+    project = marketing_to_project(inputs)
 
     if req.layout is not None:
         try:
@@ -2348,7 +2352,6 @@ def export_floorplan_ifc(req: ExportIfcRequest) -> Response:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"IFC from layout failed: {e}")
     else:
-        project = marketing_to_project(inputs)
         try:
             ifc_bytes = build_floorplan_ifc(project)
         except Exception as e:
