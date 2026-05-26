@@ -71,6 +71,10 @@ function defaultLayers(): LayersState {
   for (const id of ALL_LAYERS) {
     result[id] = { visible: true, locked: false };
   }
+  // «texts» (подписи комнат «Гостиная», «Спальня» и т.д.) — выключен по
+  // умолчанию: пользователь хочет чистый вид сверху без надписей. Включается
+  // через LayersPanel при необходимости.
+  result.texts = { visible: false, locked: false };
   return result;
 }
 

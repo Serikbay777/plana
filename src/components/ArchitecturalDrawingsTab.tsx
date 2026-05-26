@@ -645,21 +645,26 @@ export function ArchitecturalDrawingsTab({
 // ---------------------------------------------------------------------------
 
 // Бежевая палитра (тон листа архитектурного чертежа)
-const CANVAS_BG    = "#FAF5E6";   // фон всего SVG
-const ROOM_FILL    = "#F0E8D2";   // заливка комнат
-const CORRIDOR_FILL = "#E8DFC4";  // коридор — чуть темнее
-const BALCONY_FILL  = "#D8E4D2";  // лоджия — слегка зелёный (на улице/во дворе)
+const CANVAS_BG    = "#F5F4EE";   // фон всего SVG — светлый бумажный
+// Стиль S1+S2 (приближение к Maket): чисто-белый фон комнат, тонкие
+// архитектурные линии стен. Раньше использовался тёплый бежевый — здесь
+// строгий чертёжный.
+const ROOM_FILL    = "#FAFAF6";   // почти белый
+const CORRIDOR_FILL = "#F0EEE8";  // светлый бежево-серый
+const BALCONY_FILL  = "#E6EDE2";  // лоджия — мягкий зелёный (наружное)
 const CORE_FILL    = "#222426";   // ядра (лифты, лестница) — почти чёрные
 const CORE_TEXT    = "#FAF5E6";   // надписи на ядрах
-const WALL_COLOR   = "#1a1a1a";   // основной цвет стен
+const WALL_COLOR   = "#0a0a0a";   // основной цвет стен — почти чёрный
 const LABEL_COLOR  = "#2d2d2d";   // подписи комнат
 const AREA_COLOR   = "#7a6a4a";   // подписи площадей
 
-// Толщины стен в метрах SVG-единиц (соответствует реальной толщине).
-const WALL_EXTERIOR = 0.35;   // внешние стены здания
-const WALL_PARTITION = 0.15;  // внутренние перегородки между комнатами
-const WALL_CORE     = 0.10;   // ядра — тонкий контур (т.к. заливка тёмная)
-const WALL_SECTION  = 0.25;   // межсекционная противопожарная стена
+// Толщины стен в метрах SVG-единиц. S1 (Maket-look): тонкие архитектурные
+// линии вместо жирных. Раньше внешние были 0.35 — теперь 0.18 (всё ещё
+// читаются как несущие, но не доминируют).
+const WALL_EXTERIOR = 0.18;   // внешние стены здания
+const WALL_PARTITION = 0.08;  // внутренние перегородки между комнатами
+const WALL_CORE     = 0.06;   // ядра — тонкий контур
+const WALL_SECTION  = 0.14;   // межсекционная противопожарная стена
 
 // Типографика — фиксированные размеры (в метрах), без зависимости от размера
 // комнаты. Если комната слишком мала для подписи — она просто не отрисуется.
@@ -1905,9 +1910,13 @@ function WindowSymbol({
   rx, archY, rw, rd, win, ry,
 }: SymbolProps & { win: LayoutWindow }) {
   const { p1, p2, horizontal } = wallSegment(win.side, win.offset, win.width, rx, archY, rw, rd, ry);
-  const wallT = WALL_PARTITION;       // толщина внешней стены, на которой окно
-  // Окно: белый «вырез» в стене + две тонкие линии (символ стеклопакета)
-  const gap = wallT * 0.55;           // расстояние между двумя линиями
+  // Окна архитектурно ставятся на ВНЕШНЮЮ стену — используем её реальную
+  // толщину для визуальной читаемости стеклопакета, а не тонкую перегородку.
+  const wallT = WALL_EXTERIOR;
+  // Окно: белый «вырез» в стене + две параллельные линии (символ стеклопакета)
+  // gap ~70% толщины стены чтобы две линии явно читались как окно.
+  const gap = wallT * 0.7;
+  const stroke = 0.05;                 // толще чем перегородка — окно «звенит»
   if (horizontal) {
     const wy = (p1.y + p2.y) / 2;
     return (
@@ -1917,8 +1926,8 @@ function WindowSymbol({
           width={Math.abs(p2.x - p1.x)} height={wallT}
           fill={CANVAS_BG} stroke="none"
         />
-        <line x1={p1.x} y1={wy - gap / 2} x2={p2.x} y2={wy - gap / 2} stroke={WALL_COLOR} strokeWidth={0.04} />
-        <line x1={p1.x} y1={wy + gap / 2} x2={p2.x} y2={wy + gap / 2} stroke={WALL_COLOR} strokeWidth={0.04} />
+        <line x1={p1.x} y1={wy - gap / 2} x2={p2.x} y2={wy - gap / 2} stroke={WALL_COLOR} strokeWidth={stroke} />
+        <line x1={p1.x} y1={wy + gap / 2} x2={p2.x} y2={wy + gap / 2} stroke={WALL_COLOR} strokeWidth={stroke} />
       </g>
     );
   }
@@ -1930,8 +1939,8 @@ function WindowSymbol({
         width={wallT} height={Math.abs(p2.y - p1.y)}
         fill={CANVAS_BG} stroke="none"
       />
-      <line x1={wx - gap / 2} y1={p1.y} x2={wx - gap / 2} y2={p2.y} stroke={WALL_COLOR} strokeWidth={0.04} />
-      <line x1={wx + gap / 2} y1={p1.y} x2={wx + gap / 2} y2={p2.y} stroke={WALL_COLOR} strokeWidth={0.04} />
+      <line x1={wx - gap / 2} y1={p1.y} x2={wx - gap / 2} y2={p2.y} stroke={WALL_COLOR} strokeWidth={stroke} />
+      <line x1={wx + gap / 2} y1={p1.y} x2={wx + gap / 2} y2={p2.y} stroke={WALL_COLOR} strokeWidth={stroke} />
     </g>
   );
 }
@@ -1991,16 +2000,15 @@ function DoorSymbol({
   }
 
   return (
-    <g stroke={WALL_COLOR} strokeWidth={0.04} fill="none" strokeLinecap="round">
+    <g stroke={WALL_COLOR} strokeWidth={0.06} fill="none" strokeLinecap="round">
       {cutout}
-      {/* Дуга открывания */}
+      {/* S4: Дуга открывания — сплошная и чёткая (как в Maket) */}
       <path
         d={`M ${opposite.x} ${opposite.y} A ${doorLen} ${doorLen} 0 ${arcLargeFlag} ${arcSweepFlag} ${open.x} ${open.y}`}
-        strokeDasharray="0.06 0.06"
-        strokeWidth={0.025}
+        strokeWidth={0.045}
       />
-      {/* Полотно двери в открытом положении */}
-      <line x1={hinge.x} y1={hinge.y} x2={open.x} y2={open.y} strokeWidth={0.06} />
+      {/* Полотно двери в открытом положении — жирнее, читается издалека */}
+      <line x1={hinge.x} y1={hinge.y} x2={open.x} y2={open.y} strokeWidth={0.085} />
     </g>
   );
 }
