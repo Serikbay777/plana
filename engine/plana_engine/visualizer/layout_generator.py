@@ -30,6 +30,17 @@ _CORR_MIN_D  = 1.40   # минимальная ширина коридора (К
 _CORE_W      = 1.5 + 2.1 + 2.1 + 0.8   # 6.5 м (пасс. лифт + груз. лифт + лестница + зазоры)
 _CORE_D      = 5.50
 
+# Целевая и минимальная ширина квартиры по типу (м) — реалистичные для МКД РК.
+# Раньше все квартиры были одной ширины (~7.5 м), независимо от типа — давало
+# 8 одинаковых квартир на 30-метровом фасаде, что нереалистично для 2к/3к.
+# Теперь упаковываем mix переменной ширины: студии узкие, трёшки широкие.
+#
+# Текущие значения соответствуют классу «комфорт» (60–75 м² на квартиру).
+# TODO: вынести в параметр building_class={econom|comfort|business|premium} —
+# для эконома уменьшить (5/7/10/12), для премиума увеличить (10/13/16/20).
+_TARGET_APT_W = {"studio": 7.0, "1k":  9.0,  "2k": 12.0, "3k": 15.0}
+_MIN_APT_W    = {"studio": 5.5, "1k":  7.0,  "2k": 10.0, "3k": 12.0}
+
 # ── Типовые раскладки комнат ──────────────────────────────────────────────
 
 
@@ -117,6 +128,64 @@ _ROOM_BUILDERS = {
     "2k":     _rooms_for_2k,
     "3k":     _rooms_for_3k,
 }
+
+
+def _pack_side(usable_w: float, mix_remaining: list[str]) -> list[tuple[str, float]]:
+    """Greedy-упаковка квартир переменной ширины на одну сторону секции.
+
+    Берёт типы из mix_remaining по порядку, пытается уложить target widths.
+    Если влезает не весь target_total — fallback на min widths.
+    После укладки растягивает оставшийся слабак равномерно между квартирами,
+    чтобы заполнить usable_w без зазоров.
+
+    Возвращает [(apt_type, apt_width), ...] для одной стороны.
+    """
+    if not mix_remaining or usable_w <= 0:
+        return []
+
+    # ── Шаг 1: жадно укладываем по target widths ──
+    packing: list[tuple[str, float]] = []
+    used_w = 0.0
+    for apt_type in mix_remaining:
+        target = _TARGET_APT_W.get(apt_type, 9.0)
+        if used_w + target <= usable_w + 0.3:
+            packing.append((apt_type, target))
+            used_w += target
+        else:
+            break
+
+    # ── Шаг 2: если ничего не влезло с target — пробуем с min ──
+    if not packing:
+        for apt_type in mix_remaining:
+            mn = _MIN_APT_W.get(apt_type, 7.0)
+            if used_w + mn <= usable_w + 0.3:
+                packing.append((apt_type, mn))
+                used_w += mn
+            else:
+                break
+
+    # ── Шаг 3: добавить ещё одну квартиру с min, если есть запас ≥ min ──
+    next_idx = len(packing)
+    while next_idx < len(mix_remaining):
+        candidate = mix_remaining[next_idx]
+        mn = _MIN_APT_W.get(candidate, 7.0)
+        if used_w + mn <= usable_w + 0.3:
+            packing.append((candidate, mn))
+            used_w += mn
+            next_idx += 1
+        else:
+            break
+
+    if not packing:
+        return []
+
+    # ── Шаг 4: растянуть равномерно, чтобы заполнить весь usable_w ──
+    slack = usable_w - used_w
+    if slack > 0.05:
+        each = slack / len(packing)
+        packing = [(t, w + each) for t, w in packing]
+
+    return packing
 
 
 # ── Single-family раскладки (частный дом / коттедж) ──────────────────────
@@ -386,10 +455,6 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
             core_y = round((inner_d - core_d) / 2, 3)
         cores = _make_cores(core_x, core_y, inputs.lifts_passenger, inputs.lifts_freight, core_d=core_d)
 
-        # Количество квартир по фасаду
-        n_apts = max(1, round(usable_w / 7.5))
-        apt_w  = usable_w / n_apts
-
         # Какие стороны застраиваем
         if gallery_mode:
             apt_sides: list[tuple[float, float]] = [
@@ -403,13 +468,31 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
 
         apartments: list[LayoutApartment] = []
         for side_y, apt_d in apt_sides:
-            for ai in range(n_apts):
-                ax = round(apt_x0 + ai * apt_w, 3)
-                aw = round(apt_w, 3)
-                area = round(aw * apt_d, 1)
+            # ── Pack apartments with variable width per type (Phase C) ──
+            # mix содержит запрошенные типы (studio/1k/2k/3k) в порядке.
+            # Берём следующий кусок и укладываем greedy по target widths.
+            # Studio 7м, 1к 9м, 2к 12м, 3к 15м → реалистичный МКД-микс.
+            side_packing = _pack_side(usable_w, mix)
+            # Снимаем использованные квартиры из mix
+            for _ in range(len(side_packing)):
+                if mix:
+                    mix.pop(0)
 
-                # Тип из микса или по площади
-                apt_type = mix.pop(0) if mix else _apt_type_from_area(area)
+            # Fallback если mix исчерпан или _resolve_mix вернул пустой
+            if not side_packing:
+                # Подбираем тип по площади «средней» квартиры на этой стороне
+                fallback_w = max(_MIN_APT_W["1k"], min(usable_w, _TARGET_APT_W["1k"]))
+                fallback_t = _apt_type_from_area(fallback_w * apt_d)
+                side_packing = [(fallback_t, fallback_w)]
+                slack = usable_w - fallback_w
+                if slack > 0.05:
+                    side_packing = [(fallback_t, fallback_w + slack)]
+
+            ax_cursor = apt_x0
+            for apt_type, apt_w in side_packing:
+                ax = round(ax_cursor, 3)
+                aw = round(apt_w, 3)
+                ax_cursor += apt_w
 
                 rooms_raw = _ROOM_BUILDERS[apt_type](aw, apt_d)
                 rooms = [LayoutRoom(**r) for r in rooms_raw]
@@ -431,6 +514,9 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
                         r.y = round(apt_d - r.y - r.d, 3)
 
                 _add_apertures(rooms, apt_d, exterior_side, interior_side)
+                # Лоджии — врезаем в фасадные жилые комнаты после apertures,
+                # чтобы корректно перенести окна на внешнюю стену лоджии.
+                _add_balconies(rooms, apt_d, apt_type, exterior_side)
                 for room in rooms:
                     _add_furniture(room, exterior_side)
 
@@ -518,6 +604,100 @@ def _add_apertures(
             door = _make_internal_door(room, hallway, apt_d, interior_side)
             if door is not None:
                 room.doors.append(door)
+
+
+# ── Балконы / лоджии (Phase B) ────────────────────────────────────────────
+
+
+_LOGGIA_D = 1.4           # глубина лоджии (м), типично для МКД РК/РФ
+_LOGGIA_MIN_REMAIN_D = 2.5  # минимальная глубина комнаты ПОСЛЕ выреза
+_BALCONY_DOOR_W = 0.9     # ширина балконной двери
+
+
+def _add_balconies(
+    rooms: list[LayoutRoom],
+    apt_d: float,
+    apt_type: str,
+    exterior_side: str,    # "S" или "N" — где фасад квартиры
+) -> None:
+    """Добавить лоджии к фасадным жилым комнатам квартиры (in-place).
+
+    Алгоритм:
+      1. Найти жилые комнаты, физически касающиеся внешнего фасада.
+      2. Отсортировать — гостиная первой, спальни потом.
+      3. Для studio/1k — 1 лоджия (у гостиной).
+         Для 2k/3k — 2 лоджии (у гостиной + у одной спальни).
+      4. Вырезать из комнаты полосу глубиной _LOGGIA_D со стороны фасада,
+         сама комната сдвигается вглубь.
+      5. Перенести окно, которое было на фасадной стене комнаты, на
+         внешнюю стену лоджии (физически окно осталось на том же месте,
+         но теперь принадлежит лоджии).
+      6. Добавить балконную дверь между комнатой и лоджией.
+    """
+    n_target = 1 if apt_type in ("studio", "1k") else 2
+
+    # Кандидаты: жилые комнаты, касающиеся фасада с запасом глубины
+    candidates: list[LayoutRoom] = []
+    for room in rooms:
+        if room.kind not in ("living", "bedroom"):
+            continue
+        if exterior_side == "S":
+            touches_facade = abs(room.y) < 0.01
+        else:  # "N"
+            touches_facade = abs(room.y + room.d - apt_d) < 0.01
+        if not touches_facade:
+            continue
+        if room.d < _LOGGIA_D + _LOGGIA_MIN_REMAIN_D:
+            continue
+        candidates.append(room)
+
+    # Гостиная приоритетнее спален
+    candidates.sort(key=lambda r: 0 if r.kind == "living" else 1)
+
+    new_balconies: list[LayoutRoom] = []
+    for parent in candidates[:n_target]:
+        if exterior_side == "S":
+            balcony_y = parent.y      # лоджия на фасаде S (y=0 в системе квартиры)
+            new_parent_y = parent.y + _LOGGIA_D
+        else:
+            balcony_y = parent.y + parent.d - _LOGGIA_D
+            new_parent_y = parent.y   # parent.y не двигается, уменьшается только d
+
+        balcony = LayoutRoom(
+            kind="balcony",
+            name_ru="Лоджия",
+            x=parent.x,
+            y=round(balcony_y, 3),
+            w=parent.w,
+            d=_LOGGIA_D,
+        )
+
+        # Перенос окон с фасадной стороны parent → balcony.
+        # На balcony окно остаётся на той же стороне (это та же физическая
+        # стена дома, просто теперь принадлежит лоджии).
+        for window in parent.windows[:]:
+            if window.side == exterior_side:
+                parent.windows.remove(window)
+                balcony.windows.append(window)
+
+        # Балконная дверь на parent: на той стороне, где теперь лоджия
+        # (бывшая фасадная сторона — теперь стена parent ↔ balcony).
+        bd_offset = max(0.1, (parent.w - _BALCONY_DOOR_W) / 2)
+        parent.doors.append(LayoutDoor(
+            side=exterior_side,           # type: ignore[arg-type]
+            offset=round(bd_offset, 3),
+            width=_BALCONY_DOOR_W,
+            swing="in",
+            hinge="left",
+        ))
+
+        # Сжимаем parent
+        parent.y = round(new_parent_y, 3)
+        parent.d = round(parent.d - _LOGGIA_D, 3)
+
+        new_balconies.append(balcony)
+
+    rooms.extend(new_balconies)
 
 
 def _make_window_on_facade(

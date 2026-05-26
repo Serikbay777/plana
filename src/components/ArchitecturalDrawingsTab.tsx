@@ -908,6 +908,7 @@ export function ArchitecturalDrawingsTab({
 const CANVAS_BG    = "#FAF5E6";   // фон всего SVG
 const ROOM_FILL    = "#F0E8D2";   // заливка комнат
 const CORRIDOR_FILL = "#E8DFC4";  // коридор — чуть темнее
+const BALCONY_FILL  = "#D8E4D2";  // лоджия — слегка зелёный (на улице/во дворе)
 const CORE_FILL    = "#222426";   // ядра (лифты, лестница) — почти чёрные
 const CORE_TEXT    = "#FAF5E6";   // надписи на ядрах
 const WALL_COLOR   = "#1a1a1a";   // основной цвет стен
@@ -1224,12 +1225,14 @@ export function FloorPlanSvg({
                   };
                   const isSelected = refSelected(ref);
                   const isLockedRoom = refLocked(ref);
+                  const roomFill =
+                    room.kind === "balcony" ? BALCONY_FILL : ROOM_FILL;
                   return (
                     <rect
                       key={rIdx}
                       x={rx} y={ry(archY, room.d)}
                       width={room.w} height={room.d}
-                      fill={ROOM_FILL}
+                      fill={roomFill}
                       onMouseDown={editMode
                         ? (e) => startRoomDrag(e, ref, { x: room.x, y: room.y })
                         : undefined}
