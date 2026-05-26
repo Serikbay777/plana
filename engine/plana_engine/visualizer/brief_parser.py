@@ -60,6 +60,10 @@ class BriefDerivedInputs:
     lifts_passenger: int | None
     lifts_freight:   int | None
     max_height_m:    float | None
+    # Параметры для single_family — игнорируются для multi_family.
+    bedrooms:        int | None       # количество спален в доме
+    bathrooms:       int | None       # количество санузлов
+    has_garage:      bool | None      # пристроенный гараж
     notes:           str             # что не уложилось в поля
 
 
@@ -144,11 +148,22 @@ CRITICAL RULES — read carefully:
 
 9. max_height_m: number in meters. Default 30.
 
-10. NEVER guess wildly. If the brief literally says nothing about a value
+10. bedrooms / bathrooms / has_garage — ТОЛЬКО для single_family.
+    Для multi_family оставь null (типы квартир задаются через mix-проценты).
+    Для single_family:
+    • bedrooms: явно считай по ТЗ — «3 спальни», «две спальни», «studio
+      без отдельной спальни» (=1 если есть кровать в гостиной).
+      Default 2 если ничего не сказано.
+    • bathrooms: «1 санузел», «2 ванные», «гостевой туалет + master bath»
+      = 2. Default 1.
+    • has_garage: true если упомянут гараж / гаражная зона / car port.
+      false если явно сказано «без гаража». null если не упомянуто.
+
+11. NEVER guess wildly. If the brief literally says nothing about a value
     AND no reasonable derivation is possible — return null. The backend
     has its own sane defaults.
 
-11. notes: brief 1-2 sentence summary in Russian of what you did and
+12. notes: brief 1-2 sentence summary in Russian of what you did and
     what assumptions you had to make.
 
 For mix percentages: return numbers 0..100 (e.g. 30, not 0.30).
@@ -202,6 +217,9 @@ _SCHEMA: dict[str, Any] = {
             "lifts_passenger":  {"type": ["integer", "null"]},
             "lifts_freight":    {"type": ["integer", "null"]},
             "max_height_m":     {"type": ["number", "null"]},
+            "bedrooms":         {"type": ["integer", "null"]},
+            "bathrooms":        {"type": ["integer", "null"]},
+            "has_garage":       {"type": ["boolean", "null"]},
             "notes":            {"type": "string"},
         },
         "required": [
@@ -210,8 +228,9 @@ _SCHEMA: dict[str, Any] = {
             "setback_front_m", "setback_side_m", "setback_rear_m",
             "floors", "purpose", "building_type", "sections",
             "studio_pct", "k1_pct", "k2_pct", "k3_pct",
-            "lifts_passenger", "lifts_freight",
-            "max_height_m", "notes",
+            "lifts_passenger", "lifts_freight", "max_height_m",
+            "bedrooms", "bathrooms", "has_garage",
+            "notes",
         ],
     },
     "strict": True,
@@ -270,5 +289,8 @@ def parse_brief(brief: str, *, model: str = "gpt-4.1") -> BriefDerivedInputs:
         lifts_passenger= data.get("lifts_passenger"),
         lifts_freight=   data.get("lifts_freight"),
         max_height_m=    data.get("max_height_m"),
+        bedrooms=        data.get("bedrooms"),
+        bathrooms=       data.get("bathrooms"),
+        has_garage=      data.get("has_garage"),
         notes=           data.get("notes", ""),
     )

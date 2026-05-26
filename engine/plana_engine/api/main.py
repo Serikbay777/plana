@@ -200,6 +200,10 @@ class VisualizeFromInputsRequest(BaseModel):
     quality: str = "medium"
     # свободный контур участка [[x, y], ...] в метрах. None = прямоугольник.
     site_polygon: list[list[float]] | None = None
+    # single_family параметры — для multi_family игнорируются
+    bedrooms: int = 2
+    bathrooms: int = 1
+    has_garage: bool = False
 
 
 class ExportIfcRequest(VisualizeFromInputsRequest):
@@ -234,6 +238,9 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         max_coverage_pct=req.max_coverage_pct,
         max_height_m=req.max_height_m,
         site_polygon=tuple(tuple(p) for p in req.site_polygon) if req.site_polygon else None,
+        bedrooms=req.bedrooms,
+        bathrooms=req.bathrooms,
+        has_garage=req.has_garage,
     )
 
 
@@ -2215,6 +2222,9 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
         lifts_passenger= lifts_p,
         lifts_freight=   lifts_f,
         max_height_m=    _or(b.max_height_m,    30.0, "max_height_m"),
+        bedrooms=        _or(getattr(b, "bedrooms",  None), 2,     "bedrooms"),
+        bathrooms=       _or(getattr(b, "bathrooms", None), 1,     "bathrooms"),
+        has_garage=      _or(getattr(b, "has_garage", None), False, "has_garage"),
     ), used
 
 

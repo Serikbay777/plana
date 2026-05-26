@@ -53,6 +53,12 @@ class MarketingInputs:
 
     site_polygon: tuple[tuple[float, float], ...] | None = None
 
+    # Параметры для single_family (для multi_family игнорируются — там
+    # типология задаётся через studio/k1/k2/k3 проценты).
+    bedrooms: int = 2
+    bathrooms: int = 1
+    has_garage: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Вычисленные факты (промпт читает только это — никаких if/then)

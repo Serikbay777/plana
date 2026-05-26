@@ -118,6 +118,105 @@ _ROOM_BUILDERS = {
     "3k":     _rooms_for_3k,
 }
 
+
+# ── Single-family раскладки (частный дом / коттедж) ──────────────────────
+
+
+def _rooms_for_single_family_house(
+    w: float, d: float,
+    *,
+    n_bedrooms: int = 2,
+    n_bathrooms: int | None = None,
+    has_garage: bool = False,
+) -> list[dict]:
+    """Раскладка частного дома.
+
+    Архитектурный паттерн (важно для читаемого 2D-плана):
+      ┌──────────┬─────────────────────────────────────────────────┐
+      │          │  Гостиная           │  Кухня (+ Столовая)       │
+      │  Гараж   │  (дневная зона у фасада, окна на юг)            │
+      │  (опц.)  ├─────────────────────────────────────────────────┤
+      │          │  Прихожая / коридор                             │
+      │          ├─────────────────────────────────────────────────┤
+      │          │ Спальня 1 │ Спальня 2 │ ... │ Сан.узел 1 │ ...  │
+      │          │  (ночная зона в глубине, окна на север)         │
+      └──────────┴─────────────────────────────────────────────────┘
+
+    Координаты в системе квартиры: y=0 = фасад (юг), y=d = тыл (север).
+    Гараж как отдельный блок слева (x=0), занимает ~30% ширины.
+
+    n_bathrooms: если None — выводим по числу спален (1 спальня → 1 ванная,
+    2 → 1, 3 → 2, 4+ → 2).
+    """
+    if n_bathrooms is None:
+        n_bathrooms = 1 if n_bedrooms <= 2 else 2
+
+    # Гараж — отдельный блок слева, если он есть и дом достаточно широкий
+    garage_w = 0.0
+    if has_garage and w >= 11.0:
+        garage_w = min(6.5, max(3.5, w * 0.30))   # 30% ширины, в пределах 3.5..6.5 м
+
+    house_w = w - garage_w
+
+    # Глубина: 3 ленты — дневная (у фасада) / коридор / ночная (в глубине)
+    hall_d  = min(1.8, max(1.2, d * 0.14))         # коридор-прихожая
+    front_d = (d - hall_d) * 0.52                  # дневная зона
+    back_d  = d - hall_d - front_d                 # ночная зона
+
+    rooms: list[dict] = []
+
+    # ── Гараж ─────────────────────────────────────────────────────────
+    if garage_w > 0:
+        rooms.append({
+            "kind": "garage", "name_ru": "Гараж",
+            "x": 0.0, "y": 0.0, "w": garage_w, "d": d,
+        })
+
+    house_x0 = garage_w
+
+    # ── Дневная зона (y=0, фасад): Гостиная + Кухня ──────────────────
+    living_w  = house_w * 0.55
+    kitchen_w = house_w - living_w
+    rooms.append({
+        "kind": "living", "name_ru": "Гостиная",
+        "x": house_x0, "y": 0.0, "w": living_w, "d": front_d,
+    })
+    rooms.append({
+        "kind": "kitchen", "name_ru": "Кухня",
+        "x": house_x0 + living_w, "y": 0.0, "w": kitchen_w, "d": front_d,
+    })
+
+    # ── Прихожая / коридор (между дневной и ночной) ──────────────────
+    rooms.append({
+        "kind": "hallway", "name_ru": "Прихожая",
+        "x": house_x0, "y": front_d, "w": house_w, "d": hall_d,
+    })
+
+    # ── Ночная зона (y=front_d+hall_d, в глубине): Спальни + санузлы ──
+    back_y = front_d + hall_d
+    bath_w_each = min(2.2, max(1.6, house_w * 0.12))
+    baths_total_w = bath_w_each * n_bathrooms
+    bedrooms_total_w = max(2.0, house_w - baths_total_w)
+    bed_w_each = bedrooms_total_w / max(1, n_bedrooms)
+
+    x = house_x0
+    for i in range(n_bedrooms):
+        name = "Спальня" if n_bedrooms == 1 else f"Спальня {i + 1}"
+        rooms.append({
+            "kind": "bedroom", "name_ru": name,
+            "x": x, "y": back_y, "w": bed_w_each, "d": back_d,
+        })
+        x += bed_w_each
+    for i in range(n_bathrooms):
+        name = "Сан.узел" if n_bathrooms == 1 else f"Сан.узел {i + 1}"
+        rooms.append({
+            "kind": "bathroom", "name_ru": name,
+            "x": x, "y": back_y, "w": bath_w_each, "d": back_d,
+        })
+        x += bath_w_each
+
+    return rooms
+
 # ── Определение типа квартиры по площади и целевому миксу ─────────────────
 
 
@@ -140,33 +239,46 @@ def _apt_type_from_area(area_m2: float) -> str:
 _GALLERY_THRESHOLD_M = 12.0
 
 
-def _generate_single_family_floor(inner_w: float, inner_d: float) -> LayoutFloor:
+def _generate_single_family_floor(
+    inner_w: float, inner_d: float,
+    *,
+    n_bedrooms: int = 2,
+    n_bathrooms: int | None = None,
+    has_garage: bool = False,
+) -> LayoutFloor:
     """Layout для частного дома — одна квартира на весь этаж.
 
-    Без ядер (нет лифта/лестницы подъезда — частный дом, лестница
-    внутри квартиры моделируется отдельно при многоэтажности),
-    без коридора секции, без выделения «КВ.1». Раскладка комнат
-    подбирается по площади:
-       • < 60 м²  → studio
-       • 60-100   → 1k
-       • 100-180  → 2k
-       • > 180    → 3k (3 спальни + 2 с/у)
+    Без ядер (нет лифта/лестницы подъезда), без коридора секции, без
+    выделения «КВ.1». Раскладка строится через
+    _rooms_for_single_family_house с правильным архитектурным паттерном:
+    гараж сбоку, дневная зона у фасада, ночная зона в глубине, коридор
+    между ними.
     """
-    area = inner_w * inner_d
-    if area < 60:
+    rooms_raw = _rooms_for_single_family_house(
+        inner_w, inner_d,
+        n_bedrooms=n_bedrooms,
+        n_bathrooms=n_bathrooms,
+        has_garage=has_garage,
+    )
+    rooms = [LayoutRoom(**r) for r in rooms_raw]
+
+    # Тип квартиры по числу спален (для UI-метки)
+    if n_bedrooms <= 0:
         apt_type = "studio"
-    elif area < 100:
+    elif n_bedrooms == 1:
         apt_type = "1k"
-    elif area < 180:
+    elif n_bedrooms == 2:
         apt_type = "2k"
     else:
         apt_type = "3k"
 
-    rooms_raw = _ROOM_BUILDERS[apt_type](inner_w, inner_d)
-    rooms = [LayoutRoom(**r) for r in rooms_raw]
-
-    # Окна по периметру (юг — главный фасад), вход с юга.
-    _add_apertures(rooms, inner_d, exterior_side="S", interior_side="N")
+    # В частном доме обе кромки (S и N) — внешний фасад: спальни в глубине
+    # получают окна на N, а гостиная/кухня у фасада — на S.
+    _add_apertures(
+        rooms, inner_d,
+        exterior_side="S", interior_side="N",
+        extra_facade_sides=("N",),
+    )
     for room in rooms:
         _add_furniture(room, exterior_side="S")
 
@@ -221,7 +333,12 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
 
     # ── Single-family режим: одна квартира на этаж, без подъезда ──
     if getattr(inputs, "building_type", "multi_family") == "single_family":
-        return _generate_single_family_floor(inner_w, inner_d)
+        return _generate_single_family_floor(
+            inner_w, inner_d,
+            n_bedrooms=getattr(inputs, "bedrooms", 2),
+            n_bathrooms=getattr(inputs, "bathrooms", None),
+            has_garage=getattr(inputs, "has_garage", False),
+        )
 
     n_sect  = max(1, inputs.sections)
     sect_w  = inner_w / n_sect
@@ -356,6 +473,8 @@ def _add_apertures(
     apt_d: float,
     exterior_side: str,   # "S" — низ Y, "N" — верх Y
     interior_side: str,   # противоположная exterior_side
+    *,
+    extra_facade_sides: tuple[str, ...] = (),
 ) -> None:
     """Расставить окна и двери для всех комнат квартиры in-place.
 
@@ -369,16 +488,23 @@ def _add_apertures(
         к ближайшей соседней комнате.
       • Прихожая получает входную дверь на стороне квартиры, обращённой
         к коридору (interior_side).
+
+    extra_facade_sides — дополнительные стороны, которые тоже считаются
+    внешним фасадом (для частного дома, где и S, и N — фасады).
     """
     # Найдём прихожую (для определения куда вешать двери комнат)
     hallway = next((r for r in rooms if r.kind == "hallway"), None)
 
+    facade_sides = (exterior_side, *extra_facade_sides)
+
     for room in rooms:
         # ── Окна ─────────────────────────────────────────────────────
         if room.kind in _WINDOW_KINDS:
-            window = _make_window_on_facade(room, apt_d, exterior_side)
-            if window is not None:
-                room.windows.append(window)
+            for side in facade_sides:
+                window = _make_window_on_facade(room, apt_d, side)
+                if window is not None:
+                    room.windows.append(window)
+                    break  # одной стороны достаточно
 
         # ── Двери ────────────────────────────────────────────────────
         if room.kind == "hallway":
