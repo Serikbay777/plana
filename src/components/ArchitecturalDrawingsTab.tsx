@@ -73,6 +73,7 @@ function buildVisReq(form: PromptFormState): VisualizeFromInputsRequest {
     k1_pct:     _nn(form.k1_pct,     _D.k1_pct)     / 100,
     k2_pct:     _nn(form.k2_pct,     _D.k2_pct)     / 100,
     k3_pct:     _nn(form.k3_pct,     _D.k3_pct)     / 100,
+    k4_pct:     _nn(form.k4_pct,     _D.k4_pct)     / 100,
     sections:   _nn(form.sections,   _D.sections),
     parking_spaces_per_apt:       _nn(form.parking_spaces_per_apt,       _D.parking_spaces_per_apt),
     parking_underground_levels:   _nn(form.parking_underground_levels,   _D.parking_underground_levels),
@@ -652,8 +653,10 @@ const CANVAS_BG    = "#F5F4EE";   // фон всего SVG — светлый б
 const ROOM_FILL    = "#FAFAF6";   // почти белый
 const CORRIDOR_FILL = "#F0EEE8";  // светлый бежево-серый
 const BALCONY_FILL  = "#E6EDE2";  // лоджия — мягкий зелёный (наружное)
-const CORE_FILL    = "#222426";   // ядра (лифты, лестница) — почти чёрные
-const CORE_TEXT    = "#FAF5E6";   // надписи на ядрах
+// S-lifts: cores раньше рисовались как чёрные блоки — доминировали в плане.
+// Теперь — светло-серый фон как другие служебные помещения (санузел, прихожая).
+const CORE_FILL    = "#E8E6DD";   // светлый серо-бежевый
+const CORE_TEXT    = "#2d2d2d";   // тёмный текст на светлом фоне
 const WALL_COLOR   = "#0a0a0a";   // основной цвет стен — почти чёрный
 const LABEL_COLOR  = "#2d2d2d";   // подписи комнат
 const AREA_COLOR   = "#7a6a4a";   // подписи площадей
@@ -1671,24 +1674,45 @@ function FurnitureItem({
 
   switch (kind) {
     case "bed": {
-      // Кровать с подушкой и одеялом. Подушка наверху (там где SVG-Y маленький =
-      // голова кровати у «back» стены комнаты).
-      const pillowW = w * 0.7;
-      const pillowD = d * 0.18;
-      const px = svgX + (w - pillowW) / 2;
-      const py = svgY + d * 0.05;
+      // S5: Кровать в Maket-стиле — две подушки + одеяло как явный блок +
+      // линия валика под подушками. Голова кровати наверху (svg-Y маленький =
+      // у «back» стены комнаты).
+      const headerD = d * 0.22;          // зона подушек+валика (head of bed)
+      const blanketY = svgY + headerD;
+      const blanketD = d - headerD;
+
+      const pillowGap = 0.06;
+      const pillowW = (w * 0.85 - pillowGap) / 2;
+      const pillowD = headerD * 0.65;
+      const py = svgY + 0.05;
+      const px1 = svgX + (w - pillowW * 2 - pillowGap) / 2;
+      const px2 = px1 + pillowW + pillowGap;
+
       return (
         <g>
+          {/* Каркас кровати */}
           {baseRect}
-          {/* Одеяло — линия отделяющая верх от низа */}
-          <line
-            x1={svgX} y1={svgY + d * 0.32}
-            x2={svgX + w} y2={svgY + d * 0.32}
-            stroke={FURN_STROKE} strokeWidth={sw}
-          />
-          {/* Подушка */}
+          {/* Одеяло — светлый прямоугольник, занимает большую часть */}
           <rect
-            x={px} y={py} width={pillowW} height={pillowD}
+            x={svgX + 0.04} y={blanketY}
+            width={w - 0.08} height={blanketD - 0.04}
+            fill="#fbfaf6"
+            stroke={FURN_STROKE} strokeWidth={sw}
+            rx={0.04}
+          />
+          {/* Валик / складка под подушками */}
+          <line
+            x1={svgX + 0.06} y1={blanketY + 0.03}
+            x2={svgX + w - 0.06} y2={blanketY + 0.03}
+            stroke={FURN_STROKE} strokeWidth={sw * 0.7}
+          />
+          {/* Две подушки */}
+          <rect
+            x={px1} y={py} width={pillowW} height={pillowD}
+            fill="#fff" stroke={FURN_STROKE} strokeWidth={sw} rx={0.05}
+          />
+          <rect
+            x={px2} y={py} width={pillowW} height={pillowD}
             fill="#fff" stroke={FURN_STROKE} strokeWidth={sw} rx={0.05}
           />
         </g>

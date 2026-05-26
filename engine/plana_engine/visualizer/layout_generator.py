@@ -27,8 +27,11 @@ log = logging.getLogger(__name__)
 _BEAR_T      = 0.40   # несущая/наружная стена
 _FIRE_T      = 0.40   # противопожарная стена между секциями
 _CORR_MIN_D  = 1.40   # минимальная ширина коридора (КМК 3.02-43-2007)
-_CORE_W      = 1.5 + 2.1 + 2.1 + 0.8   # 6.5 м (пасс. лифт + груз. лифт + лестница + зазоры)
-_CORE_D      = 5.50
+# Ядро компактное (раньше было 6.5×5.5 — вылазило за corridor и накладывалось
+# на квартиры). Теперь лифт + лестница + опц. грузовой ≈ 6.5×3.0, помещаются
+# внутри расширенного corridor (лифтового холла).
+_CORE_W      = 1.8 + 2.1 + 2.5 + 0.5   # ~6.9 м (пасс. лифт + груз. лифт + лестница + зазоры)
+_CORE_D      = 3.00
 
 # Целевая и минимальная ширина квартиры по типу (м) — реалистичные для МКД РК.
 # Раньше все квартиры были одной ширины (~7.5 м), независимо от типа — давало
@@ -38,8 +41,8 @@ _CORE_D      = 5.50
 # Текущие значения соответствуют классу «комфорт» (60–75 м² на квартиру).
 # TODO: вынести в параметр building_class={econom|comfort|business|premium} —
 # для эконома уменьшить (5/7/10/12), для премиума увеличить (10/13/16/20).
-_TARGET_APT_W = {"studio": 7.0, "1k":  9.0,  "2k": 12.0, "3k": 15.0}
-_MIN_APT_W    = {"studio": 5.5, "1k":  7.0,  "2k": 10.0, "3k": 12.0}
+_TARGET_APT_W = {"studio": 7.0, "1k":  9.0,  "2k": 12.0, "3k": 15.0, "4k": 18.0}
+_MIN_APT_W    = {"studio": 5.5, "1k":  7.0,  "2k": 10.0, "3k": 12.0, "4k": 15.0}
 
 # ── Типовые раскладки комнат ──────────────────────────────────────────────
 
@@ -100,25 +103,73 @@ def _rooms_for_2k(w: float, d: float) -> list[dict]:
 
 
 def _rooms_for_3k(w: float, d: float) -> list[dict]:
-    """3К: 2 Спальни + Гостиная + Кухня у фасада, остальное у коридора."""
+    """3К по СНиП РК — 3 жилых: 2 спальни + гостиная + кухня + раздельные
+    ванная и туалет + кладовая + прихожая.
+
+    По табл. 1 СНиП РК 3.02-43-2007 для III класса 3К: ≥2 санузла,
+    обязательны отдельная ванная и туалет.
+    """
     hall_d  = min(2.0, d * 0.26)
-    bath_w  = min(2.0, w * 0.18)
+    bath_w    = min(1.7, max(1.5, w * 0.13))   # ванная (≥1.5м ширина)
+    toilet_w  = min(1.2, max(0.9, w * 0.08))   # туалет (≥0.8м)
+    storage_w = min(1.5, max(1.0, w * 0.09))   # кладовая (≥1.0м² для 3К-4К)
     living_d = d - hall_d
     # 4 комнаты у фасада: спальня1 | спальня2 | гостиная | кухня
-    bed1_w  = max(2.3, w * 0.22)
-    bed2_w  = max(2.3, w * 0.22)
-    liv_w   = max(2.5, w * 0.30)
-    kit_w   = w - bed1_w - bed2_w - liv_w
+    bed1_w  = max(2.5, w * 0.22)
+    bed2_w  = max(2.5, w * 0.20)
+    kit_w   = max(2.5, w * 0.20)
+    liv_w   = w - bed1_w - bed2_w - kit_w
+    # Тыльный ряд: прихожая | кладовая | ванная | туалет
+    back_total = storage_w + bath_w + toilet_w
+    hallway_w = w - back_total
     return [
-        # Фасадный ряд из 4 комнат
+        # Фасадный ряд — 2 спальни + гостиная + кухня
         {"kind": "bedroom",  "name_ru": "Спальня 1", "x": 0,                              "y": 0,        "w": bed1_w, "d": living_d},
         {"kind": "bedroom",  "name_ru": "Спальня 2", "x": bed1_w,                         "y": 0,        "w": bed2_w, "d": living_d},
         {"kind": "living",   "name_ru": "Гостиная",  "x": bed1_w + bed2_w,                "y": 0,        "w": liv_w,  "d": living_d},
         {"kind": "kitchen",  "name_ru": "Кухня",     "x": bed1_w + bed2_w + liv_w,        "y": 0,        "w": kit_w,  "d": living_d},
-        # Тыльный ряд: прихожая + 2 санузла + спальня 3 (без окна — внутренняя)
-        {"kind": "hallway",  "name_ru": "Прихожая",  "x": 0,                              "y": living_d, "w": w - 2 * bath_w, "d": hall_d},
-        {"kind": "bathroom", "name_ru": "Сан.узел 1","x": w - 2 * bath_w,                 "y": living_d, "w": bath_w,          "d": hall_d},
-        {"kind": "bathroom", "name_ru": "Сан.узел 2","x": w - bath_w,                     "y": living_d, "w": bath_w,          "d": hall_d},
+        # Тыльный ряд: прихожая + кладовая + ванная + туалет
+        {"kind": "hallway",  "name_ru": "Прихожая",  "x": 0,                              "y": living_d, "w": hallway_w, "d": hall_d},
+        {"kind": "storage",  "name_ru": "Кладовая",  "x": hallway_w,                      "y": living_d, "w": storage_w, "d": hall_d},
+        {"kind": "bathroom", "name_ru": "Ванная",    "x": hallway_w + storage_w,          "y": living_d, "w": bath_w,    "d": hall_d},
+        {"kind": "toilet",   "name_ru": "Туалет",    "x": hallway_w + storage_w + bath_w, "y": living_d, "w": toilet_w,  "d": hall_d},
+    ]
+
+
+def _rooms_for_4k(w: float, d: float) -> list[dict]:
+    """4К по СНиП РК — 4 жилых: 3 спальни + гостиная + кухня + раздельные
+    ванная и туалет + гардероб + кладовая + прихожая.
+
+    Целевая площадь 85-110 м² (комфорт+/бизнес).
+    """
+    hall_d  = min(2.0, d * 0.26)
+    bath_w     = min(1.8, max(1.5, w * 0.10))
+    toilet_w   = min(1.2, max(0.9, w * 0.06))
+    wardrobe_w = min(2.0, max(1.4, w * 0.10))
+    storage_w  = min(1.5, max(1.0, w * 0.07))
+    living_d = d - hall_d
+    # 5 комнат у фасада: спальня1 | спальня2 | спальня3 | гостиная | кухня
+    bed1_w  = max(2.5, w * 0.16)
+    bed2_w  = max(2.5, w * 0.14)
+    bed3_w  = max(2.5, w * 0.14)
+    kit_w   = max(2.5, w * 0.15)
+    liv_w   = w - bed1_w - bed2_w - bed3_w - kit_w
+    # Тыльный ряд: прихожая | гардероб | кладовая | ванная | туалет
+    back_total = wardrobe_w + storage_w + bath_w + toilet_w
+    hallway_w = w - back_total
+    return [
+        # Фасадный ряд — 3 спальни + гостиная + кухня
+        {"kind": "bedroom",  "name_ru": "Спальня 1", "x": 0,                                          "y": 0, "w": bed1_w, "d": living_d},
+        {"kind": "bedroom",  "name_ru": "Спальня 2", "x": bed1_w,                                     "y": 0, "w": bed2_w, "d": living_d},
+        {"kind": "bedroom",  "name_ru": "Спальня 3", "x": bed1_w + bed2_w,                            "y": 0, "w": bed3_w, "d": living_d},
+        {"kind": "living",   "name_ru": "Гостиная",  "x": bed1_w + bed2_w + bed3_w,                   "y": 0, "w": liv_w,  "d": living_d},
+        {"kind": "kitchen",  "name_ru": "Кухня",     "x": bed1_w + bed2_w + bed3_w + liv_w,           "y": 0, "w": kit_w,  "d": living_d},
+        # Тыльный ряд
+        {"kind": "hallway",  "name_ru": "Прихожая",  "x": 0,                                                "y": living_d, "w": hallway_w,  "d": hall_d},
+        {"kind": "wardrobe", "name_ru": "Гардероб",  "x": hallway_w,                                        "y": living_d, "w": wardrobe_w, "d": hall_d},
+        {"kind": "storage",  "name_ru": "Кладовая",  "x": hallway_w + wardrobe_w,                           "y": living_d, "w": storage_w,  "d": hall_d},
+        {"kind": "bathroom", "name_ru": "Ванная",    "x": hallway_w + wardrobe_w + storage_w,               "y": living_d, "w": bath_w,     "d": hall_d},
+        {"kind": "toilet",   "name_ru": "Туалет",    "x": hallway_w + wardrobe_w + storage_w + bath_w,      "y": living_d, "w": toilet_w,   "d": hall_d},
     ]
 
 
@@ -127,6 +178,7 @@ _ROOM_BUILDERS = {
     "1k":     _rooms_for_1k,
     "2k":     _rooms_for_2k,
     "3k":     _rooms_for_3k,
+    "4k":     _rooms_for_4k,
 }
 
 
@@ -296,7 +348,9 @@ def _apt_type_from_area(area_m2: float) -> str:
         return "1k"
     if area_m2 < 80:
         return "2k"
-    return "3k"
+    if area_m2 < 105:
+        return "3k"
+    return "4k"
 
 
 # ── Параметрическая генерация планировки ──────────────────────────────────
@@ -384,7 +438,7 @@ def _generate_single_family_floor(
 
 def _apt_type_rank(apt_type: str) -> int:
     """Для сортировки от меньших к большим."""
-    return {"studio": 0, "1k": 1, "2k": 2, "3k": 3}.get(apt_type, 0)
+    return {"studio": 0, "1k": 1, "2k": 2, "3k": 3, "4k": 4}.get(apt_type, 0)
 
 
 def _generate_t_shape_floor(
@@ -580,8 +634,11 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
         apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
         apt_d_n = 0.0   # квартир с севера нет
     else:
-        # Двухсторонняя секция: коридор по центру
-        corr_d = max(_CORR_MIN_D, round(inner_d * 0.12, 2))
+        # Двухсторонняя секция: коридор по центру.
+        # Ширина corridor strip = max(минимальная норма, глубина ядра) — чтобы
+        # лифт+лестница помещались ВНУТРИ corridor zone и не накладывались на
+        # квартиры. Это превращает простой коридор в «лифтовый холл».
+        corr_d = max(_CORR_MIN_D, _CORE_D)
         corr_y = round((inner_d - corr_d) / 2, 3)
         apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
         apt_d_n = max(4.0, round(inner_d - corr_y - corr_d - _BEAR_T, 3))
@@ -610,8 +667,10 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
             core_d = min(_CORE_D, corr_y)
             core_y = round(corr_y - core_d, 3)
         else:
+            # В symmetric ядро ВНУТРИ corridor strip (corr_d сейчас расширен
+            # до глубины ядра). Cores не накладываются на квартиры.
             core_d = _CORE_D
-            core_y = round((inner_d - core_d) / 2, 3)
+            core_y = corr_y
         cores = _make_cores(core_x, core_y, inputs.lifts_passenger, inputs.lifts_freight, core_d=core_d)
 
         # Какие стороны застраиваем
@@ -709,6 +768,7 @@ _WINDOW_KINDS: frozenset[str] = frozenset({"living", "bedroom", "kitchen"})
 
 _DOOR_NEEDED_KINDS: frozenset[str] = frozenset({
     "living", "bedroom", "kitchen", "bathroom", "toilet", "hallway",
+    "wardrobe", "storage",
 })
 """Какие комнаты должны иметь хотя бы одну дверь (для попадания внутрь)."""
 
@@ -1172,11 +1232,14 @@ def _make_cores(
     """
     cores: list[LayoutCore] = []
     x = core_x
-    lift_p_w = 1.5
+    # Компактные размеры — лифт квадратный 1.8×2.0, лестница 2.5×3.
+    # Все помещаются в core_d=3м зону (лифтовый холл).
+    lift_p_w = 1.8
     lift_f_w = 2.1
-    stair_w  = 2.1
-    lift_d = min(1.5, core_d)
+    stair_w  = 2.5
+    lift_d = min(2.0, core_d)
     freight_d = min(lift_f_w, core_d)
+    stair_d = core_d   # лестница на всю глубину corridor strip
 
     n_pass_eff = max(1, n_pass)
     n_freight_eff = max(0, n_freight)   # допускаем 0 грузовых
@@ -1185,7 +1248,7 @@ def _make_cores(
         cores.append(LayoutCore(kind="lift_passenger", x=round(x, 3), y=core_y, w=lift_p_w, d=lift_d))
         x += lift_p_w
 
-    cores.append(LayoutCore(kind="stair", x=round(x, 3), y=core_y, w=stair_w, d=core_d))
+    cores.append(LayoutCore(kind="stair", x=round(x, 3), y=core_y, w=stair_w, d=stair_d))
     x += stair_w
 
     for _ in range(n_freight_eff):
@@ -1223,6 +1286,7 @@ def _resolve_mix(
         "1k":     inputs.k1_pct,
         "2k":     inputs.k2_pct,
         "3k":     inputs.k3_pct,
+        "4k":     getattr(inputs, "k4_pct", 0.0),
     }
     total_pct = sum(pcts.values())
     if total_pct < 1.0:

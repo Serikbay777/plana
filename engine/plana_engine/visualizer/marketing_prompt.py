@@ -30,6 +30,7 @@ class MarketingInputs:
     k1_pct: float = 0.0
     k2_pct: float = 0.0
     k3_pct: float = 0.0
+    k4_pct: float = 0.0
 
     sections: int = 1
 

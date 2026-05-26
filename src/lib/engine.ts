@@ -240,6 +240,7 @@ export type VisualizeFromInputsRequest = {
   k1_pct: number;
   k2_pct: number;
   k3_pct: number;
+  k4_pct?: number;
   // подъездность
   sections?: number;
   // паркинг

@@ -140,6 +140,7 @@ function buildVisReq(form: PromptFormState): VisualizeFromInputsRequest {
     k1_pct:     nn(form.k1_pct,     D.k1_pct)     / 100,
     k2_pct:     nn(form.k2_pct,     D.k2_pct)     / 100,
     k3_pct:     nn(form.k3_pct,     D.k3_pct)     / 100,
+    k4_pct:     nn(form.k4_pct,     D.k4_pct)     / 100,
     sections:   nn(form.sections,   D.sections),
     parking_spaces_per_apt:       nn(form.parking_spaces_per_apt,       D.parking_spaces_per_apt),
     parking_underground_levels:   nn(form.parking_underground_levels,   D.parking_underground_levels),

@@ -178,6 +178,7 @@ class VisualizeFromInputsRequest(BaseModel):
     k1_pct: float = 0.0
     k2_pct: float = 0.0
     k3_pct: float = 0.0
+    k4_pct: float = 0.0
     # подъездность (количество секций — важно для жилых)
     sections: int = 1
     # паркинг
@@ -227,6 +228,7 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         k1_pct=req.k1_pct,
         k2_pct=req.k2_pct,
         k3_pct=req.k3_pct,
+        k4_pct=req.k4_pct,
         sections=req.sections,
         parking_spaces_per_apt=req.parking_spaces_per_apt,
         parking_underground_levels=req.parking_underground_levels,
@@ -2168,16 +2170,18 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
         used.append("building_type")
 
     # Если GPT не дал процентного микса вообще — ставим разумный по умолчанию
-    # (25/40/25/10 = студии/1к/2к/3к). Если дал хотя бы одно — уважаем выбор.
-    mix_given = any(v is not None for v in (b.studio_pct, b.k1_pct, b.k2_pct, b.k3_pct))
+    # (25/40/25/10/0 = студии/1к/2к/3к/4к). Если дал хотя бы одно — уважаем выбор.
+    k4_in = getattr(b, "k4_pct", None)
+    mix_given = any(v is not None for v in (b.studio_pct, b.k1_pct, b.k2_pct, b.k3_pct, k4_in))
     if not mix_given:
-        used.extend(["studio_pct", "k1_pct", "k2_pct", "k3_pct"])
-        studio_pct, k1_pct, k2_pct, k3_pct = 25.0, 40.0, 25.0, 10.0
+        used.extend(["studio_pct", "k1_pct", "k2_pct", "k3_pct", "k4_pct"])
+        studio_pct, k1_pct, k2_pct, k3_pct, k4_pct = 25.0, 40.0, 25.0, 10.0, 0.0
     else:
         studio_pct = b.studio_pct or 0.0
         k1_pct     = b.k1_pct     or 0.0
         k2_pct     = b.k2_pct     or 0.0
         k3_pct     = b.k3_pct     or 0.0
+        k4_pct     = k4_in        or 0.0
 
     setback_front = _or(b.setback_front_m, 3.0, "setback_front_m")
     setback_side  = _or(b.setback_side_m,  3.0, "setback_side_m")
@@ -2222,6 +2226,7 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
         k1_pct=          k1_pct,
         k2_pct=          k2_pct,
         k3_pct=          k3_pct,
+        k4_pct=          k4_pct,
         lifts_passenger= lifts_p,
         lifts_freight=   lifts_f,
         max_height_m=    _or(b.max_height_m,    30.0, "max_height_m"),

@@ -32,6 +32,7 @@ export type PromptFormState = {
   k1_pct: number;
   k2_pct: number;
   k3_pct: number;
+  k4_pct: number;
 
   /** Количество подъездов/секций (1=точечный, 2-4=линейный/угловой). */
   sections: number;
@@ -71,6 +72,7 @@ export const DEFAULT_PROMPT_FORM: PromptFormState = {
   k1_pct: 35,
   k2_pct: 30,
   k3_pct: 10,
+  k4_pct: 0,
   sections: 2,
   lifts_passenger: 2,
   lifts_freight: 1,

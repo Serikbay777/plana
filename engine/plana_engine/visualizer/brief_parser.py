@@ -57,6 +57,7 @@ class BriefDerivedInputs:
     k1_pct:          float | None
     k2_pct:          float | None
     k3_pct:          float | None
+    k4_pct:          float | None
     lifts_passenger: int | None
     lifts_freight:   int | None
     max_height_m:    float | None
@@ -119,10 +120,12 @@ CRITICAL RULES — read carefully:
 4. sections: how many подъездов / секций. Default to 1 unless the brief
    says "две секции", "3 подъезда", etc.
 
-5. Apartment mix (studio_pct / k1_pct / k2_pct / k3_pct) — percentages
-   0..100 summing to ~100. If the brief gives counts ("4 однушки и 6
-   двушек") — convert to percentages. If nothing about mix is said —
-   leave all four as null; the backend will use a reasonable default.
+5. Apartment mix (studio_pct / k1_pct / k2_pct / k3_pct / k4_pct) —
+   percentages 0..100 summing to ~100. k4_pct — для 4-комнатных
+   (премиум, комфорт+). If the brief gives counts ("4 однушки и 6
+   двушек, 1 четырёхкомнатная пентхаус") — convert to percentages.
+   If nothing about mix is said — leave all as null; the backend will
+   use a reasonable default.
 
 6. purpose: "residential" by default.
 
@@ -228,6 +231,7 @@ _SCHEMA: dict[str, Any] = {
             "k1_pct":           {"type": ["number", "null"]},
             "k2_pct":           {"type": ["number", "null"]},
             "k3_pct":           {"type": ["number", "null"]},
+            "k4_pct":           {"type": ["number", "null"]},
             "lifts_passenger":  {"type": ["integer", "null"]},
             "lifts_freight":    {"type": ["integer", "null"]},
             "max_height_m":     {"type": ["number", "null"]},
@@ -245,7 +249,7 @@ _SCHEMA: dict[str, Any] = {
             "building_width_m", "building_depth_m",
             "setback_front_m", "setback_side_m", "setback_rear_m",
             "floors", "purpose", "building_type", "sections",
-            "studio_pct", "k1_pct", "k2_pct", "k3_pct",
+            "studio_pct", "k1_pct", "k2_pct", "k3_pct", "k4_pct",
             "lifts_passenger", "lifts_freight", "max_height_m",
             "bedrooms", "bathrooms", "has_garage",
             "floor_typology",
@@ -305,6 +309,7 @@ def parse_brief(brief: str, *, model: str = "gpt-4.1") -> BriefDerivedInputs:
         k1_pct=          data.get("k1_pct"),
         k2_pct=          data.get("k2_pct"),
         k3_pct=          data.get("k3_pct"),
+        k4_pct=          data.get("k4_pct"),
         lifts_passenger= data.get("lifts_passenger"),
         lifts_freight=   data.get("lifts_freight"),
         max_height_m=    data.get("max_height_m"),
