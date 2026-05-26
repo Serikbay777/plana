@@ -1137,7 +1137,9 @@ function TabStrip({
   onExportIfc: () => void;
   cadExportLoading: CadExportKind | null;
 }) {
-  const items: Array<{ key: TopTab; label: string; icon: React.ReactNode }> = [
+  // Временно показываем только «AI Чертежи» и «Архитектурные чертежи».
+  // Чтобы вернуть остальные табы — убрать .filter ниже.
+  const allItems: Array<{ key: TopTab; label: string; icon: React.ReactNode }> = [
     { key: "ai_plans",       label: "AI Чертежи",           icon: <Sparkles size={13} /> },
     { key: "viz",            label: "Визуализации",          icon: <ImageIcon size={13} /> },
     { key: "site",           label: "Посадка на участок",   icon: <MapIcon size={13} /> },
@@ -1145,6 +1147,7 @@ function TabStrip({
     { key: "pdf_viz",        label: "PDF Визуализация",      icon: <FileText size={13} /> },
     { key: "arch_drawings",  label: "Архитектурные чертежи", icon: <Ruler size={13} /> },
   ];
+  const items = allItems.filter((it) => it.key === "ai_plans" || it.key === "arch_drawings");
   return (
     <div className="px-6 pt-3 pb-1 border-b border-white/[0.04] flex items-center justify-between gap-3 flex-wrap">
       <div className="inline-flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.05]">
