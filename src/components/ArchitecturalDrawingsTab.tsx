@@ -13,17 +13,18 @@
 import { useState, useRef, useCallback, useEffect, useReducer, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
-  Pencil, RefreshCw, Undo2, Redo2, Send, MessageSquare, Grid3x3, Box,
+  Pencil, RefreshCw, Undo2, Redo2, Grid3x3, Box,
 } from "lucide-react";
 import { IfcViewerModal } from "@/components/IfcViewerModal";
+import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import {
-  generateLayoutFromBrief, generateLayoutFromWizard,
+  generateFloorLayout,
   exportFloorplanDxf, exportFloorplanIfc,
-  visualizeSheet, enhanceBrief, editLayoutWithChat,
+  visualizeSheet,
   type LayoutFloor, type LayoutDoor, type LayoutWindow, type LayoutSide,
   type LayoutFurniture,
   type BriefLayoutResponse,
-  type WizardInputs,
+  type VisualizeFromInputsRequest,
 } from "@/lib/engine";
 import {
   projectReducer,
@@ -41,8 +42,6 @@ import { ModeTabs } from "@/components/editor/ModeTabs";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { SnapControls } from "@/components/editor/SnapControls";
 import { HotkeysHelp } from "@/components/editor/HotkeysHelp";
-import { VariantsGrid, type VariantItem } from "@/components/editor/VariantsGrid";
-import { NewProjectWizard } from "@/components/wizard/NewProjectWizard";
 import { ExportModal } from "@/components/export/ExportModal";
 import { downloadProjectJson } from "@/lib/export/toJson";
 import { downloadSvgAsPng } from "@/lib/export/toPng";
@@ -53,18 +52,43 @@ type Status = "idle" | "loading" | "ready" | "error";
 
 type ExportKind = "dxf" | "ifc" | "viz";
 
-type ChatMsg = {
-  role: "user" | "ai" | "error";
-  text: string;
-  ts: number;
-};
 
+// buildVisReq: PromptFormState → VisualizeFromInputsRequest для бэкенда.
+// Те же поля что в page.tsx (AI Чертежи), но дублирую локально чтобы не
+// тащить page.tsx в зависимости таба.
+const _D = DEFAULT_PROMPT_FORM;
+const _nn = (v: number | undefined, fallback: number): number =>
+  typeof v === "number" && isFinite(v) ? v : fallback;
 
-const BRIEF_PLACEHOLDER = `Например:
-
-4-этажный жилой дом 30×16 метров в Алматы. 1 секция,
-2 пассажирских лифта. Микс квартир: 30% студий, 40% однушек,
-30% двушек. Высота 14 м. Отступы от границ участка 5 м.`;
+function buildVisReq(form: PromptFormState): VisualizeFromInputsRequest {
+  return {
+    site_width_m:    _nn(form.site_width_m,    _D.site_width_m),
+    site_depth_m:    _nn(form.site_depth_m,    _D.site_depth_m),
+    setback_front_m: _nn(form.setback_front_m, _D.setback_front_m),
+    setback_side_m:  _nn(form.setback_side_m,  _D.setback_side_m),
+    setback_rear_m:  _nn(form.setback_rear_m,  _D.setback_rear_m),
+    floors:  _nn(form.floors,  _D.floors),
+    purpose: form.purpose ?? _D.purpose,
+    studio_pct: _nn(form.studio_pct, _D.studio_pct) / 100,
+    k1_pct:     _nn(form.k1_pct,     _D.k1_pct)     / 100,
+    k2_pct:     _nn(form.k2_pct,     _D.k2_pct)     / 100,
+    k3_pct:     _nn(form.k3_pct,     _D.k3_pct)     / 100,
+    sections:   _nn(form.sections,   _D.sections),
+    parking_spaces_per_apt:       _nn(form.parking_spaces_per_apt,       _D.parking_spaces_per_apt),
+    parking_underground_levels:   _nn(form.parking_underground_levels,   _D.parking_underground_levels),
+    fire_evacuation_max_m:        _nn(form.fire_evacuation_max_m,        _D.fire_evacuation_max_m),
+    fire_evacuation_exits_per_section: _nn(form.fire_evacuation_exits_per_section, _D.fire_evacuation_exits_per_section),
+    fire_dead_end_corridor_max_m: _nn(form.fire_dead_end_corridor_max_m, _D.fire_dead_end_corridor_max_m),
+    lifts_passenger: _nn(form.lifts_passenger, _D.lifts_passenger),
+    lifts_freight:   _nn(form.lifts_freight,   _D.lifts_freight),
+    insolation_priority:  form.insolation_priority  ?? _D.insolation_priority,
+    insolation_min_hours: _nn(form.insolation_min_hours, _D.insolation_min_hours),
+    max_coverage_pct: _nn(form.max_coverage_pct, _D.max_coverage_pct),
+    max_height_m:     _nn(form.max_height_m,     _D.max_height_m),
+    quality: "medium",
+    site_polygon: form.site_polygon ?? null,
+  };
+}
 
 
 export function ArchitecturalDrawingsTab({
@@ -72,13 +96,13 @@ export function ArchitecturalDrawingsTab({
 }: {
   onAutoSave?: (asset: { variantKey: string; imageUrl: string; modelUsed?: string }) => void;
 } = {}) {
-  const [brief, setBrief] = useState("");
+  // Структурированная форма (как в табе «AI Чертежи»), вместо free-form ТЗ.
+  const [form, setForm] = useState<PromptFormState>(DEFAULT_PROMPT_FORM);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BriefLayoutResponse | null>(null);
   const [exportBusy, setExportBusy] = useState<ExportKind | null>(null);
   const [vizImageUrl, setVizImageUrl] = useState<string | null>(null);
-  const [enhancing, setEnhancing] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
 
   // ── Editor state via useReducer (Sprint 1 v1.0 plan) ───────────────
@@ -163,148 +187,28 @@ export function ArchitecturalDrawingsTab({
     return () => window.removeEventListener("keydown", onKey);
   }, [project, undo, redo, editorState.selection, editorState.selected]);
 
-  // ── Чат-итерация (E) ──────────────────────────────────────────────
-  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatBusy, setChatBusy] = useState(false);
-  const chatListRef = useRef<HTMLDivElement | null>(null);
-
-  // Сбрасываем чат при новой генерации
-  useEffect(() => {
-    if (result) setChatMsgs([]);
-  }, [result]);
-
-  // Autoscroll списка сообщений вниз
-  useEffect(() => {
-    if (chatListRef.current) {
-      chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
-    }
-  }, [chatMsgs, chatBusy]);
-
-  const sendChat = async () => {
-    const text = chatInput.trim();
-    if (!text || chatBusy || !currentLayout) return;
-    setChatInput("");
-    const userMsg: ChatMsg = { role: "user", text, ts: Date.now() };
-    setChatMsgs((prev) => [...prev, userMsg]);
-    setChatBusy(true);
-    try {
-      // Sprint 5: Lock-aware prompt. Backend ничего нового не знает —
-      // мы просто prefix'им message человекочитаемой инструкцией с именами
-      // заблокированных комнат. Бэкенд-задача (TODO) — отдельный structured
-      // параметр `locked_refs` и системный промпт-инжекшен.
-      const lockedNames = editorState.lockedRefs
-        .map((ref) => {
-          const apt = currentLayout.sections[ref.sectionIdx]?.apartments[ref.aptIdx];
-          const room = apt?.rooms[ref.roomIdx];
-          if (!room || !apt) return null;
-          return `КВ.${apt.number}/${room.name_ru}`;
-        })
-        .filter((s): s is string => !!s);
-      const augmented = lockedNames.length > 0
-        ? `ВАЖНО: не трогай следующие комнаты — ${lockedNames.join(", ")}. Не меняй их размеры и положение.\n\nЗадание: ${text}`
-        : text;
-      const newLayout = await editLayoutWithChat(currentLayout, augmented);
-      // Заменяем активный этаж и пушим в history — Ctrl+Z откатит chat-правку.
-      dispatch({ type: "REPLACE_ACTIVE_FLOOR", layout: newLayout, pushHistory: true });
-      const aiText = lockedNames.length > 0
-        ? `Готово ✓ (не трогал: ${lockedNames.join(", ")})`
-        : "Готово ✓";
-      setChatMsgs((prev) => [...prev, { role: "ai", text: aiText, ts: Date.now() }]);
-    } catch (e) {
-      setChatMsgs((prev) => [
-        ...prev,
-        { role: "error", text: (e as Error).message, ts: Date.now() },
-      ]);
-    } finally {
-      setChatBusy(false);
-    }
-  };
-
-  const onChatKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void sendChat();
-    }
-  };
-
-  const handleEnhance = async () => {
-    if (!brief.trim() || enhancing || status === "loading") return;
-    setEnhancing(true);
-    setError(null);
-    try {
-      const improved = await enhanceBrief(brief);
-      setBrief(improved);
-    } catch (e) {
-      setError(`Улучшение: ${(e as Error).message}`);
-    } finally {
-      setEnhancing(false);
-    }
-  };
-
   const handleGenerate = async () => {
-    if (!brief.trim() || status === "loading") return;
+    if (status === "loading") return;
     setStatus("loading");
     setError(null);
-    setVariants(null);
-    setVariantSelectedIdx(null);
     if (vizImageUrl) { URL.revokeObjectURL(vizImageUrl); setVizImageUrl(null); }
     try {
-      const res = await generateLayoutFromBrief(brief);
-      setResult(res);
+      const visReq = buildVisReq(form);
+      // Structured endpoint — без LLM-парсинга брифа. Бэк сам построит
+      // LayoutFloor через detеrministic generator (T-shape/symmetric/...).
+      const layout = await generateFloorLayout(visReq);
+      // Адаптируем под BriefLayoutResponse-форму, которую дальше использует UI
+      setResult({
+        layout,
+        inputs: visReq,
+        used_defaults: [],
+        notes: "",
+      });
       setStatus("ready");
     } catch (e) {
       setError((e as Error).message);
       setStatus("error");
     }
-  };
-
-  // ── Multi-variant (Sprint 5) ────────────────────────────────────────
-  // 4 параллельных запроса с одинаковым brief'ом. Backend сам даст разные
-  // варианты благодаря temperature LLM. v1.5 — один endpoint /generate/
-  // layout-variants?n=4, чтобы сэкономить токены и улучшить разнообразие.
-  const [variants, setVariants] = useState<VariantItem[] | null>(null);
-  const [variantSelectedIdx, setVariantSelectedIdx] = useState<number | null>(null);
-
-  const handleGenerateVariants = async () => {
-    if (!brief.trim() || status === "loading") return;
-    const N = 4;
-    setStatus("loading");
-    setError(null);
-    setVariantSelectedIdx(null);
-    if (vizImageUrl) { URL.revokeObjectURL(vizImageUrl); setVizImageUrl(null); }
-    // Сразу показываем все 4 ячейки в pending'е чтобы пользователь видел прогресс
-    setVariants(Array.from({ length: N }, () => ({ status: "pending" as const })));
-
-    // Параллельно — каждый запрос обновляет свою ячейку при готовности
-    await Promise.all(
-      Array.from({ length: N }, (_, i) =>
-        generateLayoutFromBrief(brief)
-          .then((res) => {
-            setVariants((prev) => {
-              if (!prev) return prev;
-              const next = [...prev];
-              next[i] = { status: "ready", data: res };
-              return next;
-            });
-          })
-          .catch((e) => {
-            setVariants((prev) => {
-              if (!prev) return prev;
-              const next = [...prev];
-              next[i] = { status: "error", error: (e as Error).message };
-              return next;
-            });
-          }),
-      ),
-    );
-    setStatus("ready");
-  };
-
-  const handleVariantSelect = (variant: BriefLayoutResponse) => {
-    setResult(variant);
-    const idx = variants?.findIndex((v) => v.data === variant) ?? -1;
-    setVariantSelectedIdx(idx >= 0 ? idx : null);
   };
 
   // ── Export (Sprint 6) ───────────────────────────────────────────────
@@ -337,23 +241,6 @@ export function ArchitecturalDrawingsTab({
       downloadBlob(blob, filename);
     } finally {
       setExportBusy(null);
-    }
-  };
-
-  // ── Wizard (Sprint 4) ───────────────────────────────────────────────
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const handleWizardComplete = async (inputs: WizardInputs) => {
-    setWizardOpen(false);
-    setStatus("loading");
-    setError(null);
-    if (vizImageUrl) { URL.revokeObjectURL(vizImageUrl); setVizImageUrl(null); }
-    try {
-      const res = await generateLayoutFromWizard(inputs);
-      setResult(res);
-      setStatus("ready");
-    } catch (e) {
-      setError((e as Error).message);
-      setStatus("error");
     }
   };
 
@@ -569,127 +456,14 @@ export function ArchitecturalDrawingsTab({
           />
         </div>
 
-        {/* CENTER — текстовое ТЗ + AI чат */}
-        <div className="border-r border-white/[0.04] p-4 flex flex-col gap-3 min-h-0">
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <div className="text-[10.5px] uppercase tracking-wider text-white/45">
-                Техническое задание
-              </div>
-              <button
-                onClick={() => setWizardOpen(true)}
-                disabled={status === "loading"}
-                title="Открыть мастер создания проекта (4 шага)"
-                className="h-6 px-2 rounded text-[10.5px] flex items-center gap-1 border border-sky-400/30 text-sky-200/90 hover:bg-sky-500/15 transition disabled:opacity-30"
-              >
-                <Wand2 size={10} /> Через wizard
-              </button>
-            </div>
-            <textarea
-              value={brief}
-              onChange={(e) => setBrief(e.target.value)}
-              placeholder={BRIEF_PLACEHOLDER}
-              disabled={status === "loading"}
-              rows={currentLayout ? 6 : 12}
-              className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white/85 placeholder-white/25 resize-none leading-relaxed focus:outline-none focus:border-sky-400/40"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleEnhance}
-              disabled={!brief.trim() || enhancing || status === "loading"}
-              title="Улучшить ТЗ через AI-архитектора (нормы, отступы, микс)"
-              className="h-9 px-3 rounded-lg text-[12.5px] flex items-center gap-1.5 border border-sky-400/30 text-sky-200/90 hover:bg-sky-500/15 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {enhancing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
-              Улучшить
-            </button>
-            <button
-              onClick={handleGenerate}
-              disabled={!brief.trim() || status === "loading" || enhancing}
-              className="btn-apple flex-1 h-9 px-4 text-[12.5px] flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {status === "loading" ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-              Сгенерировать план
-            </button>
-            <button
-              onClick={handleGenerateVariants}
-              disabled={!brief.trim() || status === "loading" || enhancing}
-              title="Сгенерировать 4 варианта параллельно — потом выберешь лучший"
-              className="h-9 px-3 rounded-lg text-[12.5px] flex items-center gap-1.5 border border-violet-400/30 text-violet-200/90 hover:bg-violet-500/15 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Sparkles size={13} /> ×4
-            </button>
-          </div>
-          {result?.notes && !currentLayout && (
-            <div className="text-[10.5px] text-white/45 leading-relaxed">
-              <div className="uppercase tracking-wider text-white/30 mb-1">Заметки модели</div>
-              {result.notes}
-            </div>
-          )}
-
-          {/* ── Чат-итерация ───────────────────────────────────────── */}
-          {currentLayout && (
-            <div className="flex flex-col flex-1 min-h-0 mt-2 border-t border-white/[0.05] pt-3">
-              <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-white/45 mb-2">
-                <MessageSquare size={11} className="text-sky-300" />
-                Чат-правки
-              </div>
-
-              <div
-                ref={chatListRef}
-                className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5 pr-1"
-              >
-                {chatMsgs.length === 0 && !chatBusy && (
-                  <div className="text-[11px] text-white/40 leading-relaxed italic">
-                    Пиши что подправить — «увеличь спальню 1 на 1.5 м»,
-                    «удали гардеробную», «сделай ванную просторнее».
-                    AI применит правку, можно откатить через Ctrl+Z.
-                  </div>
-                )}
-                {chatMsgs.map((m, i) => (
-                  <div
-                    key={i}
-                    className={[
-                      "rounded-lg px-2.5 py-1.5 text-[11.5px] leading-snug max-w-[95%]",
-                      m.role === "user"
-                        ? "bg-sky-500/15 border border-sky-400/20 text-sky-50 self-end"
-                        : m.role === "ai"
-                          ? "bg-emerald-500/10 border border-emerald-400/15 text-emerald-100 self-start"
-                          : "bg-rose-500/15 border border-rose-400/20 text-rose-100 self-start",
-                    ].join(" ")}
-                  >
-                    {m.text}
-                  </div>
-                ))}
-                {chatBusy && (
-                  <div className="self-start text-[11px] text-white/55 flex items-center gap-1.5 px-2 py-1">
-                    <Loader2 size={11} className="animate-spin" /> AI обновляет план…
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-2 flex gap-1.5">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={onChatKey}
-                  disabled={chatBusy}
-                  placeholder="Что подправить?"
-                  className="flex-1 h-8 bg-white/[0.05] border border-white/[0.08] rounded-md px-2.5 text-[11.5px] text-white/85 placeholder-white/30 focus:outline-none focus:border-sky-400/40"
-                />
-                <button
-                  onClick={sendChat}
-                  disabled={chatBusy || !chatInput.trim()}
-                  className="h-8 w-8 rounded-md bg-sky-500/80 hover:bg-sky-400 text-white grid place-items-center disabled:opacity-30 disabled:cursor-not-allowed transition"
-                  title="Отправить (Enter)"
-                >
-                  {chatBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                </button>
-              </div>
-            </div>
-          )}
+        {/* CENTER — структурированная форма параметров (как в табе «AI Чертежи») */}
+        <div className="border-r border-white/[0.04] p-3 flex flex-col gap-3 min-h-0">
+          <PromptForm
+            value={form}
+            onChange={setForm}
+            onGenerate={handleGenerate}
+            generating={status === "loading"}
+          />
         </div>
 
         {/* RIGHT — canvas + ModeTabs + LayersPanel (плавающая) */}
@@ -743,21 +517,13 @@ export function ArchitecturalDrawingsTab({
                   <Sparkles size={20} className="text-sky-300" />
                 </div>
                 <div className="text-[15px] font-semibold tracking-display mb-1.5">
-                  Опиши здание словами
+                  Задай параметры здания
                 </div>
-                <div className="text-[12.5px] text-white/55 leading-relaxed mb-4">
-                  AI распарсит параметры, построит технический план этажа.
-                  Дальше — экспорт в DXF/IFC или AI-визуализация поверх.
+                <div className="text-[12.5px] text-white/55 leading-relaxed">
+                  Заполни форму слева — габариты, этажи, микс квартир.
+                  Нажми «Сгенерировать», получишь технический план этажа.
+                  Дальше экспорт в DXF/IFC или 3D-просмотр.
                 </div>
-                <div className="text-[11px] text-white/35 mb-2">
-                  или
-                </div>
-                <button
-                  onClick={() => setWizardOpen(true)}
-                  className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-sky-400/40 text-sky-100 hover:bg-sky-500/15 text-[12.5px] transition"
-                >
-                  <Wand2 size={13} /> Создать через wizard
-                </button>
               </div>
             </div>
           )}
@@ -790,27 +556,6 @@ export function ArchitecturalDrawingsTab({
             <div className="absolute inset-0 flex flex-col">
               {/* Скроллируемая область — пускаем вертикальный скролл */}
               <div className="flex-1 min-h-0 overflow-y-auto p-2">
-                {variants && (
-                  <div className="mb-3 p-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="text-[10.5px] uppercase tracking-wider text-white/55">
-                        Варианты планировки
-                      </div>
-                      <button
-                        onClick={() => { setVariants(null); setVariantSelectedIdx(null); }}
-                        className="text-[10.5px] text-white/40 hover:text-white/70"
-                        title="Скрыть варианты"
-                      >
-                        Скрыть
-                      </button>
-                    </div>
-                    <VariantsGrid
-                      variants={variants}
-                      onSelect={handleVariantSelect}
-                      selectedIdx={variantSelectedIdx}
-                    />
-                  </div>
-                )}
                 {vizImageUrl ? (
                   <div className="flex flex-col gap-2">
                     {/* План — фиксированная пропорция, чтобы не схлопывался */}
@@ -871,11 +616,6 @@ export function ArchitecturalDrawingsTab({
       </div>
 
       <HotkeysHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
-      <NewProjectWizard
-        open={wizardOpen}
-        onClose={() => setWizardOpen(false)}
-        onComplete={handleWizardComplete}
-      />
       <ExportModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}

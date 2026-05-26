@@ -64,6 +64,8 @@ class BriefDerivedInputs:
     bedrooms:        int | None       # количество спален в доме
     bathrooms:       int | None       # количество санузлов
     has_garage:      bool | None      # пристроенный гараж
+    # Типология этажа для multi_family: "symmetric" / "t_shape" / null
+    floor_typology:  str | None
     notes:           str             # что не уложилось в поля
 
 
@@ -159,11 +161,23 @@ CRITICAL RULES — read carefully:
     • has_garage: true если упомянут гараж / гаражная зона / car port.
       false если явно сказано «без гаража». null если не упомянуто.
 
-11. NEVER guess wildly. If the brief literally says nothing about a value
+11. floor_typology — ТОЛЬКО для multi_family (для single_family оставь null):
+    • "symmetric" — обычная двухсторонняя секционка (default).
+      Маркеры: «секционный», «коридор с двух сторон», «обычная секция»,
+      или просто не указано.
+    • "t_shape" — Т-типология: 2 крупных квартиры наверху + 3 стандартных
+      внизу. Узкое вертикальное ядро (лифт+лестница).
+      Маркеры: «Т-типология», «T-форма», «5 квартир на этаж», «2 пентхауса
+      сверху», «комфорт+ с двумя большими квартирами и тремя обычными»,
+      «бизнес-класс асимметричная планировка».
+      Если в ТЗ явно «5 квартир на этаж» И mix включает большие (2k/3k) —
+      ставь t_shape.
+
+12. NEVER guess wildly. If the brief literally says nothing about a value
     AND no reasonable derivation is possible — return null. The backend
     has its own sane defaults.
 
-12. notes: brief 1-2 sentence summary in Russian of what you did and
+13. notes: brief 1-2 sentence summary in Russian of what you did and
     what assumptions you had to make.
 
 For mix percentages: return numbers 0..100 (e.g. 30, not 0.30).
@@ -220,6 +234,10 @@ _SCHEMA: dict[str, Any] = {
             "bedrooms":         {"type": ["integer", "null"]},
             "bathrooms":        {"type": ["integer", "null"]},
             "has_garage":       {"type": ["boolean", "null"]},
+            "floor_typology":   {
+                "type": ["string", "null"],
+                "enum": ["symmetric", "t_shape", None],
+            },
             "notes":            {"type": "string"},
         },
         "required": [
@@ -230,6 +248,7 @@ _SCHEMA: dict[str, Any] = {
             "studio_pct", "k1_pct", "k2_pct", "k3_pct",
             "lifts_passenger", "lifts_freight", "max_height_m",
             "bedrooms", "bathrooms", "has_garage",
+            "floor_typology",
             "notes",
         ],
     },
@@ -292,5 +311,6 @@ def parse_brief(brief: str, *, model: str = "gpt-4.1") -> BriefDerivedInputs:
         bedrooms=        data.get("bedrooms"),
         bathrooms=       data.get("bathrooms"),
         has_garage=      data.get("has_garage"),
+        floor_typology=  data.get("floor_typology"),
         notes=           data.get("notes", ""),
     )

@@ -204,6 +204,8 @@ class VisualizeFromInputsRequest(BaseModel):
     bedrooms: int = 2
     bathrooms: int = 1
     has_garage: bool = False
+    # multi_family типология этажа — "symmetric" (default) или "t_shape"
+    floor_typology: str = "symmetric"
 
 
 class ExportIfcRequest(VisualizeFromInputsRequest):
@@ -241,6 +243,7 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         bedrooms=req.bedrooms,
         bathrooms=req.bathrooms,
         has_garage=req.has_garage,
+        floor_typology=req.floor_typology,
     )
 
 
@@ -2225,6 +2228,7 @@ def _request_from_brief_inputs(b: Any) -> tuple[VisualizeFromInputsRequest, list
         bedrooms=        _or(getattr(b, "bedrooms",  None), 2,     "bedrooms"),
         bathrooms=       _or(getattr(b, "bathrooms", None), 1,     "bathrooms"),
         has_garage=      _or(getattr(b, "has_garage", None), False, "has_garage"),
+        floor_typology=  _or(getattr(b, "floor_typology", None), "symmetric", "floor_typology"),
     ), used
 
 

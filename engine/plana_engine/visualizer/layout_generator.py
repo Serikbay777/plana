@@ -379,6 +379,151 @@ def _generate_single_family_floor(
     )
 
 
+# ── T-shape типология: 2 крупных квартиры + 3 стандартных ────────────────
+
+
+def _apt_type_rank(apt_type: str) -> int:
+    """Для сортировки от меньших к большим."""
+    return {"studio": 0, "1k": 1, "2k": 2, "3k": 3}.get(apt_type, 0)
+
+
+def _generate_t_shape_floor(
+    inner_w: float, inner_d: float,
+    mix: list[str],
+) -> LayoutFloor:
+    """Т-типология: 2 крупных квартиры наверху + 3 стандартных внизу.
+
+    Архитектурный паттерн комфорт+/бизнес ЖК в КЗ/РФ:
+
+      ┌──────────────────┬─────────┬──────────────────┐
+      │                  │ Лифт |  │                  │
+      │  Крупная кв.     │ Лестн.  │   Крупная кв.    │
+      │  (2-3к + лоджия) │ (узкий  │  (2-3к + лоджия) │
+      │                  │ верт.   │                  │
+      │                  │ блок)   │                  │
+      ├──────────────────┴─────────┴──────────────────┤
+      │  Коридор секции (горизонтальный)              │
+      ├──────────────┬───────────────┬────────────────┤
+      │   Кв. 3      │    Кв. 4      │    Кв. 5       │
+      │  (1к / 2к)   │   (1к / 2к)   │   (1к / 2к)    │
+      └──────────────┴───────────────┴────────────────┘
+
+    Крупные квартиры на «привилегированной» стороне получают типы 2k/3k.
+    Нижний ряд — компактные 1k/2k.
+    """
+    bear_t = _BEAR_T
+    # Зональное деление по Y
+    corridor_d = 1.6
+    # Делим оставшееся между верхом и низом примерно поровну (с приоритетом верху)
+    usable_d = inner_d - 2 * bear_t - corridor_d
+    top_zone_d = max(6.5, usable_d * 0.52)
+    bottom_zone_d = usable_d - top_zone_d
+    if bottom_zone_d < 5.5:
+        bottom_zone_d = 5.5
+        top_zone_d = usable_d - bottom_zone_d
+
+    # Y-границы зон
+    corridor_y = bear_t + bottom_zone_d
+    top_y_start = corridor_y + corridor_d
+
+    # ── Узкое вертикальное ядро (лифт + лестница раздельно) в центре ──
+    lift_w, lift_d = 2.0, 2.2
+    stair_w, stair_d = 2.5, 5.0
+    core_strip_w = lift_w + stair_w + 0.5   # промежуток 50 см между лифтом и лестницей
+    core_strip_x = (inner_w - core_strip_w) / 2
+
+    # Размещение внутри top_zone — у внешней (фасадной) стены, выравнено по Y
+    core_y_base = inner_d - bear_t - max(lift_d, stair_d)
+    cores = [
+        LayoutCore(
+            kind="lift_passenger",
+            x=round(core_strip_x, 3),
+            y=round(inner_d - lift_d - bear_t, 3),
+            w=lift_w, d=lift_d,
+        ),
+        LayoutCore(
+            kind="stair",
+            x=round(core_strip_x + lift_w + 0.5, 3),
+            y=round(inner_d - stair_d - bear_t, 3),
+            w=stair_w, d=stair_d,
+        ),
+    ]
+    del core_y_base  # placeholder for future logic
+
+    # ── Подбор типов: 2 крупных наверху, 3 поменьше внизу ──
+    mix_sorted = sorted(mix, key=_apt_type_rank, reverse=True) if mix else []
+    while len(mix_sorted) < 5:
+        mix_sorted.append("2k")
+    top_types = mix_sorted[:2]
+    bottom_types = mix_sorted[2:5]
+
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    # ── Верхний ряд: 2 крупных квартиры по бокам от ядра ──
+    top_apt_w = (inner_w - core_strip_w - 2 * bear_t) / 2
+    top_apt_d = top_zone_d
+    top_left_x = bear_t
+    top_right_x = core_strip_x + core_strip_w
+
+    for apt_type, apt_x in [(top_types[0], top_left_x), (top_types[1], top_right_x)]:
+        rooms_raw = _ROOM_BUILDERS[apt_type](top_apt_w, top_apt_d)
+        rooms = [LayoutRoom(**r) for r in rooms_raw]
+        # Фасад — север (y = apt.y + apt.d ≈ inner_d). Раскладки кладут жилые на
+        # y=0 ⇒ для северных квартир инвертируем по Y, как в обычной секционке.
+        for r in rooms:
+            r.y = round(top_apt_d - r.y - r.d, 3)
+        _add_apertures(rooms, top_apt_d, exterior_side="N", interior_side="S")
+        _add_balconies(rooms, top_apt_d, apt_type, exterior_side="N")
+        for room in rooms:
+            _add_furniture(room, exterior_side="N")
+
+        apartments.append(LayoutApartment(
+            type_code=apt_type, number=apt_num,
+            x=round(apt_x, 3), y=round(top_y_start, 3),
+            w=round(top_apt_w, 3), d=round(top_apt_d, 3),
+            rooms=rooms,
+        ))
+        apt_num += 1
+
+    # ── Нижний ряд: 3 стандартные квартиры ──
+    bottom_apt_w = (inner_w - 2 * bear_t) / 3
+    bottom_apt_d = bottom_zone_d
+
+    for i, apt_type in enumerate(bottom_types):
+        ax = bear_t + i * bottom_apt_w
+        rooms_raw = _ROOM_BUILDERS[apt_type](bottom_apt_w, bottom_apt_d)
+        rooms = [LayoutRoom(**r) for r in rooms_raw]
+        # Фасад — юг (y=0 в системе квартиры). Раскладки уже подходят, без инверсии.
+        _add_apertures(rooms, bottom_apt_d, exterior_side="S", interior_side="N")
+        _add_balconies(rooms, bottom_apt_d, apt_type, exterior_side="S")
+        for room in rooms:
+            _add_furniture(room, exterior_side="S")
+
+        apartments.append(LayoutApartment(
+            type_code=apt_type, number=apt_num,
+            x=round(ax, 3), y=round(bear_t, 3),
+            w=round(bottom_apt_w, 3), d=round(bottom_apt_d, 3),
+            rooms=rooms,
+        ))
+        apt_num += 1
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(inner_w, 3),
+        corridor_y=round(corridor_y, 3),
+        corridor_d=corridor_d,
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+    )
+
+
 def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     """Сгенерировать планировку этажа — параметрически + GPT-4o для типов квартир.
 
@@ -408,6 +553,20 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
             n_bathrooms=getattr(inputs, "bathrooms", None),
             has_garage=getattr(inputs, "has_garage", False),
         )
+
+    # ── T-shape типология: 2 крупных + 3 стандартных ──
+    if getattr(inputs, "floor_typology", "symmetric") == "t_shape":
+        # Подготавливаем mix как в обычной симметричной секции
+        n_sect_mix = max(1, inputs.sections)
+        sect_w_mix = inner_w / n_sect_mix
+        gallery_mix = inner_d < _GALLERY_THRESHOLD_M
+        mix = _resolve_mix(
+            inputs, n_sect_mix, sect_w_mix,
+            apt_d_s=max(4.0, inner_d / 2 - 1),
+            apt_d_n=max(4.0, inner_d / 2 - 1),
+            sides=1 if gallery_mix else 2,
+        )
+        return _generate_t_shape_floor(inner_w, inner_d, mix)
 
     n_sect  = max(1, inputs.sections)
     sect_w  = inner_w / n_sect
