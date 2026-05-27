@@ -2454,10 +2454,23 @@ def analytics_kvartirografiya(req: VisualizeFromInputsRequest) -> Kvartirografiy
     ТЭП на всё здание и рекомендации по оптимизации микса под рынок РК.
     """
     inputs = _inputs_from_req(req)
-    builder = FloorPlanDxfBuilder(inputs)
-    n_floor = builder._approx_unit_count()          # квартир на этаже
     floors  = max(1, inputs.floors)
     floor_area = inputs.site_width_m * inputs.site_depth_m
+
+    # Считаем n_floor через РЕАЛЬНЫЙ генератор, чтобы analytics совпадал
+    # с тем что юзер видит на чертеже. Раньше использовали грубую формулу
+    # FloorPlanDxfBuilder._approx_unit_count = floor_area * 0.55 / avg_apt
+    # — но она давала систематически меньше чем реальный _pack_side
+    # (например, для 29×14 формула 3 vs реальный layout 5).
+    try:
+        from ..visualizer.layout_generator import generate_floor_layout
+        _layout = generate_floor_layout(inputs)
+        n_floor = sum(len(s.apartments) for s in _layout.sections)
+        n_floor = max(1, n_floor)
+    except Exception:
+        # Fallback на старую формулу если генератор упал
+        builder = FloorPlanDxfBuilder(inputs)
+        n_floor = builder._approx_unit_count()
 
     # Нормируем проценты ввода
     pct_map = {
