@@ -92,6 +92,65 @@ _CORE_SHIFTED_OFFSET = 0.30          # default; range 0.25–0.35
 _CORE_SHIFTED_W_MIN = 22.0
 # Range 22–32 м из ресерча; верхняя граница не enforced в коде (warning только).
 
+# ── Corner apt: угловая секция здания ────────────────────────────────────
+# Секция расположена в углу здания, два перпендикулярных фасада (например
+# S+W) — внешние. SW квартира — угловая, получает 2 фасада и крупный тип
+# (3к/4к, премиум-лот). Остальные 3 — стандартные с 1 фасадом.
+#
+# v1 упрощение: прямоугольный outline + единственный горизонтальный
+# коридор. Полноценная L-секция с Г-corridor требует расширения схемы
+# (corridors: list[CorridorStrip]) — отложено как future work.
+#
+# Архитектурные референсы: Highvill Astana блоки C/F/G, ЖК Потапово,
+# Эталон-Сити, серия П-44, серия ЛСР, ПИК-2, BI Group Biography/DARMEN.
+_CORNER_APT_W_MIN = 16.0
+_CORNER_APT_D_MIN = 14.0
+_CORNER_APT_CORNER_W_RATIO = 0.50    # доля ширины секции на SW угловую кв.
+
+# ── L-shape: Г-образный наружный контур секции ──────────────────────────
+# Секция формы Г: 2 перпендикулярные «руки» сходятся в общем углу.
+# Ядро в внутреннем углу изгиба (для v1 — у границы зон). Каждая рука
+# содержит ряд квартир, угловая квартира на пересечении рук получает
+# 2 фасада. Outline polygon — настоящий L (6 точек).
+#
+# Архитектурные референсы: ЖК Москва А101, ЖК Аэронавт (ПИК, СПб),
+# Hammarby Sjöstad (Стокгольм), серия ГИ. Редко применяется в РК
+# из-за сейсмики (требуется дилатационный шов).
+#
+# Геометрические соображения для v1:
+#   • horizontal arm = "S" фасад, vertical arm = "W" фасад
+#   • inner corner cut-out в NE (квадрат, отсутствует часть здания)
+#   • квартиры:
+#       - corner apt в SW (где пересекаются обе руки) — 2 фасада S+W
+#       - regular apts вдоль S фасада (восточнее corner)
+#       - regular apts вдоль W фасада (севернее corner)
+_L_SHAPE_W_MIN = 22.0          # минимум для размещения квартир в обеих руках
+_L_SHAPE_D_MIN = 22.0
+_L_SHAPE_ARM_RATIO = 0.65      # arm_width / total_inner — каждая рука занимает 65%
+                               # → cut-out квадрат в NE имеет сторону (1-0.65)*W = 35%
+
+# ── Gallery offset: галерея с зигзагом ───────────────────────────────────
+# Модификация классической galerey (квартиры на S, коридор на N) — северный
+# фасад со 1-2 ритмическими нишами-«карманами» (sawtooth). Архитектурно
+# даёт outdoor pockets для жильцов. Референсы — зарубежные (Park Hill,
+# Robin Hood Gardens, Bruchfeldstrasse Zickzackhof). В РК/РФ редко.
+# v1 simplified: gallery + 1 центральная ниша 3×1.5м на N фасаде.
+_GALLERY_OFFSET_POCKET_W = 3.0     # ширина «кармана» на фасаде
+_GALLERY_OFFSET_POCKET_D = 1.5     # глубина выступа внутрь
+
+# ── U-shape: П-секция с внутренним двориком ─────────────────────────────
+# Секция формы «П»: 2 продольные руки + поперечная руки сходятся, образуя
+# полу-замкнутый дворик (открытый с одной стороны). Premium-сегмент,
+# квартальная застройка. Референсы: Highvill Astana, 1st by BI, ПИК
+# Коммунарка 305-ППМ, Family Nest, Berlin Block IBA 1987.
+#
+# v1 архитектура: bounding box, outline polygon с вырезом в центре-юге
+# (внутренний дворик). 6+ квартир по периметру П.
+_U_SHAPE_W_MIN = 28.0
+_U_SHAPE_D_MIN = 22.0
+_U_SHAPE_COURTYARD_W_RATIO = 0.45  # дворик 45% ширины секции
+_U_SHAPE_COURTYARD_D_RATIO = 0.50  # дворик 50% глубины
+
 # ── Типовые раскладки комнат ──────────────────────────────────────────────
 
 
@@ -1419,6 +1478,570 @@ def _generate_core_shifted_floor(
     )
 
 
+def _generate_corner_apt_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+) -> LayoutFloor | None:
+    """Угловая секция: 2 фасада (S+W), SW квартира угловая.
+
+    Архитектурный паттерн (v1 simplified):
+
+      ┌────────────────────────┬──────────────────────┐
+      │  NW regular (1к/2к)    │  NE regular (1к/2к)  │  ← север
+      │       N facade         │       N facade       │
+      ├────────────────────────┼──────────────────────┤
+      │       Коридор + ядро по центру               │
+      ├────────────────────────┬──────────────────────┤
+      │ SW CORNER (3к/4к)      │  SE regular (1к/2к)  │
+      │ S+W facades            │  S facade            │
+      │ panoramic corner       │                       │
+      └────────────────────────┴──────────────────────┘
+
+    Возвращает None при слишком малой секции (W<16 или D<14).
+
+    Архитектурные референсы: Highvill Astana блоки C/F/G, ЖК Потапово,
+    Эталон-Сити, серия П-44, ПИК-2, BI Biography/DARMEN.
+
+    v1 ограничения:
+      • Прямоугольный outline (не L-форма) — реальная угловая секция
+        часто имеет L-контур, требует schema refactor.
+      • Единственный горизонтальный коридор — реальная Г-коридор
+        потребует поля corridors: list[CorridorStrip] в LayoutSection.
+
+    Эти ограничения зафиксированы в docs/TYPOLOGIES_HANDOFF.md как
+    future work. v1 — это начало пути; даёт уже-узнаваемую корнер-
+    типологию (SW премиум-квартира с 2 фасадами).
+    """
+    if inner_w < _CORNER_APT_W_MIN or inner_d < _CORNER_APT_D_MIN:
+        log.info(
+            "corner_apt: inner=%.1fx%.1f below recommended %.1fx%.1f",
+            inner_w, inner_d, _CORNER_APT_W_MIN, _CORNER_APT_D_MIN,
+        )
+        return None
+
+    if inner_d < _GALLERY_THRESHOLD_M:
+        # 2-сторонняя секция нужна для корнер-типологии — нет смысла в galley
+        log.info("corner_apt: inner_d=%.1f too shallow for 2-sided", inner_d)
+        return None
+
+    n_sect = 1
+    sect_w = inner_w
+
+    corr_d = max(_CORR_MIN_D, _CORE_D)
+    corr_y = round((inner_d - corr_d) / 2, 3)
+    apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+    apt_d_n = max(4.0, round(inner_d - corr_y - corr_d - _BEAR_T, 3))
+
+    # Mix split: 3к/4к → SW corner, остальные — обычные
+    mix_all = _resolve_mix(inputs, n_sect, sect_w, apt_d_s, apt_d_n, sides=2)
+    mix_big = sorted(
+        [t for t in mix_all if t in ("3k", "4k")],
+        key=_apt_type_rank, reverse=True,
+    )
+    mix_small = [t for t in mix_all if t in ("studio", "1k", "2k")]
+
+    # Fallback если в mix нет крупных — даём 3к для угловой
+    if not mix_big:
+        mix_big = ["3k"]
+
+    # Стены секции
+    apt_x0 = _BEAR_T
+    apt_x1 = sect_w - _BEAR_T
+    usable_w = apt_x1 - apt_x0
+
+    # SW угловая квартира — слева, шире обычных
+    corner_apt_w = max(_MIN_APT_W["3k"], usable_w * _CORNER_APT_CORNER_W_RATIO)
+    corner_apt_w = min(corner_apt_w, usable_w * 0.55)
+    s_regular_w = usable_w - corner_apt_w
+
+    # Ядро в центре секции
+    core_cx = sect_w / 2
+    core_x = round(core_cx - _CORE_W / 2, 3)
+    cores = _make_cores(
+        core_x, corr_y,
+        n_pass=max(1, inputs.lifts_passenger),
+        n_freight=max(0, inputs.lifts_freight),
+        core_d=_CORE_D,
+    )
+
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    # ── SW угловая (S+W facades, крупная) ──
+    corner_type = mix_big[0]
+    mix_big = mix_big[1:]
+    rooms_raw = _ROOM_BUILDERS[corner_type](corner_apt_w, apt_d_s)
+    rooms = [LayoutRoom(**r) for r in rooms_raw]
+    _add_apertures(
+        rooms, apt_d_s,
+        exterior_side="S", interior_side="N",
+        apt_w=corner_apt_w,
+        extra_facade_sides=("W",),
+        allow_multiple_windows=True,
+    )
+    _add_balconies(rooms, apt_d_s, corner_type, "S")
+    for room in rooms:
+        _add_furniture(room, "S")
+    apartments.append(LayoutApartment(
+        type_code=corner_type,       # type: ignore[arg-type]
+        number=apt_num,
+        x=round(apt_x0, 3), y=round(_BEAR_T, 3),
+        w=round(corner_apt_w, 3), d=round(apt_d_s, 3),
+        rooms=rooms,
+    ))
+    apt_num += 1
+
+    # ── SE regular (S facade only) ──
+    se_type = mix_small.pop(0) if mix_small else "2k"
+    apartments.append(_build_apt_block(
+        se_type, s_regular_w, apt_d_s,
+        apt_x0 + corner_apt_w, _BEAR_T, apt_num,
+        exterior_side="S", interior_side="N",
+        mirror_index=1,  # зеркалим, чтобы мокрая зона была у границы с угловой
+    ))
+    apt_num += 1
+
+    # ── 2 северные квартиры (стандартные, N facade) ──
+    n_apt_w = usable_w / 2
+    for i in range(2):
+        if mix_small:
+            n_type = mix_small.pop(0)
+        elif mix_big:
+            n_type = mix_big.pop(0)
+        else:
+            n_type = "1k"
+        apartments.append(_build_apt_block(
+            n_type, n_apt_w, apt_d_n,
+            apt_x0 + i * n_apt_w, corr_y + corr_d, apt_num,
+            exterior_side="N", interior_side="S",
+            mirror_index=i,
+        ))
+        apt_num += 1
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(sect_w, 3),
+        corridor_y=corr_y,
+        corridor_d=round(corr_d, 3),
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+    )
+
+
+def _generate_l_shape_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+) -> LayoutFloor | None:
+    """Г-образная секция: 2 перпендикулярные «руки», cut-out в NE углу.
+
+    Полигональный outline (6 точек):
+
+      ┌──────────────┐                     ← y = inner_d
+      │  v_arm apt   │  ┐
+      │ (premium,    │  │ vertical arm
+      │  N+W facades)│  │ (y ∈ [h_arm_d, inner_d], x ∈ [0, v_arm_w])
+      │              │  ┘
+      ├──────────────┤        ┐
+      │   N apt     │        │   NE cut-out  ← y = h_arm_d
+      │  ─corridor─ │        │   (no building)
+      │   S apt     │        │
+      │              │        │ horizontal arm (y ∈ [0, h_arm_d])
+      └─────────────┴────────┘
+       0          v_arm_w   inner_w           ← y = 0
+
+    v1 архитектура:
+      • Горизонтальная рука = "основная" секция (corridor по центру, 4 apts)
+      • Вертикальная рука = 1 крупная премиум-квартира N+W (доступ через
+        приватный коридор/лестницу из N apt — не моделируется в schema)
+      • Cut-out квадрат NE — не часть здания, никаких apts
+
+    Будущая итерация: Г-corridor (поле corridors: list[CorridorStrip]),
+    proper access от horizontal arm corridor к v_arm apt.
+
+    Архитектурные референсы: ЖК Москва А101, ЖК Аэронавт (ПИК),
+    Hammarby Sjöstad (Стокгольм). В РК редко из-за сейсмики (для зон ≥7
+    баллов нужен дилатационный шов в изгибе — фактически 2 секции).
+    """
+    if inner_w < _L_SHAPE_W_MIN or inner_d < _L_SHAPE_D_MIN:
+        log.info(
+            "l_shape: inner=%.1fx%.1f below %.1f minimum",
+            inner_w, inner_d, _L_SHAPE_W_MIN,
+        )
+        return None
+
+    h_arm_d = inner_d * _L_SHAPE_ARM_RATIO
+    v_arm_w = inner_w * _L_SHAPE_ARM_RATIO
+
+    # Outline polygon (CW от SW)
+    outline: list[tuple[float, float]] = [
+        (0.0, 0.0),
+        (round(inner_w, 3), 0.0),
+        (round(inner_w, 3), round(h_arm_d, 3)),
+        (round(v_arm_w, 3), round(h_arm_d, 3)),
+        (round(v_arm_w, 3), round(inner_d, 3)),
+        (0.0, round(inner_d, 3)),
+    ]
+
+    sect_w = inner_w
+    n_sect = 1
+
+    # Горизонтальная рука: corridor по центру (как symmetric)
+    corr_d = max(_CORR_MIN_D, _CORE_D)
+    corr_y = round((h_arm_d - corr_d) / 2, 3)
+    apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+    apt_d_n = max(4.0, round(h_arm_d - corr_y - corr_d - _BEAR_T, 3))
+
+    # Mix split: 1 крупная (3к/4к) → vertical arm; остальные → horizontal
+    mix_all = _resolve_mix(inputs, n_sect, sect_w, apt_d_s, apt_d_n, sides=2)
+    mix_big = sorted(
+        [t for t in mix_all if t in ("3k", "4k")],
+        key=_apt_type_rank, reverse=True,
+    )
+    mix_horizontal = [t for t in mix_all if t not in ("3k", "4k")]
+    if not mix_big:
+        mix_big = ["4k"]
+
+    # Core по центру horizontal arm corridor
+    core_x = round(sect_w / 2 - _CORE_W / 2, 3)
+    cores = _make_cores(
+        core_x, corr_y,
+        n_pass=max(1, inputs.lifts_passenger),
+        n_freight=max(0, inputs.lifts_freight),
+        core_d=_CORE_D,
+    )
+
+    apt_x0 = _BEAR_T
+    apt_x1 = sect_w - _BEAR_T
+    usable_w = apt_x1 - apt_x0
+
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    # ── Horizontal arm: south + north rows ──
+    for side_y, apt_d, ext in [
+        (round(_BEAR_T, 3),         apt_d_s, "S"),
+        (round(corr_y + corr_d, 3), apt_d_n, "N"),
+    ]:
+        side_packing = _pack_side(usable_w, mix_horizontal)
+        for _ in range(len(side_packing)):
+            if mix_horizontal:
+                mix_horizontal.pop(0)
+
+        if not side_packing:
+            fb_w = max(_MIN_APT_W["1k"], min(usable_w, _TARGET_APT_W["1k"]))
+            fb_t = _apt_type_from_area(fb_w * apt_d)
+            side_packing = [(fb_t, fb_w + max(0, usable_w - fb_w))]
+
+        ax = apt_x0
+        for ai, (apt_type, aw) in enumerate(side_packing):
+            apartments.append(_build_apt_block(
+                apt_type, aw, apt_d, ax, side_y, apt_num,
+                exterior_side=ext, interior_side="N" if ext == "S" else "S",
+                mirror_index=ai,
+            ))
+            ax += aw
+            apt_num += 1
+
+    # ── Vertical arm: 1 крупная квартира N+W ──
+    v_apt_type = mix_big[0]
+    v_apt_w = v_arm_w - 2 * _BEAR_T
+    v_apt_d = inner_d - h_arm_d - _BEAR_T
+    v_apt_x = _BEAR_T
+    v_apt_y = round(h_arm_d, 3)
+
+    if v_apt_w >= 4.0 and v_apt_d >= 4.0:
+        apartments.append(_build_apt_block(
+            v_apt_type, v_apt_w, v_apt_d, v_apt_x, v_apt_y, apt_num,
+            exterior_side="N", interior_side="S",
+            section_apt_w_for_apertures=v_apt_w,
+            extra_facade_sides=("W",),
+            allow_multiple_windows=True,
+        ))
+        apt_num += 1
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(sect_w, 3),
+        corridor_y=corr_y,
+        corridor_d=round(corr_d, 3),
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+        outline=outline,
+    )
+
+
+def _generate_gallery_offset_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+) -> LayoutFloor | None:
+    """Галерея с зигзагом: gallery + 1 центральный «карман» на N фасаде.
+
+    Outline polygon traces:
+      ─────────────────────────────  N фасад (сверху, с карманом-нишей)
+      │           ┌─────┐         │
+      │           │     │         │  ← карман глубиной _GALLERY_OFFSET_POCKET_D
+      │           │     │         │
+      ──────────────────────────── ───── S фасад (квартиры с окнами на юг)
+
+    v1: только 1 карман в центре N фасада. Multiple карманов или
+    настоящий zigzag — future enhancement.
+
+    Архитектурные референсы: Park Hill (Sheffield), Robin Hood Gardens
+    (London), Bruchfeldstrasse Zickzackhof (Frankfurt). В РК/РФ — нет
+    массовых примеров (типология заграничная).
+    """
+    # Использует gallery_mode (depth < 12 не нужно — наоборот, gallery_mode
+    # требует depth < 12). Для gallery_offset берём gallery_mode базу.
+    if inner_w < 18.0 or inner_d < 7.0 or inner_d >= _GALLERY_THRESHOLD_M:
+        log.info(
+            "gallery_offset: inner=%.1fx%.1f outside gallery range",
+            inner_w, inner_d,
+        )
+        return None
+
+    # Стандартная gallery: коридор у N стены, квартиры с юга
+    corr_d = max(_CORR_MIN_D, 1.4)
+    corr_y = round(inner_d - corr_d - _BEAR_T, 3)
+    apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+
+    n_sect = 1
+    sect_w = inner_w
+    mix = _resolve_mix(inputs, n_sect, sect_w, apt_d_s, 0.0, sides=1)
+
+    # Outline polygon: rect + карман в центре N фасада
+    pocket_w = min(_GALLERY_OFFSET_POCKET_W, inner_w * 0.20)
+    pocket_d = _GALLERY_OFFSET_POCKET_D
+    pocket_x0 = (inner_w - pocket_w) / 2
+    pocket_x1 = (inner_w + pocket_w) / 2
+    pocket_y_bot = inner_d - pocket_d  # карман уходит на pocket_d вглубь от N
+
+    outline: list[tuple[float, float]] = [
+        (0.0, 0.0),
+        (round(inner_w, 3), 0.0),
+        (round(inner_w, 3), round(inner_d, 3)),
+        (round(pocket_x1, 3), round(inner_d, 3)),
+        (round(pocket_x1, 3), round(pocket_y_bot, 3)),
+        (round(pocket_x0, 3), round(pocket_y_bot, 3)),
+        (round(pocket_x0, 3), round(inner_d, 3)),
+        (0.0, round(inner_d, 3)),
+    ]
+
+    # Стены
+    apt_x0 = _BEAR_T
+    apt_x1 = sect_w - _BEAR_T
+    usable_w = apt_x1 - apt_x0
+
+    # Ядро у N стены, в одном из секторов
+    core_x = round(sect_w / 2 - _CORE_W / 2, 3)
+    core_y = round(corr_y - _CORE_D, 3)
+    cores = _make_cores(
+        core_x, max(0.0, core_y),
+        n_pass=max(1, inputs.lifts_passenger),
+        n_freight=max(0, inputs.lifts_freight),
+        core_d=min(_CORE_D, corr_y),
+    )
+
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    side_packing = _pack_side(usable_w, mix)
+    ax = apt_x0
+    for ai, (apt_type, aw) in enumerate(side_packing):
+        apartments.append(_build_apt_block(
+            apt_type, aw, apt_d_s, ax, _BEAR_T, apt_num,
+            exterior_side="S", interior_side="N", mirror_index=ai,
+        ))
+        ax += aw
+        apt_num += 1
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(sect_w, 3),
+        corridor_y=corr_y,
+        corridor_d=round(corr_d, 3),
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+        outline=outline,
+    )
+
+
+def _generate_u_shape_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+) -> LayoutFloor | None:
+    """П-образная секция с внутренним двориком.
+
+    Полигональный outline («П» — открытый сверху):
+
+      ┌──────┐                ┌──────┐                ← y = inner_d
+      │      │                │      │
+      │  N   │   COURTYARD    │  N   │
+      │ apts │   (открытый    │ apts │
+      │      │    дворик)     │      │
+      │      ├──────┬────────┤      │                ← y = courtyard_y_bot
+      │      │ corridor + ядро       │
+      ├──────┴──────┴────────┴──────┤                ← y = corr_y
+      │       S apts (поперечная руки)│
+      └──────────────────────────────┘                ← y = 0
+
+    v1: courtyard вырезан из NORTH центра. 3 группы квартир:
+      • S row (поперечная рука) — стандартные с S facade
+      • NW column (левая продольная) — премиум, N+W двусторонние (двор+улица)
+      • NE column (правая продольная) — премиум, N+E двусторонние
+
+    Архитектурные референсы: Highvill Astana (закрытый двор), 1st by BI,
+    ПИК Коммунарка 305-ППМ, Family Nest (BI Group), Berlin Block.
+    """
+    if inner_w < _U_SHAPE_W_MIN or inner_d < _U_SHAPE_D_MIN:
+        log.info(
+            "u_shape: inner=%.1fx%.1f below %.1fx%.1f minimum",
+            inner_w, inner_d, _U_SHAPE_W_MIN, _U_SHAPE_D_MIN,
+        )
+        return None
+
+    # Внутренний дворик
+    court_w = inner_w * _U_SHAPE_COURTYARD_W_RATIO
+    court_d = inner_d * _U_SHAPE_COURTYARD_D_RATIO
+    court_x0 = (inner_w - court_w) / 2
+    court_x1 = (inner_w + court_w) / 2
+    court_y_bot = inner_d - court_d
+
+    # Поперечная руки (south crossbar): y ∈ [0, court_y_bot]
+    # Продольные руки (north columns): y ∈ [court_y_bot, inner_d]
+    # Открытое сверху → дворик не замкнут
+
+    # Outline (CW от SW)
+    outline: list[tuple[float, float]] = [
+        (0.0, 0.0),
+        (round(inner_w, 3), 0.0),
+        (round(inner_w, 3), round(inner_d, 3)),
+        (round(court_x1, 3), round(inner_d, 3)),
+        (round(court_x1, 3), round(court_y_bot, 3)),
+        (round(court_x0, 3), round(court_y_bot, 3)),
+        (round(court_x0, 3), round(inner_d, 3)),
+        (0.0, round(inner_d, 3)),
+    ]
+
+    # Crossbar секция: corridor в его центре
+    corr_d = max(_CORR_MIN_D, _CORE_D)
+    crossbar_d = court_y_bot
+    corr_y = round((crossbar_d - corr_d) / 2, 3)
+    apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+    apt_d_n = max(4.0, round(crossbar_d - corr_y - corr_d - _BEAR_T, 3))
+
+    n_sect = 1
+    sect_w = inner_w
+    mix_all = _resolve_mix(inputs, n_sect, sect_w, apt_d_s, apt_d_n, sides=2)
+    mix_big = sorted(
+        [t for t in mix_all if t in ("3k", "4k")],
+        key=_apt_type_rank, reverse=True,
+    )
+    mix_small = [t for t in mix_all if t not in ("3k", "4k")]
+    if not mix_big:
+        mix_big = ["3k", "3k"]
+
+    # Ядро по центру crossbar corridor
+    core_x = round(sect_w / 2 - _CORE_W / 2, 3)
+    cores = _make_cores(
+        core_x, corr_y,
+        n_pass=max(1, inputs.lifts_passenger),
+        n_freight=max(0, inputs.lifts_freight),
+        core_d=_CORE_D,
+    )
+
+    apt_x0 = _BEAR_T
+    apt_x1 = sect_w - _BEAR_T
+    usable_w = apt_x1 - apt_x0
+
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    # ── Crossbar: S + N rows (как symmetric) ──
+    for side_y, apt_d, ext in [
+        (round(_BEAR_T, 3),         apt_d_s, "S"),
+        (round(corr_y + corr_d, 3), apt_d_n, "N"),
+    ]:
+        side_packing = _pack_side(usable_w, mix_small)
+        for _ in range(len(side_packing)):
+            if mix_small:
+                mix_small.pop(0)
+        if not side_packing:
+            fb_w = max(_MIN_APT_W["1k"], min(usable_w, _TARGET_APT_W["1k"]))
+            side_packing = [(_apt_type_from_area(fb_w * apt_d), fb_w + max(0, usable_w - fb_w))]
+        ax = apt_x0
+        for ai, (apt_type, aw) in enumerate(side_packing):
+            apartments.append(_build_apt_block(
+                apt_type, aw, apt_d, ax, side_y, apt_num,
+                exterior_side=ext, interior_side="N" if ext == "S" else "S",
+                mirror_index=ai,
+            ))
+            ax += aw
+            apt_num += 1
+
+    # ── Левая продольная рука (W column): крупная двусторонняя ──
+    column_w = court_x0 - _BEAR_T
+    column_d = inner_d - court_y_bot - _BEAR_T
+    column_y0 = round(court_y_bot, 3)
+    if column_w >= 4.0 and column_d >= 4.0:
+        # NW columna: фасад N (вверх) + W (наружу)
+        nw_type = mix_big[0] if mix_big else "3k"
+        mix_big = mix_big[1:] if mix_big else []
+        apartments.append(_build_apt_block(
+            nw_type, column_w, column_d, _BEAR_T, column_y0, apt_num,
+            exterior_side="N", interior_side="S",
+            section_apt_w_for_apertures=column_w,
+            extra_facade_sides=("W",),
+            allow_multiple_windows=True,
+        ))
+        apt_num += 1
+
+        # NE columna: фасад N + E
+        ne_type = mix_big[0] if mix_big else "3k"
+        apartments.append(_build_apt_block(
+            ne_type, column_w, column_d,
+            round(court_x1, 3), column_y0, apt_num,
+            exterior_side="N", interior_side="S",
+            section_apt_w_for_apertures=column_w,
+            extra_facade_sides=("E",),
+            allow_multiple_windows=True,
+        ))
+        apt_num += 1
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(sect_w, 3),
+        corridor_y=corr_y,
+        corridor_d=round(corr_d, 3),
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+        outline=outline,
+    )
+
+
 def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     """Сгенерировать планировку этажа — параметрически + GPT-4o для типов квартир.
 
@@ -1495,6 +2118,30 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     # Авторская/премиум-типология. Подробности — в _generate_core_shifted_floor().
     if getattr(inputs, "floor_typology", "symmetric") == "core_shifted":
         result = _generate_core_shifted_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+
+    # ── Corner apt: угловая секция здания (SW corner premium) ──
+    if getattr(inputs, "floor_typology", "symmetric") == "corner_apt":
+        result = _generate_corner_apt_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+
+    # ── L-shape: Г-образный контур, 2 перпендикулярные руки ──
+    if getattr(inputs, "floor_typology", "symmetric") == "l_shape":
+        result = _generate_l_shape_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+
+    # ── Gallery offset: gallery с центральным карманом-выемкой на N фасаде ──
+    if getattr(inputs, "floor_typology", "symmetric") == "gallery_offset":
+        result = _generate_gallery_offset_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+
+    # ── U-shape: П-секция с открытым двориком наверху ──
+    if getattr(inputs, "floor_typology", "symmetric") == "u_shape":
+        result = _generate_u_shape_floor(inner_w, inner_d, inputs)
         if result is not None:
             return result
 

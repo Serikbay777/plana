@@ -482,6 +482,10 @@ export function ArchitecturalDrawingsTab({
               <option value="double_core">Double core (длинная секция, 2 ядра)</option>
               <option value="tower">Tower (4 угловые вокруг ядра)</option>
               <option value="core_shifted">Core shifted (ядро у торца)</option>
+              <option value="corner_apt">Corner apt (SW угловая премиум)</option>
+              <option value="l_shape">L-shape (Г-образный контур)</option>
+              <option value="gallery_offset">Gallery offset (галерея с карманом)</option>
+              <option value="u_shape">U-shape (П-секция с двориком)</option>
             </select>
           </label>
           <PromptForm
