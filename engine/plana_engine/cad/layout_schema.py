@@ -45,7 +45,7 @@ FurnitureKind = Literal[
     # гостиная
     "sofa", "coffee_table", "tv",
     # кухня
-    "stove", "sink", "fridge", "dining_table",
+    "stove", "sink", "fridge", "dining_table", "kitchen_counter",
     # сан.узел
     "bathtub", "toilet", "washbasin",
     # прочее
@@ -91,7 +91,7 @@ class LayoutRoom(BaseModel):
 
 
 class LayoutApartment(BaseModel):
-    type_code: Literal["studio", "1k", "2k", "3k"]
+    type_code: Literal["studio", "1k", "2k", "3k", "4k"]
     number: int
     x: float
     """Абсолютная координата в здании (м)"""
