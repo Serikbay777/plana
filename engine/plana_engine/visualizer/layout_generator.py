@@ -151,6 +151,39 @@ _U_SHAPE_D_MIN = 22.0
 _U_SHAPE_COURTYARD_W_RATIO = 0.45  # дворик 45% ширины секции
 _U_SHAPE_COURTYARD_D_RATIO = 0.50  # дворик 50% глубины
 
+# ── Duplex top: верхний этаж дюплекс-пентхауса ───────────────────────────
+# Особая «нетиповая» планировка — верхние 1-2 этажа здания, где каждая
+# квартира — дюплекс-пентхаус (2 уровня). Здесь моделируется ВЕРХНИЙ
+# уровень: только мастер-спальни + ванные/гардеробы + терраса. Жилых
+# зон меньше, площадей на квартиру больше. На этаже всего 2 квартиры
+# (вместо 4 в tower) — каждая огромная.
+#
+# Архитектурные референсы: ПИК «Архитектор», Highvill Eastline, Capital
+# Towers, Скуратов «Скай Гарден», 432 Park Avenue (NYC). Премиум-сегмент.
+#
+# v1 архитектура: tower-like footprint (~28×26), 2 угловые duplex-apts
+# по диагонали (NW + SE). Центральное ядро. Multi-floor schema —
+# отложено: считаем что это просто «топ-этаж» с особо крупными квартирами.
+_DUPLEX_TOP_W_MIN = 22.0
+_DUPLEX_TOP_D_MIN = 22.0
+
+# ── Commercial ground: нежилой 1-й этаж ─────────────────────────────────
+# Стандарт комфорт+/бизнес ЖК РК/РФ: 1-й этаж полностью нежилой.
+# 50-70% коммерция (магазины, кафе, аптеки), 8-15% лобби подъезда,
+# 10-20% технические помещения (ИТП, ВНС, ВРУ, мусорокамера).
+# Жильё начинается со 2-го этажа.
+#
+# Архитектурные референсы: ПИК «Город комфорта», Самолёт Прокшино,
+# А101 (принцип «активного фронта»), BI Highvill Park/Family Nest,
+# Bazis NEOPARK/PRIMAVERA. Запрещено: магазины >1000 м², общепит >50 мест.
+#
+# v1 архитектура: длинная секция, 2-3 коммерческих юнита у южного фасада
+# (витражи), лобби подъезда у торца, технические в северной полосе.
+# LayoutFloor.kind=commercial (будет добавлен в schema) — отложено.
+# v1 использует тот же LayoutFloor, room.kind="commercial" для юнитов.
+_COMMERCIAL_GROUND_W_MIN = 18.0
+_COMMERCIAL_GROUND_D_MIN = 8.0
+
 # ── Типовые раскладки комнат ──────────────────────────────────────────────
 
 
@@ -2042,6 +2075,274 @@ def _generate_u_shape_floor(
     )
 
 
+def _generate_duplex_top_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+) -> LayoutFloor | None:
+    """Верхний этаж дюплекс-пентхаусов: 2 огромные квартиры по диагонали.
+
+    Footprint похож на tower (~28×26), но вместо 4 квартир — всего 2,
+    каждая занимает свою половину этажа. Это представляет ВЕРХНИЙ
+    уровень дюплекса, где обычно мастер-спальни + ванные + терраса.
+
+    NW и SE располагаются по диагонали (через центральное ядро) — даёт
+    максимум видовых характеристик и приватности.
+
+    v1 ограничение: однометровая модель multi-floor (нет связи с
+    нижним уровнем). Real-life duplex апартамент имеет внутреннюю
+    лестницу в нижний этаж и стояки прерываются — это требует
+    multi-floor schema (LayoutProject уже умеет, но генератор пока
+    отдаёт 1 floor). Отложено как future work.
+
+    Архитектурные референсы: ПИК «Архитектор», Highvill Eastline,
+    Capital Towers, Скуратов «Скай Гарден», 432 Park Avenue (NYC).
+    """
+    if inner_w < _DUPLEX_TOP_W_MIN or inner_d < _DUPLEX_TOP_D_MIN:
+        log.info(
+            "duplex_top: inner=%.1fx%.1f below %.1fx%.1f minimum",
+            inner_w, inner_d, _DUPLEX_TOP_W_MIN, _DUPLEX_TOP_D_MIN,
+        )
+        return None
+
+    # Ядро по центру (как tower)
+    core_w = _TOWER_CORE_W
+    core_d = _TOWER_CORE_D
+    core_x = round((inner_w - core_w) / 2, 3)
+    core_y = round((inner_d - core_d) / 2, 3)
+
+    # Квартиры теперь НАМНОГО больше — каждая занимает половину этажа
+    # минус ядро. Делим по диагонали через ядро.
+    # NW apt: верх-лево (x ∈ [0, core_x+core_w], y ∈ [core_y, inner_d])
+    #         покрывает NW часть И захватывает CW над ядром
+    # SE apt: низ-право, симметрично
+    # Используем верх и низ ядра — две зоны.
+
+    nw_apt_w = round(inner_w / 2 + core_w / 2 - _BEAR_T, 3)  # покрывает половину + захват
+    nw_apt_d = round((inner_d - core_d) / 2 - _BEAR_T, 3)
+    se_apt_w = nw_apt_w
+    se_apt_d = nw_apt_d
+
+    if nw_apt_w < 8.0 or nw_apt_d < 6.0:
+        return None
+
+    cores = _make_cores(
+        core_x, core_y,
+        n_pass=max(1, inputs.lifts_passenger),
+        n_freight=max(0, inputs.lifts_freight),
+        core_d=core_d,
+    )
+
+    # Используем 4k для дюплекса всегда (огромная квартира)
+    mix_all = _resolve_mix(inputs, 1, inner_w, nw_apt_d, se_apt_d, sides=2)
+    mix_sorted = sorted(mix_all, key=_apt_type_rank, reverse=True) if mix_all else []
+    while len(mix_sorted) < 2:
+        mix_sorted.append("4k")
+
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    # NW: верх-лево квартира с N+W фасадами
+    nw_type = mix_sorted[0]
+    apartments.append(_build_apt_block(
+        nw_type, nw_apt_w, nw_apt_d,
+        _BEAR_T, round(core_y + core_d, 3), apt_num,
+        exterior_side="N", interior_side="S",
+        section_apt_w_for_apertures=nw_apt_w,
+        extra_facade_sides=("W",),
+        allow_multiple_windows=True,
+    ))
+    apt_num += 1
+
+    # SE: низ-право квартира с S+E фасадами
+    se_type = mix_sorted[1]
+    se_x = round(inner_w - se_apt_w - _BEAR_T, 3)
+    apartments.append(_build_apt_block(
+        se_type, se_apt_w, se_apt_d,
+        se_x, _BEAR_T, apt_num,
+        exterior_side="S", interior_side="N",
+        section_apt_w_for_apertures=se_apt_w,
+        extra_facade_sides=("E",),
+        allow_multiple_windows=True,
+    ))
+    apt_num += 1
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(inner_w, 3),
+        corridor_y=round(core_y, 3),
+        corridor_d=round(core_d, 3),
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+    )
+
+
+def _generate_commercial_ground_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+) -> LayoutFloor | None:
+    """1-й этаж нежилой: 2-3 коммерческих юнита + лобби + тех. зона.
+
+    Архитектурный паттерн (комфорт+/бизнес стандарт РК/РФ):
+
+      ┌────────────┬─────────────────┬─────────────────┐
+      │  ИТП/ВНС/  │  ТЕХ.КОРИДОР    │  МУСОРОКАМЕРА   │  ← N (back-of-house)
+      │  венткамера│                  │  + ВРУ          │
+      ├────────────┴─────────────────┴─────────────────┤
+      ├─────────┬───────────────────┬─────────────────┤
+      │ ЛОББИ   │  КОММ-1 (магазин) │ КОММ-2 (кафе)   │  ← S (улица, витражи)
+      │ ПОДЪЕЗДА│  витраж + вход    │ витраж + вход   │
+      └─────────┴───────────────────┴─────────────────┘
+        фасад S (главный, активный фронт)
+
+    v1 ограничения:
+      • LayoutFloor.kind=commercial — отложено (нет поля в schema)
+      • room.kind использует существующий "living"/"hallway"/"storage"
+        с name_ru указывающим назначение ("КОММ-1", "ЛОББИ", "ИТП")
+      • Высота этажа 4.0м (по сравнению с 3.0м жилого) — не моделируется
+
+    Архитектурные референсы: ПИК «Город комфорта» (Саларьево/Бунинские/
+    Перовское), Самолёт Прокшино, А101, BI Group Highvill Park,
+    Family Nest, JIBEK JOLY, Bazis NEOPARK/PRIMAVERA.
+    """
+    if inner_w < _COMMERCIAL_GROUND_W_MIN or inner_d < _COMMERCIAL_GROUND_D_MIN:
+        log.info(
+            "commercial_ground: inner=%.1fx%.1f too small",
+            inner_w, inner_d,
+        )
+        return None
+
+    sect_w = inner_w
+    # Делим depth: 60% юг (коммерция/лобби), 40% север (тех. помещения)
+    commerce_d = inner_d * 0.60
+    tech_d = inner_d - commerce_d - 2 * _BEAR_T
+
+    # Стены секции
+    apt_x0 = _BEAR_T
+    apt_x1 = sect_w - _BEAR_T
+    usable_w = apt_x1 - apt_x0
+
+    # ── Распределение по X (юг — коммерция + лобби) ──
+    # Лобби подъезда — 4м у западного торца
+    # 2-3 коммерческих юнита заполняют оставшуюся ширину
+    lobby_w = min(4.5, usable_w * 0.18)
+    commerce_total_w = usable_w - lobby_w
+    n_comm_units = 2 if commerce_total_w < 20 else 3
+    comm_unit_w = commerce_total_w / n_comm_units
+
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    # 1. ЛОББИ подъезда (запад)
+    lobby = LayoutApartment(
+        type_code="1k",  # type: ignore[arg-type] — schema doesn't have "lobby"
+        number=apt_num,
+        x=round(apt_x0, 3), y=round(_BEAR_T, 3),
+        w=round(lobby_w, 3), d=round(commerce_d, 3),
+        rooms=[LayoutRoom(
+            kind="hallway", name_ru="Лобби подъезда",
+            x=0.0, y=0.0, w=round(lobby_w, 3), d=round(commerce_d, 3),
+        )],
+    )
+    apartments.append(lobby)
+    apt_num += 1
+
+    # 2. Коммерческие юниты (south, витражи)
+    comm_x_cursor = apt_x0 + lobby_w
+    for i in range(n_comm_units):
+        unit_name = ["Магазин", "Кафе", "Аптека"][i % 3]
+        unit = LayoutApartment(
+            type_code="3k",  # type: ignore[arg-type] — placeholder for commercial
+            number=apt_num,
+            x=round(comm_x_cursor, 3), y=round(_BEAR_T, 3),
+            w=round(comm_unit_w, 3), d=round(commerce_d, 3),
+            rooms=[LayoutRoom(
+                kind="living", name_ru=f"{unit_name} #{i+1}",
+                x=0.0, y=0.0, w=round(comm_unit_w, 3), d=round(commerce_d, 3),
+                # Витраж — окно на S фасаде во всю ширину юнита
+                windows=[LayoutWindow(
+                    side="S",
+                    offset=round(comm_unit_w * 0.15, 3),
+                    width=round(comm_unit_w * 0.7, 3),
+                )],
+            )],
+        )
+        apartments.append(unit)
+        comm_x_cursor += comm_unit_w
+        apt_num += 1
+
+    # 3. Тех. полоса на севере: ИТП/ВНС/ВРУ/мусорокамера
+    tech_y0 = _BEAR_T + commerce_d
+    tech_unit_names = ["ИТП", "ВНС", "Венткамера", "ВРУ", "Мусорокамера"]
+    n_tech_units = 4 if usable_w >= 18 else 3
+    tech_unit_w = usable_w / n_tech_units
+
+    tech_x_cursor = apt_x0
+    for i in range(n_tech_units):
+        name = tech_unit_names[i] if i < len(tech_unit_names) else f"Тех. #{i+1}"
+        tech = LayoutApartment(
+            type_code="studio",  # type: ignore[arg-type]
+            number=apt_num,
+            x=round(tech_x_cursor, 3), y=round(tech_y0, 3),
+            w=round(tech_unit_w, 3), d=round(tech_d, 3),
+            rooms=[LayoutRoom(
+                kind="storage", name_ru=name,
+                x=0.0, y=0.0, w=round(tech_unit_w, 3), d=round(tech_d, 3),
+            )],
+        )
+        apartments.append(tech)
+        tech_x_cursor += tech_unit_w
+        apt_num += 1
+
+    # Лифт + лестница в лобби-зоне (на y=commerce_d, в X-полосе лобби)
+    core_x = round(apt_x0, 3)
+    core_y = round(_BEAR_T + commerce_d - _CORE_D, 3)
+    cores = _make_cores(
+        core_x, max(0.0, core_y),
+        n_pass=max(1, inputs.lifts_passenger),
+        n_freight=max(0, inputs.lifts_freight),
+        core_d=min(_CORE_D, commerce_d),
+    )
+
+    # corridor — между коммерцией и тех. зоной (тонкая горизонтальная полоса
+    # 1.4м для перемещения арендаторов через служебный коридор)
+    corr_d = 1.4
+    corr_y = round(_BEAR_T + commerce_d, 3)
+    # Но мы tech apartments начали сразу с tech_y0=BEAR_T+commerce_d.
+    # Сдвинем tech apts на corr_d вверх — иначе наложение
+    for apt in apartments:
+        if apt.y >= tech_y0 - 0.001:
+            apt.y = round(apt.y + corr_d, 3)
+    # Update tech_d to fit
+    new_tech_d = tech_d - corr_d
+    if new_tech_d > 1.5:
+        for apt in apartments:
+            if apt.y >= tech_y0 + corr_d - 0.001:
+                apt.d = round(new_tech_d, 3)
+                for r in apt.rooms:
+                    r.d = round(new_tech_d, 3)
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(sect_w, 3),
+        corridor_y=corr_y,
+        corridor_d=corr_d,
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+    )
+
+
 def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     """Сгенерировать планировку этажа — параметрически + GPT-4o для типов квартир.
 
@@ -2142,6 +2443,18 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     # ── U-shape: П-секция с открытым двориком наверху ──
     if getattr(inputs, "floor_typology", "symmetric") == "u_shape":
         result = _generate_u_shape_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+
+    # ── Duplex top: верхний этаж дюплекс-пентхаусов (2 огромные квартиры) ──
+    if getattr(inputs, "floor_typology", "symmetric") == "duplex_top":
+        result = _generate_duplex_top_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+
+    # ── Commercial ground: нежилой 1-й этаж (коммерция + лобби + тех.) ──
+    if getattr(inputs, "floor_typology", "symmetric") == "commercial_ground":
+        result = _generate_commercial_ground_floor(inner_w, inner_d, inputs)
         if result is not None:
             return result
 

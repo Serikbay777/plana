@@ -486,6 +486,8 @@ export function ArchitecturalDrawingsTab({
               <option value="l_shape">L-shape (Г-образный контур)</option>
               <option value="gallery_offset">Gallery offset (галерея с карманом)</option>
               <option value="u_shape">U-shape (П-секция с двориком)</option>
+              <option value="duplex_top">Duplex top (верх дюплекс-пентхаусов)</option>
+              <option value="commercial_ground">Commercial ground (нежилой 1 эт.)</option>
             </select>
           </label>
           <PromptForm
