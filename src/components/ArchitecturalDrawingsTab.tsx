@@ -99,6 +99,10 @@ export function ArchitecturalDrawingsTab({
 } = {}) {
   // Структурированная форма (как в табе «AI Чертежи»), вместо free-form ТЗ.
   const [form, setForm] = useState<PromptFormState>(DEFAULT_PROMPT_FORM);
+  // Типология этажа — пока без UI в PromptForm, поэтому селектор локальный.
+  // Доступные значения см. engine/plana_engine/visualizer/marketing_prompt.py:68+
+  // и docs/TYPOLOGIES_HANDOFF.md
+  const [floorTypology, setFloorTypology] = useState<string>("symmetric");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BriefLayoutResponse | null>(null);
@@ -194,9 +198,13 @@ export function ArchitecturalDrawingsTab({
     setError(null);
     if (vizImageUrl) { URL.revokeObjectURL(vizImageUrl); setVizImageUrl(null); }
     try {
-      const visReq = buildVisReq(form);
+      const visReq: VisualizeFromInputsRequest = {
+        ...buildVisReq(form),
+        floor_typology: floorTypology,
+      };
       // Structured endpoint — без LLM-парсинга брифа. Бэк сам построит
-      // LayoutFloor через detеrministic generator (T-shape/symmetric/...).
+      // LayoutFloor через detеrministic generator. Типология выбирается через
+      // селектор floorTypology (см. ниже).
       const layout = await generateFloorLayout(visReq);
       // Адаптируем под BriefLayoutResponse-форму, которую дальше использует UI
       setResult({
@@ -459,6 +467,23 @@ export function ArchitecturalDrawingsTab({
 
         {/* CENTER — структурированная форма параметров (как в табе «AI Чертежи») */}
         <div className="border-r border-white/[0.04] p-3 flex flex-col gap-3 min-h-0">
+          {/* Селектор типологии этажа — отдельно от PromptForm, временно
+              пока не вынесем в общую форму. См. docs/TYPOLOGIES_HANDOFF.md */}
+          <label className="flex flex-col gap-1 text-[11px] text-white/60">
+            <span className="uppercase tracking-wide">Типология этажа</span>
+            <select
+              value={floorTypology}
+              onChange={(e) => setFloorTypology(e.target.value)}
+              className="h-8 px-2 rounded bg-white/[0.04] border border-white/[0.06] text-white/85 text-[12.5px] focus:outline-none focus:border-white/[0.18]"
+            >
+              <option value="symmetric">Симметричная (default)</option>
+              <option value="t_shape">T-shape (2 крупных + 3 стандартных)</option>
+              <option value="asymmetric_depth">Asymmetric depth (юг глубже севера)</option>
+              <option value="double_core">Double core (длинная секция, 2 ядра)</option>
+              <option value="tower">Tower (4 угловые вокруг ядра)</option>
+              <option value="core_shifted">Core shifted (ядро у торца)</option>
+            </select>
+          </label>
           <PromptForm
             value={form}
             onChange={setForm}
@@ -1151,13 +1176,27 @@ export function FloorPlanSvg({
         })}
 
         {/* ── Внешний контур здания — самый толстый ───────────────────── */}
-        <rect
-          x={0} y={0} width={W} height={D}
-          fill="none"
-          stroke={WALL_COLOR}
-          strokeWidth={WALL_EXTERIOR}
-          strokeLinejoin="miter"
-        />
+        {/* Если layout.outline задан (T-/L-/U-форма) — рисуем polygon,
+            иначе прямоугольник width × depth. ry() инвертирует Y. */}
+        {layout.outline && layout.outline.length >= 3 ? (
+          <polygon
+            points={layout.outline
+              .map(([x, y]) => `${x},${ry(y, 0)}`)
+              .join(" ")}
+            fill="none"
+            stroke={WALL_COLOR}
+            strokeWidth={WALL_EXTERIOR}
+            strokeLinejoin="miter"
+          />
+        ) : (
+          <rect
+            x={0} y={0} width={W} height={D}
+            fill="none"
+            stroke={WALL_COLOR}
+            strokeWidth={WALL_EXTERIOR}
+            strokeLinejoin="miter"
+          />
+        )}
 
         {/* ── Подписи комнат и номера квартир ─────────────────────────── */}
         {layerVisible("texts") && layout.sections.map((section) => (
@@ -1736,38 +1775,118 @@ function FurnitureItem({
       return baseRect;
 
     case "sofa": {
-      // Диван с тремя секциями + спинка отделена линией
-      const backY = svgY + d * 0.25;
+      // S6: Диван в Maket-стиле — явные 3 подушки сиденья + подлокотники
+      // как отдельные блоки + спинка с тенью. Спинка сверху (svg-Y маленький).
+      const backD = d * 0.30;          // спинка
+      const seatD = d - backD;          // сиденье
+      const armW = w * 0.10;            // подлокотники
+      const seatY = svgY + backD;
+      const pillowGap = 0.03;
+      const pillowsTotalW = w - armW * 2 - pillowGap * 4;
+      const pillowW = pillowsTotalW / 3;
+      const pillowD = seatD - 0.08;
+      const pillowY = seatY + 0.04;
+      const px1 = svgX + armW + pillowGap;
       return (
         <g>
-          {baseRect}
-          {/* Спинка */}
-          <line x1={svgX} y1={backY} x2={svgX + w} y2={backY}
-                stroke={FURN_STROKE} strokeWidth={sw} />
-          {/* Подлокотники */}
-          <line x1={svgX + w * 0.08} y1={backY} x2={svgX + w * 0.08} y2={svgY + d}
-                stroke={FURN_STROKE} strokeWidth={sw} />
-          <line x1={svgX + w * 0.92} y1={backY} x2={svgX + w * 0.92} y2={svgY + d}
-                stroke={FURN_STROKE} strokeWidth={sw} />
-          {/* Разделение на 3 подушки */}
-          <line x1={svgX + w * 0.36} y1={backY} x2={svgX + w * 0.36} y2={svgY + d}
-                stroke={FURN_STROKE} strokeWidth={sw} />
-          <line x1={svgX + w * 0.64} y1={backY} x2={svgX + w * 0.64} y2={svgY + d}
-                stroke={FURN_STROKE} strokeWidth={sw} />
+          {/* Спинка диван */}
+          <rect
+            x={svgX} y={svgY} width={w} height={backD}
+            fill={FURN_FILL} stroke={FURN_STROKE} strokeWidth={sw}
+            rx={0.07}
+          />
+          {/* Левый подлокотник */}
+          <rect
+            x={svgX} y={seatY} width={armW} height={seatD}
+            fill={FURN_FILL} stroke={FURN_STROKE} strokeWidth={sw}
+            rx={0.07}
+          />
+          {/* Правый подлокотник */}
+          <rect
+            x={svgX + w - armW} y={seatY} width={armW} height={seatD}
+            fill={FURN_FILL} stroke={FURN_STROKE} strokeWidth={sw}
+            rx={0.07}
+          />
+          {/* 3 подушки сиденья */}
+          <rect
+            x={px1} y={pillowY}
+            width={pillowW} height={pillowD}
+            fill="#fbfaf6" stroke={FURN_STROKE} strokeWidth={sw}
+            rx={0.06}
+          />
+          <rect
+            x={px1 + pillowW + pillowGap} y={pillowY}
+            width={pillowW} height={pillowD}
+            fill="#fbfaf6" stroke={FURN_STROKE} strokeWidth={sw}
+            rx={0.06}
+          />
+          <rect
+            x={px1 + (pillowW + pillowGap) * 2} y={pillowY}
+            width={pillowW} height={pillowD}
+            fill="#fbfaf6" stroke={FURN_STROKE} strokeWidth={sw}
+            rx={0.06}
+          />
         </g>
       );
     }
 
-    case "coffee_table":
+    case "coffee_table": {
+      // S6: журнальный столик — закруглённый rect + 4 декоративных угла
+      // (видно как detalia сверху).
       return (
-        <rect
-          x={svgX} y={svgY} width={w} height={d}
-          fill={FURN_FILL}
-          stroke={FURN_STROKE}
-          strokeWidth={sw}
-          rx={0.08} ry={0.08}
-        />
+        <g>
+          <rect
+            x={svgX} y={svgY} width={w} height={d}
+            fill={FURN_FILL}
+            stroke={FURN_STROKE}
+            strokeWidth={sw}
+            rx={0.10}
+          />
+          {/* Внутренняя рамка-намёк на стеклянную столешницу */}
+          <rect
+            x={svgX + 0.06} y={svgY + 0.06}
+            width={w - 0.12} height={d - 0.12}
+            fill="none"
+            stroke={FURN_STROKE}
+            strokeWidth={sw * 0.6}
+            rx={0.07}
+          />
+        </g>
       );
+    }
+
+    case "armchair": {
+      // S6: Кресло — упрощённый диван-моно (1 подушка + подлокотники + спинка).
+      const backD = d * 0.32;
+      const seatD = d - backD;
+      const armW = w * 0.15;
+      const seatY = svgY + backD;
+      const pillowD = seatD - 0.06;
+      return (
+        <g>
+          {/* Спинка */}
+          <rect
+            x={svgX} y={svgY} width={w} height={backD}
+            fill={FURN_FILL} stroke={FURN_STROKE} strokeWidth={sw} rx={0.06}
+          />
+          {/* Подлокотники */}
+          <rect
+            x={svgX} y={seatY} width={armW} height={seatD}
+            fill={FURN_FILL} stroke={FURN_STROKE} strokeWidth={sw} rx={0.05}
+          />
+          <rect
+            x={svgX + w - armW} y={seatY} width={armW} height={seatD}
+            fill={FURN_FILL} stroke={FURN_STROKE} strokeWidth={sw} rx={0.05}
+          />
+          {/* Подушка сиденья */}
+          <rect
+            x={svgX + armW + 0.02} y={seatY + 0.03}
+            width={w - armW * 2 - 0.04} height={pillowD}
+            fill="#fbfaf6" stroke={FURN_STROKE} strokeWidth={sw} rx={0.05}
+          />
+        </g>
+      );
+    }
 
     case "tv":
       return (
@@ -1778,6 +1897,22 @@ function FurnitureItem({
           strokeWidth={sw}
         />
       );
+
+    case "kitchen_counter": {
+      // S7: Непрерывная кухонная столешница. Холодильник/плита/мойка
+      // отрисуются поверх (они идут после в массиве items).
+      // Светлая заливка под цвет столешницы + тонкая обводка фасада.
+      return (
+        <g>
+          <rect
+            x={svgX} y={svgY} width={w} height={d}
+            fill="#EFE7D2"
+            stroke={FURN_STROKE}
+            strokeWidth={sw}
+          />
+        </g>
+      );
+    }
 
     case "stove": {
       // Конфорки — 4 круга по углам

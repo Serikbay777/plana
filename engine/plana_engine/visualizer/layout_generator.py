@@ -90,7 +90,7 @@ _TOWER_CORE_D = 7.5
 # и нормы 12 м тупикового коридора по СП 1.13130.
 _CORE_SHIFTED_OFFSET = 0.30          # default; range 0.25–0.35
 _CORE_SHIFTED_W_MIN = 22.0
-_CORE_SHIFTED_W_MAX = 32.0
+# Range 22–32 м из ресерча; верхняя граница не enforced в коде (warning только).
 
 # ── Типовые раскладки комнат ──────────────────────────────────────────────
 
@@ -489,29 +489,46 @@ def _apt_type_rank(apt_type: str) -> int:
     return {"studio": 0, "1k": 1, "2k": 2, "3k": 3, "4k": 4}.get(apt_type, 0)
 
 
+_T_SHAPE_MIN_W_FOR_OUTLINE = 24.0
+"""При inner_w >= этого значения секция получает T-образный outline
+(верх во всю ширину, низ с выступами по бокам). Иначе — прямоугольник."""
+_T_SHAPE_OVERHANG_RATIO = 0.07
+"""Доля inner_w на каждый выступ (overhang) сверху над узким низом.
+
+7% от типичной ширины 29 м = 2.03 м — соответствует обмерам реальных
+премиум-секций ПИК «Архитектор», Скуратов «Садовые кварталы»,
+где выступы 2-3 м (не больше — иначе плечи выглядят как «уши»)."""
+_T_SHAPE_OVERHANG_MIN = 1.8
+_T_SHAPE_OVERHANG_MAX = 2.5
+
+
 def _generate_t_shape_floor(
     inner_w: float, inner_d: float,
     mix: list[str],
 ) -> LayoutFloor:
     """Т-типология: 2 крупных квартиры наверху + 3 стандартных внизу.
 
-    Архитектурный паттерн комфорт+/бизнес ЖК в КЗ/РФ:
+    Архитектурный паттерн комфорт+/бизнес ЖК в КЗ/РФ — настоящая T-форма
+    с выступом сверху (top wider than bottom):
 
-      ┌──────────────────┬─────────┬──────────────────┐
-      │                  │ Лифт |  │                  │
-      │  Крупная кв.     │ Лестн.  │   Крупная кв.    │
-      │  (2-3к + лоджия) │ (узкий  │  (2-3к + лоджия) │
-      │                  │ верт.   │                  │
-      │                  │ блок)   │                  │
-      ├──────────────────┴─────────┴──────────────────┤
-      │  Коридор секции (горизонтальный)              │
-      ├──────────────┬───────────────┬────────────────┤
-      │   Кв. 3      │    Кв. 4      │    Кв. 5       │
-      │  (1к / 2к)   │   (1к / 2к)   │   (1к / 2к)    │
-      └──────────────┴───────────────┴────────────────┘
+      ┌────────────────────────────────────────────────────┐
+      │  Крупная кв.    │ Лифт │  Крупная кв.              │  ← top
+      │  (2-3к + лодж.) │Лестн.│  (2-3к + лоджия)          │   full inner_w
+      ├─────┬───────────┴──────┴────────────┬──────────────┤
+      │  ←──┤ Коридор секции (full inner_w) ├──→ shoulders │  ← corridor
+      ├─────┼───────────────┬───────────────┼──────────────┤
+      │ ⊥   │   Кв. 3       │    Кв. 4      │    Кв. 5     │ ⊥
+      │     │  (1к / 2к)    │   (1к / 2к)   │   (1к / 2к)  │  ← bottom
+      └─────┴───────────────┴───────────────┴──────────────┘
+       выступ                                                выступ
+       (нет             ← bottom_w = inner_w - 2*overhang →
 
     Крупные квартиры на «привилегированной» стороне получают типы 2k/3k.
-    Нижний ряд — компактные 1k/2k.
+    Нижний ряд — компактные 1k/2k. T-силуэт оформляется через outline-полигон
+    в LayoutFloor: верх во всю inner_w, низ зажат выступами.
+
+    При inner_w < _T_SHAPE_MIN_W_FOR_OUTLINE выступы не используются (узкая
+    секция, T-форма даст слишком маленькие нижние квартиры) — outline=None.
     """
     bear_t = _BEAR_T
     # Зональное деление по Y
@@ -527,6 +544,17 @@ def _generate_t_shape_floor(
     # Y-границы зон
     corridor_y = bear_t + bottom_zone_d
     top_y_start = corridor_y + corridor_d
+
+    # ── T-силуэт: выступы по бокам сверху (top шире чем bottom) ──
+    if inner_w >= _T_SHAPE_MIN_W_FOR_OUTLINE:
+        overhang = min(
+            _T_SHAPE_OVERHANG_MAX,
+            max(_T_SHAPE_OVERHANG_MIN, inner_w * _T_SHAPE_OVERHANG_RATIO),
+        )
+    else:
+        overhang = 0.0
+    bottom_x0 = overhang
+    bottom_x1 = inner_w - overhang
 
     # ── Узкое вертикальное ядро (лифт + лестница раздельно) в центре ──
     lift_w, lift_d = 2.0, 2.2
@@ -588,12 +616,13 @@ def _generate_t_shape_floor(
         ))
         apt_num += 1
 
-    # ── Нижний ряд: 3 стандартные квартиры ──
-    bottom_apt_w = (inner_w - 2 * bear_t) / 3
+    # ── Нижний ряд: 3 стандартные квартиры (в узкой нижней зоне) ──
+    bottom_inner_w = bottom_x1 - bottom_x0 - 2 * bear_t
+    bottom_apt_w = bottom_inner_w / 3
     bottom_apt_d = bottom_zone_d
 
     for i, apt_type in enumerate(bottom_types):
-        ax = bear_t + i * bottom_apt_w
+        ax = bottom_x0 + bear_t + i * bottom_apt_w
         rooms_raw = _ROOM_BUILDERS[apt_type](bottom_apt_w, bottom_apt_d)
         rooms = [LayoutRoom(**r) for r in rooms_raw]
         # Фасад — юг (y=0 в системе квартиры). Раскладки уже подходят, без инверсии.
@@ -619,10 +648,27 @@ def _generate_t_shape_floor(
         cores=cores,
         apartments=apartments,
     )
+
+    # ── T-outline: верх во всю ширину, низ узкий ──
+    # По часовой стрелке от SW угла нижнего блока.
+    outline: list[tuple[float, float]] | None = None
+    if overhang > 0:
+        outline = [
+            (round(bottom_x0, 3), 0.0),                       # SW нижнего
+            (round(bottom_x1, 3), 0.0),                       # SE нижнего
+            (round(bottom_x1, 3), round(corridor_y, 3)),      # NE нижнего (выступ начинается)
+            (round(inner_w, 3),   round(corridor_y, 3)),      # E плечо
+            (round(inner_w, 3),   round(inner_d, 3)),         # NE верхнего
+            (0.0,                 round(inner_d, 3)),         # NW верхнего
+            (0.0,                 round(corridor_y, 3)),      # W плечо
+            (round(bottom_x0, 3), round(corridor_y, 3)),      # NW нижнего
+        ]
+
     return LayoutFloor(
         width_m=round(inner_w, 3),
         depth_m=round(inner_d, 3),
         sections=[section],
+        outline=outline,
     )
 
 

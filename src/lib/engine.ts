@@ -262,6 +262,12 @@ export type VisualizeFromInputsRequest = {
   quality?: "low" | "medium" | "high";
   // свободный контур участка [[x_m, y_m], ...]
   site_polygon?: [number, number][] | null;
+  // тип здания: multi_family (default) / single_family / commercial / mixed_use
+  building_type?: string;
+  // типология этажа для multi_family:
+  //   symmetric (default) / t_shape / asymmetric_depth / double_core / tower / core_shifted
+  // Подробности — engine/plana_engine/visualizer/marketing_prompt.py:68+
+  floor_typology?: string;
 };
 
 export type VisualizeResult = {
@@ -650,7 +656,7 @@ export type LayoutWindow = {
 export type FurnitureKind =
   | "bed" | "wardrobe" | "nightstand"
   | "sofa" | "coffee_table" | "tv"
-  | "stove" | "sink" | "fridge" | "dining_table"
+  | "stove" | "sink" | "fridge" | "dining_table" | "kitchen_counter"
   | "bathtub" | "toilet" | "washbasin"
   | "armchair";
 
@@ -673,7 +679,7 @@ export type LayoutRoom = {
 };
 
 export type LayoutApartment = {
-  type_code: "studio" | "1k" | "2k" | "3k";
+  type_code: "studio" | "1k" | "2k" | "3k" | "4k";
   number: number;
   x: number; y: number; w: number; d: number;
   rooms: LayoutRoom[];
@@ -698,6 +704,10 @@ export type LayoutFloor = {
   width_m: number;
   depth_m: number;
   sections: LayoutSection[];
+  // Полигональный контур этажа (по часовой стрелке от левого нижнего угла).
+  // Если null/undefined — наружный контур = прямоугольник width_m × depth_m.
+  // Используется для T-/L-/U-форм с выступами.
+  outline?: [number, number][] | null;
 };
 
 // ---------------------------------------------------------------------------

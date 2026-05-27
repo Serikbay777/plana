@@ -191,7 +191,11 @@ def _make_slab(
     model: Any, ifc: Any, body_ctx: Any,
     W: float, D: float, thickness: float, floor_idx: int,
     z_storey: float = 0.0,
+    *,
+    outline: list[tuple[float, float]] | None = None,
 ) -> Any:
+    """Перекрытие этажа. Если outline задан (T-/L-/U-форма) — используется
+    его полигон, иначе прямоугольник W×D (backward-compat)."""
     slab = ifc.api.root.create_entity(
         model, ifc_class="IfcSlab",
         name=f"Slab-{floor_idx + 1}",
@@ -199,7 +203,8 @@ def _make_slab(
     ifc.api.geometry.edit_object_placement(
         model, product=slab, matrix=_translation(0, 0, z_storey - thickness),
     )
-    shape = _rect_extrusion(model, body_ctx, [(0, 0), (W, 0), (W, D), (0, D)], thickness)
+    pts = outline if outline is not None else [(0, 0), (W, 0), (W, D), (0, D)]
+    shape = _rect_extrusion(model, body_ctx, pts, thickness)
     ifc.api.geometry.assign_representation(model, product=slab, representation=shape)
     return slab
 
@@ -774,12 +779,21 @@ def build_ifc_from_layout(
 
         structural: list[Any] = []
 
-        # 1. Перекрытие
-        slab = _make_slab(model, ifcopenshell, body_ctx, W, D, _SLAB_T, floor_idx, z_storey=z)
+        # 1. Перекрытие — следует outline-полигону если он есть (T-/L-/U-форма)
+        outline_pts: list[tuple[float, float]] | None = (
+            [(float(x), float(y)) for x, y in layout.outline]
+            if layout.outline else None
+        )
+        slab = _make_slab(
+            model, ifcopenshell, body_ctx, W, D, _SLAB_T, floor_idx,
+            z_storey=z, outline=outline_pts,
+        )
         structural.append(slab)
 
-        # 2. Периметральные несущие стены
-        exterior = [(0.0, 0.0), (W, 0.0), (W, D), (0.0, D)]
+        # 2. Периметральные несущие стены — также по outline или bbox
+        exterior = outline_pts if outline_pts is not None else [
+            (0.0, 0.0), (W, 0.0), (W, D), (0.0, D),
+        ]
         structural.extend(_make_perimeter_walls(
             model, ifcopenshell, body_ctx, exterior, storey_h, _WALL_BEAR_T, floor_idx,
             z_storey=z,
