@@ -44,6 +44,54 @@ _CORE_D      = 3.00
 _TARGET_APT_W = {"studio": 7.0, "1k":  9.0,  "2k": 12.0, "3k": 15.0, "4k": 18.0}
 _MIN_APT_W    = {"studio": 5.5, "1k":  7.0,  "2k": 10.0, "3k": 12.0, "4k": 15.0}
 
+# ── Asymmetric depth: юг глубже севера ───────────────────────────────────
+# Применяется в широтных секциях (длинная ось E-W): юг получает крупные
+# форматы (2к/3к/4к) с большой глубиной, север — компактные (студии/1к).
+# Ratio собран из обмеров реальных ЖК (ПИК-1: 1.33, ПИК-2: 1.60,
+# Самолёт типовая: 1.36, Highvill Park: 1.55, BI Family Nest: 1.40).
+_ASYM_RATIO_DEFAULT = 1.50
+# Min N: студия 22-25 м² шириной 4.8-5 м × глубиной 4.8 проходит (СП 54 п. 5.11).
+_ASYM_N_MIN = 4.8
+_ASYM_N_MAX = 6.0
+_ASYM_S_MIN = 6.5
+# Max S = 9 м: глубже падает КЕО в дальнем углу комнаты ниже 0.5%
+# (СП 23-102-2003 п. 5.3: глубина/высота окна ≤ 2.5).
+_ASYM_S_MAX = 9.0
+
+# ── Double-core: длинная секция с двумя ядрами ───────────────────────────
+# Применяется когда длина секции > 42 м (СП 1.13130 табл. 3 — максимум
+# 40 м между лестничными клетками для I-II степени огнестойкости С0,
+# плюс 2 м запас) или общая площадь квартир этажа > 500 м² (СП 1.13130
+# п. 6.1.1). Ядра позиционируются на 0.22L и 0.78L — от каждого торца
+# не более 25 м тупикового коридора, между ядрами — не более 40 м.
+_DOUBLE_CORE_MIN_W = 42.0
+_DOUBLE_CORE_MAX_W = 80.0   # больше → нужно 3-е ядро или ПП-стена
+_DOUBLE_CORE_X1_RATIO = 0.22
+_DOUBLE_CORE_X2_RATIO = 0.78
+_DOUBLE_CORE_CORR_W = 1.6   # для длин > 40 м (СП 54.13330 п. 4.7)
+
+# ── Tower: 4 квартиры вокруг центрального ядра ────────────────────────────
+# 4-квартирный «квадрат 2×2» для премиум/бизнес ЖК. Ядро в центре пятна
+# (расширенное — 7.5×7.5: 2 пасс. лифта + 1 груз. + лестница H2 + холл).
+# Каждая квартира — угловая, окна на 2 фасада. Используется на стеснённых
+# участках, в высотных премиум-проектах (Esentai, Highvill F, Mercury City).
+# Рекомендуемый диапазон по обмерам реальных башен: W,D ∈ [22, 34] м.
+_TOWER_W_MIN = 22.0
+_TOWER_D_MIN = 22.0
+_TOWER_CORE_W = 7.5
+_TOWER_CORE_D = 7.5
+
+# ── Core-shifted: ядро смещено к торцу ───────────────────────────────────
+# Авторская/премиум-типология. Ядро смещено на 0.25–0.35 от центра, что даёт
+# на «длинной» стороне 1 крупную квартиру (3к/4к/пентхаус) с угловыми окнами,
+# а на «короткой» — 1-2 малые (1к/2к). Точные публичные цифры застройщики
+# не публикуют; диапазон выведен из планировок премиум-проектов (Меганом,
+# Скуратов, Highvill, BAZIS-A PRIMAVERA, ФСК «Архитектор», Садовые кварталы)
+# и нормы 12 м тупикового коридора по СП 1.13130.
+_CORE_SHIFTED_OFFSET = 0.30          # default; range 0.25–0.35
+_CORE_SHIFTED_W_MIN = 22.0
+_CORE_SHIFTED_W_MAX = 32.0
+
 # ── Типовые раскладки комнат ──────────────────────────────────────────────
 
 
@@ -578,6 +626,753 @@ def _generate_t_shape_floor(
     )
 
 
+def _split_mix_by_depth_asymmetric(
+    mix: list[str],
+) -> tuple[list[str], list[str]]:
+    """Разделить общий mix на южный (крупные) и северный (компактные).
+
+    Юг — глубокая сторона, держит крупные форматы 2к/3к/4к.
+    Север — мелкая сторона, держит studio/1к.
+
+    Если одна группа пуста — делим вторую пополам (вырожденный случай,
+    asymmetric теряет смысл, но не падаем).
+    """
+    big = [t for t in mix if t in ("2k", "3k", "4k")]
+    small = [t for t in mix if t in ("studio", "1k")]
+    if not big and not small:
+        return [], []
+    if not big:
+        half = len(small) // 2
+        return small[:half], small[half:]
+    if not small:
+        half = (len(big) + 1) // 2
+        return big[:half], big[half:]
+    return big, small
+
+
+def _solve_asymmetric_depths(
+    inner_d: float, depth_ratio: float = _ASYM_RATIO_DEFAULT,
+) -> tuple[float, float, float] | None:
+    """Решить (apt_d_s, apt_d_n, corr_y) под заданное depth_ratio = S/N.
+
+    Возвращает None если геометрия физически не вмещает asymmetric_depth
+    с минимальными нормативными глубинами (тогда dispatcher делает fallback
+    на симметричную).
+    """
+    corr_d = max(_CORR_MIN_D, _CORE_D)
+    usable_d = inner_d - corr_d - 2 * _BEAR_T
+
+    if usable_d < _ASYM_N_MIN + _ASYM_S_MIN:
+        # Не помещается даже минимум — pereбираем геометрию
+        return None
+
+    # apt_d_n = usable / (1 + ratio); apt_d_s = ratio * apt_d_n
+    apt_d_n_raw = usable_d / (1 + depth_ratio)
+    apt_d_s_raw = depth_ratio * apt_d_n_raw
+
+    # Clamp к нормативным пределам
+    apt_d_n = max(_ASYM_N_MIN, min(_ASYM_N_MAX, apt_d_n_raw))
+    apt_d_s = max(_ASYM_S_MIN, min(_ASYM_S_MAX, apt_d_s_raw))
+
+    # После clamp могло «осесть» — оставшийся slack отдаём южной стороне,
+    # пока не упрёмся в _ASYM_S_MAX, иначе северной.
+    actual_used = apt_d_s + apt_d_n
+    slack = usable_d - actual_used
+    if slack > 0.01:
+        room_s = _ASYM_S_MAX - apt_d_s
+        room_n = _ASYM_N_MAX - apt_d_n
+        give_s = min(slack, room_s)
+        apt_d_s += give_s
+        slack -= give_s
+        if slack > 0.01:
+            apt_d_n += min(slack, room_n)
+
+    corr_y = round(_BEAR_T + apt_d_s, 3)
+    return round(apt_d_s, 3), round(apt_d_n, 3), corr_y
+
+
+def _generate_asymmetric_depth_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+    *,
+    depth_ratio: float = _ASYM_RATIO_DEFAULT,
+) -> LayoutFloor | None:
+    """Секция с асимметричной глубиной: юг глубже севера.
+
+    На юге — крупные форматы (2к/3к/4к) с большей глубиной, на севере —
+    компактные (студии/1к) с минимальной глубиной. Мокрые зоны обеих
+    сторон прижаты к коридору → общие стояки канализации.
+
+    Возвращает None, если геометрия не вмещает минимальные нормативные
+    глубины (тогда dispatcher делает fallback на симметричную).
+
+    Архитектурные референсы: ПИК-1 (~7.2/5.4 м), ПИК-2 (~8.0/5.0),
+    Самолёт типовая (~7.5/5.5), Highvill Park (~8.5/5.5), BI Family Nest
+    (~7.0/5.0), Bazis Алмалы (~7.0/5.0).
+
+    Нормативные ограничения:
+      • СП 23-102-2003 п. 5.3 — глубина жилой комнаты с одним окном
+        ≤ 2.5 × высоты светопроёма ≈ 6 м. Поэтому южная квартира глубиной
+        > 6 м строится как «жилая комната у фасада + мокрая зона у коридора».
+      • СП 54.13330.2022 п. 5.11 — мин. жилая комната 14 м² (1к), 16 м² (2к+).
+      • СанПиН 2.2.1/2.1.1.1076-01 — инсоляция через хотя бы одну комнату.
+    """
+    solved = _solve_asymmetric_depths(inner_d, depth_ratio)
+    if solved is None:
+        log.info(
+            "asymmetric_depth: inner_d=%.2f too shallow for ratio=%.2f, "
+            "falling back to symmetric", inner_d, depth_ratio,
+        )
+        return None
+    apt_d_s, apt_d_n, corr_y = solved
+    corr_d = max(_CORR_MIN_D, _CORE_D)
+
+    n_sect = max(1, inputs.sections)
+    sect_w = inner_w / n_sect
+
+    # Mix: split на S (крупные) и N (компактные)
+    mix_all = _resolve_mix(inputs, n_sect, sect_w, apt_d_s, apt_d_n, sides=2)
+    mix_s, mix_n = _split_mix_by_depth_asymmetric(mix_all)
+
+    sections: list[LayoutSection] = []
+    apt_num = 1
+
+    for si in range(n_sect):
+        x0 = round(si * sect_w, 3)
+        wall_l = _BEAR_T if si == 0 else _FIRE_T / 2
+        wall_r = _BEAR_T if si == n_sect - 1 else _FIRE_T / 2
+        apt_x0 = x0 + wall_l
+        apt_x1 = x0 + sect_w - wall_r
+        usable_w = apt_x1 - apt_x0
+
+        # Ядро по центру (как в symmetric) — внутри corridor strip
+        core_cx = x0 + sect_w / 2
+        core_x = round(core_cx - _CORE_W / 2, 3)
+        core_d = _CORE_D
+        core_y = corr_y
+        cores = _make_cores(
+            core_x, core_y, inputs.lifts_passenger, inputs.lifts_freight, core_d=core_d,
+        )
+
+        # Две стороны с разными mix и глубинами
+        sides_spec: list[tuple[float, float, list[str]]] = [
+            (round(_BEAR_T, 3),         apt_d_s, mix_s),
+            (round(corr_y + corr_d, 3), apt_d_n, mix_n),
+        ]
+
+        apartments: list[LayoutApartment] = []
+        for side_y, apt_d, side_mix in sides_spec:
+            side_packing = _pack_side(usable_w, side_mix)
+            for _ in range(len(side_packing)):
+                if side_mix:
+                    side_mix.pop(0)
+
+            if not side_packing:
+                fallback_w = max(_MIN_APT_W["1k"], min(usable_w, _TARGET_APT_W["1k"]))
+                fallback_t = _apt_type_from_area(fallback_w * apt_d)
+                side_packing = [(fallback_t, fallback_w)]
+                slack = usable_w - fallback_w
+                if slack > 0.05:
+                    side_packing = [(fallback_t, fallback_w + slack)]
+
+            ax_cursor = apt_x0
+            for ai, (apt_type, apt_w) in enumerate(side_packing):
+                ax = round(ax_cursor, 3)
+                aw = round(apt_w, 3)
+                ax_cursor += apt_w
+
+                rooms_raw = _ROOM_BUILDERS[apt_type](aw, apt_d)
+                rooms = [LayoutRoom(**r) for r in rooms_raw]
+
+                exterior_side: str = "S" if side_y < corr_y else "N"
+                interior_side: str = "N" if side_y < corr_y else "S"
+
+                if exterior_side == "N":
+                    for r in rooms:
+                        r.y = round(apt_d - r.y - r.d, 3)
+
+                _add_apertures(rooms, apt_d, exterior_side, interior_side)
+                _add_balconies(rooms, apt_d, apt_type, exterior_side)
+                for room in rooms:
+                    _add_furniture(room, exterior_side)
+
+                if ai % 2 == 1:
+                    _mirror_rooms_x(rooms, aw)
+
+                apartments.append(LayoutApartment(
+                    type_code=apt_type,
+                    number=apt_num,
+                    x=ax, y=side_y,
+                    w=aw, d=round(apt_d, 3),
+                    rooms=rooms,
+                ))
+                apt_num += 1
+
+        sections.append(LayoutSection(
+            index=si,
+            x_start=x0,
+            width=round(sect_w, 3),
+            corridor_y=corr_y,
+            corridor_d=round(corr_d, 3),
+            cores=cores,
+            apartments=apartments,
+        ))
+
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=sections,
+    )
+
+
+def _generate_double_core_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+) -> LayoutFloor | None:
+    """Длинная секция (>42 м) с двумя ядрами на 0.22L и 0.78L.
+
+    Применяется когда:
+      • длина секции > 42 м (СП 1.13130 табл. 3: максимум 40 м между
+        лестницами для I-II степ. огнестойкости С0, +2 м запас);
+      • или общая площадь квартир этажа > 500 м² (СП 1.13130 п. 6.1.1).
+
+    Ядра позиционируются в долях длины: x1=0.22L, x2=0.78L. Каждое ядро
+    «обслуживает» свою половину секции; коридор сквозной, рекомендуется
+    разделить противопожарной перегородкой 2-го типа по центру между ними
+    (сама перегородка пока не моделируется в схеме — отображается только
+    в визуализаторе).
+
+    Возвращает None если:
+      • inner_d недостаточна для двухсторонней секции (fallback на gallery
+        или symmetric)
+
+    Архитектурные референсы: ПИК (Саларьево парк, Бунинские луга, Перовское,
+    Варшавское ш. 141), Самолёт (Прокшино, Алхимово), ФСК «Архитектор»,
+    Bazis-A NEOPARK, Highvill Park/Ishim.
+
+    Нормативное обоснование:
+      • СП 1.13130.2020 п. 6.1.1 — ≥2 эвак. выхода при площади > 500 м²
+      • СП 1.13130.2020 табл. 3 — 40 м между лестницами (I-II, С0)
+      • СП 1.13130.2020 п. 6.1.9 — ПП-перегородки 2-го типа каждые ≤30 м
+      • СП 54.13330.2022 п. 4.7 — коридор ≥1.6 м при длине > 40 м
+      • СНиП РК 2.02-05-2009 — аналог СП 1.13130 РФ
+    """
+    # Принудительно одна длинная секция — игнорируем inputs.sections.
+    # Если пользователь явно хочет multi-section на длинном пятне — пусть
+    # выбирает symmetric.
+    sect_w = inner_w
+
+    if inner_w < _DOUBLE_CORE_MIN_W:
+        log.info(
+            "double_core: inner_w=%.2f < %.2f (рекомендуемый минимум). "
+            "Продолжаем по явному выбору пользователя.",
+            inner_w, _DOUBLE_CORE_MIN_W,
+        )
+
+    if inner_w > _DOUBLE_CORE_MAX_W:
+        log.warning(
+            "double_core: inner_w=%.2f > %.2f (рекомендуемый максимум). "
+            "Желательно добавить 3-е ядро или ПП-стену; продолжаем без них.",
+            inner_w, _DOUBLE_CORE_MAX_W,
+        )
+
+    if inner_d < _GALLERY_THRESHOLD_M:
+        # Слишком мелко для двухстороннего коридора — нет смысла в double_core
+        log.info(
+            "double_core: inner_d=%.2f < %.2f (gallery threshold), fallback",
+            inner_d, _GALLERY_THRESHOLD_M,
+        )
+        return None
+
+    # Геометрия коридора — как в symmetric: corridor strip = max(min норма, core_d)
+    corr_d = max(_DOUBLE_CORE_CORR_W, _CORE_D)
+    corr_y = round((inner_d - corr_d) / 2, 3)
+    apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+    apt_d_n = max(4.0, round(inner_d - corr_y - corr_d - _BEAR_T, 3))
+
+    # Mix для всего этажа (одна секция, 2 стороны)
+    n_sect = 1
+    mix = _resolve_mix(inputs, n_sect, sect_w, apt_d_s, apt_d_n, sides=2)
+
+    # Стены секции — с обеих сторон по _BEAR_T (single-section здание; если
+    # double_core входит в комплекс — пользователь объявит sections=1)
+    wall_l = _BEAR_T
+    wall_r = _BEAR_T
+    apt_x0 = wall_l
+    apt_x1 = sect_w - wall_r
+    usable_w = apt_x1 - apt_x0
+
+    # ── Два ядра: позиции по X в долях секции ──
+    core1_cx = _DOUBLE_CORE_X1_RATIO * sect_w
+    core2_cx = _DOUBLE_CORE_X2_RATIO * sect_w
+    core1_x = round(core1_cx - _CORE_W / 2, 3)
+    core2_x = round(core2_cx - _CORE_W / 2, 3)
+
+    # Распределение лифтов между ядрами:
+    # ядро 1 получает ceil(N/2), ядро 2 получает floor(N/2)
+    # Каждое ядро всегда получает 1 лестницу (см. _make_cores)
+    pass_each = max(1, inputs.lifts_passenger // 2)
+    pass_extra = inputs.lifts_passenger - pass_each  # для ядра 2
+    freight_each = inputs.lifts_freight // 2
+    freight_extra = inputs.lifts_freight - freight_each
+
+    cores: list[LayoutCore] = []
+    cores.extend(_make_cores(
+        core1_x, corr_y,
+        n_pass=pass_each, n_freight=freight_each,
+        core_d=_CORE_D,
+    ))
+    cores.extend(_make_cores(
+        core2_x, corr_y,
+        n_pass=pass_extra, n_freight=freight_extra,
+        core_d=_CORE_D,
+    ))
+
+    # ── Apartments на двух сторонах ──
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    sides_spec = [
+        (round(_BEAR_T, 3),         apt_d_s),
+        (round(corr_y + corr_d, 3), apt_d_n),
+    ]
+    for side_y, apt_d in sides_spec:
+        side_packing = _pack_side(usable_w, mix)
+        for _ in range(len(side_packing)):
+            if mix:
+                mix.pop(0)
+
+        if not side_packing:
+            fallback_w = max(_MIN_APT_W["1k"], min(usable_w, _TARGET_APT_W["1k"]))
+            fallback_t = _apt_type_from_area(fallback_w * apt_d)
+            side_packing = [(fallback_t, fallback_w)]
+            slack = usable_w - fallback_w
+            if slack > 0.05:
+                side_packing = [(fallback_t, fallback_w + slack)]
+
+        ax_cursor = apt_x0
+        for ai, (apt_type, apt_w) in enumerate(side_packing):
+            ax = round(ax_cursor, 3)
+            aw = round(apt_w, 3)
+            ax_cursor += apt_w
+
+            rooms_raw = _ROOM_BUILDERS[apt_type](aw, apt_d)
+            rooms = [LayoutRoom(**r) for r in rooms_raw]
+
+            exterior_side: str = "S" if side_y < corr_y else "N"
+            interior_side: str = "N" if side_y < corr_y else "S"
+
+            if exterior_side == "N":
+                for r in rooms:
+                    r.y = round(apt_d - r.y - r.d, 3)
+
+            _add_apertures(rooms, apt_d, exterior_side, interior_side)
+            _add_balconies(rooms, apt_d, apt_type, exterior_side)
+            for room in rooms:
+                _add_furniture(room, exterior_side)
+
+            if ai % 2 == 1:
+                _mirror_rooms_x(rooms, aw)
+
+            apartments.append(LayoutApartment(
+                type_code=apt_type,
+                number=apt_num,
+                x=ax, y=side_y,
+                w=aw, d=round(apt_d, 3),
+                rooms=rooms,
+            ))
+            apt_num += 1
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(sect_w, 3),
+        corridor_y=corr_y,
+        corridor_d=round(corr_d, 3),
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+    )
+
+
+def _generate_tower_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+) -> LayoutFloor | None:
+    """Башенная типология: 4 угловые квартиры вокруг центрального ядра.
+
+    Архитектурный паттерн:
+
+      ┌──────────┬──────────┬──────────┐
+      │          │          │          │
+      │  APT-1   │  CORE    │  APT-2   │   ← север (фасад)
+      │  NW      │  лифт×2  │  NE      │
+      │  N+W     │  лестн   │  N+E     │
+      ├──────────┤  холл    ├──────────┤
+      │          │  7.5×7.5 │          │
+      │  APT-3   │          │  APT-4   │   ← юг (фасад)
+      │  SW      │          │  SE      │
+      │  S+W     │          │  S+E     │
+      └──────────┴──────────┴──────────┘
+        фасад W              фасад E
+
+    Все 4 квартиры — угловые (окна на 2 фасада). Ядро занимает центральный
+    квадрат пятна. Нет длинного коридора подъезда — только лифтовый холл
+    внутри ядра.
+
+    Возвращает None если пятно слишком мало (apt_w или apt_d < 5 м).
+
+    Архитектурные референсы: Esentai Apartments (Алматы), Highvill Astana
+    блок F, ORDA Tower, Mercury City Tower, Capital Towers (Москва),
+    серия КОПЭ-Башня (ПИК/ДСК-2), И-155Б (СУ-155).
+
+    Нормативное обоснование:
+      • СП 54.13330.2022 п. 7.2.4 — от двери квартиры до незадым. л/к ≤12 м
+        (в tower расстояние всегда меньше — апартаменты примыкают к ядру)
+      • СП 54.13330.2022 п. 7.2.5 — ширина холла ≥1.4 м, для длинных >40 м ≥1.6
+      • СП 1.13130.2020 п. 4.4.16 — H >28 м: лестницы незадымляемые (H1/H2/H3)
+      • СП 1.13130.2020 п. 4.4.14 — H >28 м: ≥2 эвак. выхода с этажа
+      • СНиП РК 3.02-43-2007 — лифты ≥2 (10–19 эт.), ≥3 (20+ эт.)
+    """
+    if inner_w < _TOWER_W_MIN or inner_d < _TOWER_D_MIN:
+        log.info(
+            "tower: inner=%.1fx%.1f below recommended %sx%s",
+            inner_w, inner_d, _TOWER_W_MIN, _TOWER_D_MIN,
+        )
+        return None
+
+    core_w = _TOWER_CORE_W
+    core_d = _TOWER_CORE_D
+    core_x = round((inner_w - core_w) / 2, 3)
+    core_y = round((inner_d - core_d) / 2, 3)
+
+    # Габариты квартир-углов
+    apt_w = round((inner_w - core_w) / 2, 3)
+    apt_d = round((inner_d - core_d) / 2, 3)
+
+    if apt_w < 5.0 or apt_d < 5.0:
+        log.info("tower: apt dimensions too small (%.2fx%.2f)", apt_w, apt_d)
+        return None
+
+    # Mix: всегда 4 квартиры. Берём 4 крупнейших из запрошенного mix.
+    mix_all = _resolve_mix(inputs, 1, inner_w, apt_d, apt_d, sides=2)
+    mix_sorted = sorted(mix_all, key=_apt_type_rank, reverse=True) if mix_all else []
+    while len(mix_sorted) < 4:
+        mix_sorted.append("2k")
+    apt_types = mix_sorted[:4]
+
+    # ── Ядро в центре пятна ──
+    # Расширенное ядро 7.5×7.5: 2 пасс. лифта + 1 груз. + лестница H2 + холл
+    cores = _make_cores(
+        core_x, core_y,
+        n_pass=max(1, inputs.lifts_passenger),
+        n_freight=max(0, inputs.lifts_freight),
+        core_d=core_d,
+    )
+
+    # ── 4 квартиры в углах ──
+    # corner_label, y_origin, exterior_main, exterior_extra, invert_y, mirror_x
+    apt_configs = [
+        ("NW", core_y + core_d, "N", "W", True,  False),
+        ("NE", core_y + core_d, "N", "E", True,  True),
+        ("SW", 0.0,             "S", "W", False, False),
+        ("SE", 0.0,             "S", "E", False, True),
+    ]
+
+    apartments: list[LayoutApartment] = []
+    for i, (corner, y_origin, ext_main, ext_extra, invert_y, mirror_x) in enumerate(apt_configs):
+        apt_type = apt_types[i]
+        apt_x = 0.0 if corner.endswith("W") else round(core_x + core_w, 3)
+
+        rooms_raw = _ROOM_BUILDERS[apt_type](apt_w, apt_d)
+        rooms = [LayoutRoom(**r) for r in rooms_raw]
+
+        # Инверсия по Y для северных квартир: жилые комнаты строятся на y=0,
+        # для N квартиры y=0 — это сторона к ядру, а N-фасад на y=apt_d.
+        if invert_y:
+            for r in rooms:
+                r.y = round(apt_d - r.y - r.d, 3)
+
+        # Зеркалирование X для «восточных» квартир — ВЫПОЛНЯЕМ ДО apertures,
+        # чтобы _make_window_on_facade корректно распознавал E-стену.
+        # Если мирорить после apertures, окна добавляются «вслепую» на исходных
+        # W-комнатах, потом mirror перебрасывает их с W на E, но проверка
+        # «room.x+room.w==apt_w» для E-фасада была выполнена ДО mirror и
+        # для исходных W-комнат всегда возвращала false.
+        if mirror_x:
+            _mirror_rooms_x(rooms, apt_w)
+
+        interior_side = "S" if ext_main == "N" else "N"
+
+        # Apertures: основной фасад (N/S) + дополнительный угловой (W/E).
+        # Угловые комнаты получают окна сразу на 2 фасада (panoramic corner).
+        _add_apertures(
+            rooms, apt_d,
+            exterior_side=ext_main, interior_side=interior_side,
+            apt_w=apt_w,
+            extra_facade_sides=(ext_extra,),
+            allow_multiple_windows=True,
+        )
+
+        # Лоджия на основном фасаде (премиум-башни почти всегда имеют лоджии)
+        _add_balconies(rooms, apt_d, apt_type, ext_main)
+
+        for room in rooms:
+            _add_furniture(room, ext_main)
+
+        apartments.append(LayoutApartment(
+            type_code=apt_type,
+            number=i + 1,
+            x=round(apt_x, 3),
+            y=round(y_origin, 3),
+            w=apt_w, d=apt_d,
+            rooms=rooms,
+        ))
+
+    # Schema: «коридор» = полоса в Y, где сидит ядро. corridor_d = core_d,
+    # настоящего корридора нет (лифтовый холл внутри ядра).
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(inner_w, 3),
+        corridor_y=round(core_y, 3),
+        corridor_d=round(core_d, 3),
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+    )
+
+
+def _build_apt_block(
+    apt_type: str, apt_w: float, apt_d: float,
+    apt_x: float, apt_y: float,
+    apt_num: int,
+    *,
+    exterior_side: str,
+    interior_side: str,
+    mirror_index: int = 0,
+    section_apt_w_for_apertures: float | None = None,
+    extra_facade_sides: tuple[str, ...] = (),
+    allow_multiple_windows: bool = False,
+) -> LayoutApartment:
+    """Собрать LayoutApartment с типовой раскладкой: rooms → invert(N) →
+    apertures → balconies → furniture → mirror(odd index).
+
+    Вынесено в helper, потому что почти все секционные функции делают одно
+    и то же на стадии «собрать квартиру внутри секции».
+    """
+    rooms_raw = _ROOM_BUILDERS[apt_type](apt_w, apt_d)
+    rooms = [LayoutRoom(**r) for r in rooms_raw]
+
+    if exterior_side == "N":
+        for r in rooms:
+            r.y = round(apt_d - r.y - r.d, 3)
+
+    _add_apertures(
+        rooms, apt_d, exterior_side, interior_side,
+        apt_w=section_apt_w_for_apertures or apt_w,
+        extra_facade_sides=extra_facade_sides,
+        allow_multiple_windows=allow_multiple_windows,
+    )
+    _add_balconies(rooms, apt_d, apt_type, exterior_side)
+    for room in rooms:
+        _add_furniture(room, exterior_side)
+
+    if mirror_index % 2 == 1:
+        _mirror_rooms_x(rooms, apt_w)
+
+    return LayoutApartment(
+        type_code=apt_type,                # type: ignore[arg-type]
+        number=apt_num,
+        x=round(apt_x, 3), y=round(apt_y, 3),
+        w=round(apt_w, 3), d=round(apt_d, 3),
+        rooms=rooms,
+    )
+
+
+def _generate_core_shifted_floor(
+    inner_w: float, inner_d: float,
+    inputs: MarketingInputs,
+    *,
+    offset_ratio: float = _CORE_SHIFTED_OFFSET,
+) -> LayoutFloor | None:
+    """Секция с ядром, смещённым к торцу (offset_ratio от центра по X).
+
+    Архитектурный паттерн (авторская/премиум-типология):
+
+      ┌─────────┬───────┬──────────────────────────────────┐
+      │  SMALL  │       │            BIG (3к/4к/PH)        │
+      │  (1к/2к)│ CORE  │  угловые окна на 3 фасада        │
+      │  S apt  │ shift │  S apt (большая)                 │
+      ├─────────┤  to   ├──────────────────────────────────┤
+      │ corridor│ left  │   corridor (продолжение)         │
+      ├─────────┤       ├──────────────────────────────────┤
+      │  SMALL  │       │            BIG (3к/4к/PH)        │
+      │  N apt  │       │  N apt (большая)                 │
+      └─────────┴───────┴──────────────────────────────────┘
+
+    Реальные референсы: Меганом, Скуратов (Садовые кварталы, Остоженка),
+    ФСК «Архитектор», Highvill, BAZIS-A PRIMAVERA. Точные смещения в %
+    застройщики не публикуют — диапазон 0.25-0.35 выведен по планировкам
+    премиум-проектов и норме 12 м тупикового коридора (СП 1.13130).
+
+    КРИТИЧНО: при длине крупной зоны (right_w) > 12 м, без дымоудаления
+    и без второго эвак. выхода, типология **формально нарушает СП 1.13130**.
+    В этой реализации мы это логируем как warning, но всё равно строим
+    (пользователь явно выбрал режим). Для соответствия нормам нужен
+    второй эвак. выход на дальнем торце (будущее улучшение).
+    """
+    if inner_w < _CORE_SHIFTED_W_MIN:
+        log.info(
+            "core_shifted: inner_w=%.2f < %.2f, but proceeding",
+            inner_w, _CORE_SHIFTED_W_MIN,
+        )
+
+    n_sect = 1
+    sect_w = inner_w
+
+    gallery_mode = inner_d < _GALLERY_THRESHOLD_M
+
+    if gallery_mode:
+        corr_d = max(_CORR_MIN_D, 1.4)
+        corr_y = round(inner_d - corr_d - _BEAR_T, 3)
+        apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+        apt_d_n = 0.0
+    else:
+        corr_d = max(_CORR_MIN_D, _CORE_D)
+        corr_y = round((inner_d - corr_d) / 2, 3)
+        apt_d_s = max(4.0, round(corr_y - _BEAR_T, 3))
+        apt_d_n = max(4.0, round(inner_d - corr_y - corr_d - _BEAR_T, 3))
+
+    # Ядро смещено на offset_ratio от левого края секции
+    core_cx = offset_ratio * sect_w
+    core_x = round(core_cx - _CORE_W / 2, 3)
+    if gallery_mode:
+        core_d_zone = min(_CORE_D, corr_y)
+        core_y = round(corr_y - core_d_zone, 3)
+    else:
+        core_d_zone = _CORE_D
+        core_y = corr_y
+
+    cores = _make_cores(
+        core_x, core_y,
+        n_pass=max(1, inputs.lifts_passenger),
+        n_freight=max(0, inputs.lifts_freight),
+        core_d=core_d_zone,
+    )
+
+    # Зоны: левая (короткая) и правая (длинная) от ядра
+    left_x0 = _BEAR_T
+    left_x1 = core_x
+    left_w = max(0.0, left_x1 - left_x0)
+
+    right_x0 = core_x + _CORE_W
+    right_x1 = sect_w - _BEAR_T
+    right_w = max(0.0, right_x1 - right_x0)
+
+    if right_w > 12.0:
+        log.warning(
+            "core_shifted: right zone %.2fм > 12 м, по СП 1.13130 нужен "
+            "второй эвак. выход (не моделируется в этой версии).",
+            right_w,
+        )
+
+    # Mix split: 3к/4к → правая зона; studio/1к/2к → левая зона
+    mix_all = _resolve_mix(
+        inputs, n_sect, sect_w, apt_d_s, apt_d_n,
+        sides=1 if gallery_mode else 2,
+    )
+    mix_big = [t for t in mix_all if t in ("3k", "4k")]
+    mix_small = [t for t in mix_all if t in ("studio", "1k", "2k")]
+
+    # Если запрошенный mix не содержит крупных — используем 2к как fallback
+    # для правой зоны (даём пользователю что-то крупное, иначе типология
+    # теряет смысл).
+    if not mix_big:
+        mix_big = ["3k", "3k"] if right_w >= 13 else ["2k", "2k"]
+
+    apartments: list[LayoutApartment] = []
+    apt_num = 1
+
+    if gallery_mode:
+        sides_spec = [(round(_BEAR_T, 3), apt_d_s)]
+    else:
+        sides_spec = [
+            (round(_BEAR_T, 3),         apt_d_s),
+            (round(corr_y + corr_d, 3), apt_d_n),
+        ]
+
+    for side_y, apt_d in sides_spec:
+        # Левая зона (короткая) — мелкие
+        left_packing: list[tuple[str, float]] = (
+            _pack_side(left_w, mix_small) if left_w > 4.0 else []
+        )
+        for _ in range(len(left_packing)):
+            if mix_small:
+                mix_small.pop(0)
+
+        # Правая зона (длинная) — крупные
+        right_packing: list[tuple[str, float]] = (
+            _pack_side(right_w, mix_big) if right_w > 0 else []
+        )
+        for _ in range(len(right_packing)):
+            if mix_big:
+                mix_big.pop(0)
+
+        # Fallback: если справа пусто и есть запас mix_small — заполняем им
+        if not right_packing and right_w > 4.0:
+            right_packing = _pack_side(right_w, mix_small)
+            for _ in range(len(right_packing)):
+                if mix_small:
+                    mix_small.pop(0)
+
+        ext = "S" if side_y < corr_y else "N"
+        ent = "N" if side_y < corr_y else "S"
+
+        # Размещаем левую зону
+        ax_cursor = left_x0
+        for ai, (apt_type, aw) in enumerate(left_packing):
+            apartments.append(_build_apt_block(
+                apt_type, aw, apt_d, ax_cursor, side_y, apt_num,
+                exterior_side=ext, interior_side=ent, mirror_index=ai,
+            ))
+            ax_cursor += aw
+            apt_num += 1
+
+        # Размещаем правую зону
+        ax_cursor = right_x0
+        for ai, (apt_type, aw) in enumerate(right_packing):
+            apartments.append(_build_apt_block(
+                apt_type, aw, apt_d, ax_cursor, side_y, apt_num,
+                exterior_side=ext, interior_side=ent, mirror_index=ai,
+            ))
+            ax_cursor += aw
+            apt_num += 1
+
+    section = LayoutSection(
+        index=0,
+        x_start=0.0,
+        width=round(sect_w, 3),
+        corridor_y=corr_y,
+        corridor_d=round(corr_d, 3),
+        cores=cores,
+        apartments=apartments,
+    )
+    return LayoutFloor(
+        width_m=round(inner_w, 3),
+        depth_m=round(inner_d, 3),
+        sections=[section],
+    )
+
+
 def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
     """Сгенерировать планировку этажа — параметрически + GPT-4o для типов квартир.
 
@@ -621,6 +1416,41 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
             sides=1 if gallery_mix else 2,
         )
         return _generate_t_shape_floor(inner_w, inner_d, mix)
+
+    # ── Asymmetric depth: юг глубже севера ──
+    # Широтная секция с разной глубиной юг/север. На юге крупные форматы
+    # (2к/3к/4к), на севере компактные (студии/1к). Подробности — в
+    # _generate_asymmetric_depth_floor() и docs/TYPOLOGIES_HANDOFF.md.
+    if getattr(inputs, "floor_typology", "symmetric") == "asymmetric_depth":
+        result = _generate_asymmetric_depth_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+        # Геометрия не вместила минимальные нормативные глубины ⇒ fallback
+        # на симметричную ниже.
+
+    # ── Double-core: длинная секция с двумя ядрами ──
+    # Применяется для длинных секций (>42 м), где одного центрального ядра
+    # не хватает по пожарным нормам (СП 1.13130 табл. 3: ≤40 м между л/к).
+    if getattr(inputs, "floor_typology", "symmetric") == "double_core":
+        result = _generate_double_core_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+        # Геометрия не вместила (узкая глубина) ⇒ fallback на симметричную.
+
+    # ── Tower: 4 угловые квартиры вокруг центрального ядра ──
+    # Премиум/бизнес-башенная типология. Подробности — в _generate_tower_floor().
+    if getattr(inputs, "floor_typology", "symmetric") == "tower":
+        result = _generate_tower_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
+        # Пятно слишком мало для башни ⇒ fallback на симметричную/галерейную.
+
+    # ── Core-shifted: ядро смещено к торцу ──
+    # Авторская/премиум-типология. Подробности — в _generate_core_shifted_floor().
+    if getattr(inputs, "floor_typology", "symmetric") == "core_shifted":
+        result = _generate_core_shifted_floor(inner_w, inner_d, inputs)
+        if result is not None:
+            return result
 
     n_sect  = max(1, inputs.sections)
     sect_w  = inner_w / n_sect
@@ -707,7 +1537,7 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
                     side_packing = [(fallback_t, fallback_w + slack)]
 
             ax_cursor = apt_x0
-            for apt_type, apt_w in side_packing:
+            for ai, (apt_type, apt_w) in enumerate(side_packing):
                 ax = round(ax_cursor, 3)
                 aw = round(apt_w, 3)
                 ax_cursor += apt_w
@@ -737,6 +1567,11 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
                 _add_balconies(rooms, apt_d, apt_type, exterior_side)
                 for room in rooms:
                     _add_furniture(room, exterior_side)
+
+                # Чётные квартиры (1-я, 3-я, …) зеркалим по X — норма МКД
+                # «мокрые зоны спина к спине» + визуально соседи различимы.
+                if ai % 2 == 1:
+                    _mirror_rooms_x(rooms, aw)
 
                 apartments.append(LayoutApartment(
                     type_code=apt_type,
@@ -779,7 +1614,9 @@ def _add_apertures(
     exterior_side: str,   # "S" — низ Y, "N" — верх Y
     interior_side: str,   # противоположная exterior_side
     *,
+    apt_w: float | None = None,   # требуется для W/E facades (tower)
     extra_facade_sides: tuple[str, ...] = (),
+    allow_multiple_windows: bool = False,  # True для угловых (tower) — окна на 2 фасада
 ) -> None:
     """Расставить окна и двери для всех комнат квартиры in-place.
 
@@ -806,10 +1643,11 @@ def _add_apertures(
         # ── Окна ─────────────────────────────────────────────────────
         if room.kind in _WINDOW_KINDS:
             for side in facade_sides:
-                window = _make_window_on_facade(room, apt_d, side)
+                window = _make_window_on_facade(room, apt_d, side, apt_w=apt_w)
                 if window is not None:
                     room.windows.append(window)
-                    break  # одной стороны достаточно
+                    if not allow_multiple_windows:
+                        break  # одной стороны достаточно (для непанорамных)
 
         # ── Двери ────────────────────────────────────────────────────
         if room.kind == "hallway":
@@ -823,6 +1661,43 @@ def _add_apertures(
             door = _make_internal_door(room, hallway, apt_d, interior_side)
             if door is not None:
                 room.doors.append(door)
+
+
+# ── Зеркало по оси X (для соседних квартир МКД) ──────────────────────────
+
+
+def _mirror_rooms_x(rooms: list[LayoutRoom], apt_w: float) -> None:
+    """Отразить раскладку по оси X (in-place).
+
+    Архитектурная норма МКД: соседние квартиры зеркалят друг друга, чтобы
+    мокрые зоны (кухня, санузлы) встали спина к спине — общий стояк
+    сантехники между двумя квартирами = экономия инженерки. Заодно
+    визуально соседние квартиры различаются.
+    """
+    for r in rooms:
+        r.x = round(apt_w - r.x - r.w, 3)
+        # Мебель внутри комнаты — тоже отражаем по X
+        for f in r.furniture:
+            f.x = round(r.w - f.x - f.w, 3)
+        # Двери и окна на S/N стене (горизонтальной) — смещение offset
+        # отсчитывается от W-кромки. После mirror W↔E, offset меняется.
+        # Для W/E стен — стена «меняет сторону»: W становится E и наоборот.
+        for d in r.doors:
+            if d.side == "W":
+                d.side = "E"
+            elif d.side == "E":
+                d.side = "W"
+            elif d.side in ("S", "N"):
+                d.offset = round(r.w - d.offset - d.width, 3)
+            # Петля тоже меняет сторону при mirror
+            d.hinge = "right" if d.hinge == "left" else "left"
+        for win in r.windows:
+            if win.side == "W":
+                win.side = "E"
+            elif win.side == "E":
+                win.side = "W"
+            elif win.side in ("S", "N"):
+                win.offset = round(r.w - win.offset - win.width, 3)
 
 
 # ── Балконы / лоджии (Phase B) ────────────────────────────────────────────
@@ -921,8 +1796,13 @@ def _add_balconies(
 
 def _make_window_on_facade(
     room: LayoutRoom, apt_d: float, exterior_side: str,
+    *, apt_w: float | None = None,
 ) -> LayoutWindow | None:
-    """Окно на фасадной стене комнаты, если она физически касается фасада."""
+    """Окно на фасадной стене комнаты, если она физически касается фасада.
+
+    Для W/E фасадов нужно передать apt_w (ширину квартиры). Без него
+    функция вернёт None — backward-совместимо для S/N-only callers.
+    """
     if exterior_side == "S":
         # Южная стена квартиры — y = 0. Комната касается её, если room.y ≈ 0.
         if room.y > 0.01:
@@ -934,6 +1814,16 @@ def _make_window_on_facade(
             return None
         side = "N"
         stretch = room.w
+    elif exterior_side == "W":
+        if apt_w is None or room.x > 0.01:
+            return None
+        side = "W"
+        stretch = room.d
+    elif exterior_side == "E":
+        if apt_w is None or abs(room.x + room.w - apt_w) > 0.01:
+            return None
+        side = "E"
+        stretch = room.d
     else:
         return None
 
@@ -1136,23 +2026,43 @@ def _add_furniture(room: LayoutRoom, exterior_side: str) -> None:
             ))
 
     elif room.kind == "kitchen":
-        # Линейка плита-мойка-холодильник вдоль западной стены
-        x = 0.1
-        y = 0.1 if back_y_pos == "bottom" else rd - _FURN_SIZES["stove"][1] - 0.1
-        for kind in ("fridge", "sink", "stove"):
-            f_w, f_d = _FURN_SIZES[kind]
-            if x + f_w > rw - 0.1:
+        # Кухонный фронт — непрерывная столешница 0.6 м у стены, противоположной окну.
+        # На ней последовательно (без зазоров) стоят: холодильник, плита, мойка.
+        # «Холодильник-плита-мойка» — стандартный фронт по СП и эргономике.
+        counter_d = 0.6
+        counter_y = 0.0 if back_y_pos == "bottom" else rd - counter_d
+        fridge_w = _FURN_SIZES["fridge"][0]
+        stove_w  = _FURN_SIZES["stove"][0]
+        sink_w   = _FURN_SIZES["sink"][0]
+        appliances_w = fridge_w + stove_w + sink_w   # 2.0 м минимум
+        # Столешница: тянем максимум до конца стены (минимум — длина приборов + 0.4 м столешницы между ними).
+        counter_w = min(rw - 0.2, max(appliances_w + 0.6, rw * 0.6))
+        counter_x = 0.1
+        items.append(LayoutFurniture(
+            kind="kitchen_counter", x=counter_x, y=round(counter_y, 3),
+            w=round(counter_w, 3), d=counter_d, rotation=0,
+        ))
+        # Раскладка приборов: fridge → stove → sink, упёрты в левый край счётчика.
+        x = counter_x
+        for kind, kw in (("fridge", fridge_w), ("stove", stove_w), ("sink", sink_w)):
+            if x + kw > counter_x + counter_w - 0.001:
                 break
             items.append(LayoutFurniture(
-                kind=kind, x=round(x, 3), y=round(y, 3),
-                w=f_w, d=f_d, rotation=0,
+                kind=kind, x=round(x, 3), y=round(counter_y, 3),
+                w=kw, d=counter_d, rotation=0,
             ))
-            x += f_w + 0.05
-        # Обеденный стол в свободной зоне
+            x += kw
+        # Обеденный стол по центру свободной зоны (за фронтом)
         dt_w, dt_d = _FURN_SIZES["dining_table"]
-        if rw >= dt_w + 0.4 and rd >= 2.8:
+        free_d = rd - counter_d
+        if rw >= dt_w + 0.4 and free_d >= dt_d + 0.5:
             dt_x = (rw - dt_w) / 2
-            dt_y = (rd - dt_d) / 2 if back_y_pos == "top" else (rd - dt_d) / 2
+            # центр оставшейся зоны
+            if back_y_pos == "bottom":
+                free_y0 = counter_d
+            else:
+                free_y0 = 0.0
+            dt_y = free_y0 + (free_d - dt_d) / 2
             items.append(LayoutFurniture(
                 kind="dining_table", x=round(dt_x, 3), y=round(dt_y, 3),
                 w=dt_w, d=dt_d, rotation=0,
