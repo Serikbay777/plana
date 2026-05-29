@@ -94,7 +94,6 @@ def _try_one_model_edit(
         image=image_file,
         prompt=prompt,
         size=opts.size,
-        quality=opts.quality,
         n=opts.n,
     )
     if not response.data:
@@ -124,7 +123,6 @@ def _try_one_model_edit_mask(
         mask=mask_file,
         prompt=prompt,
         size=opts.size,
-        quality=opts.quality,
         n=opts.n,
     )
     if not response.data:

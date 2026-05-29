@@ -191,7 +191,7 @@ export async function exportFullReportPdf(opts: FullReportInput): Promise<void> 
     doc.addPage("a4", "landscape");
     drawHeader(doc, PW, HEADER_H, PAD,
       "Интерьер квартиры",
-      `${it.label} · ~${it.area.toFixed(0)} м² · ${it.count} шт. на этаже`,
+      `${it.label}${it.view_label ? ` · ${it.view_label}` : ""} · ~${it.area.toFixed(0)} м² · ${it.count} шт. на этаже`,
       `${i + 1} / ${opts.interiors.length}`,
     );
     const imgY = HEADER_H + 3;

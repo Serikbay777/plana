@@ -311,6 +311,37 @@ export async function visualizeFloorplanFurniture(req: VisualizeFromInputsReques
 }
 
 /**
+ * image-edit: обставляет мебелью РЕАЛЬНЫЙ план (PNG из детерминированного
+ * SVG-чертежа). Геометрия берётся из картинки → согласовано с чертежом.
+ */
+export async function visualizeFloorplanFurnitureEdit(
+  planImage: Blob,
+  req: VisualizeFromInputsRequest,
+  sourcePrompt?: string,
+): Promise<VisualizeResult> {
+  const fd = new FormData();
+  fd.append("plan_image", planImage, "plan.png");
+  fd.append("req_json", JSON.stringify(req));
+  if (sourcePrompt) fd.append("source_prompt", sourcePrompt);
+
+  const res = await fetch(`${ENGINE_URL}/visualize/floorplan-furniture-edit`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  return {
+    blob: await res.blob(),
+    modelUsed: res.headers.get("X-Model-Used"),
+    enhancerUsed: res.headers.get("X-Enhancer-Used"),
+  };
+}
+
+/**
  * Image-to-image: впишет здание в загруженное аэрофото участка.
  */
 export async function visualizeSitePlacement(
@@ -531,6 +562,10 @@ export type InteriorGalleryItem = {
   image_b64: string;
   model_used: string;
   enhancer_used: string;
+  /** Ракурс по комнате (living/kitchen/bedroom/…). Пусто = общий композит. */
+  room_focus: string;
+  /** Русская подпись ракурса для UI. */
+  view_label: string;
 };
 
 export type InteriorGalleryResponse = {
@@ -542,6 +577,64 @@ export async function visualizeInteriorGallery(
   req: InteriorGalleryRequest,
 ): Promise<InteriorGalleryResponse> {
   return request("/visualize/interior-gallery", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+/**
+ * Интерьеры через image-edit: сид — мебельный план (top-down), выход —
+ * перспектива. Стиль/состав привязан к плану → «примерное» представление.
+ */
+export async function visualizeInteriorGalleryEdit(
+  planImage: Blob,
+  req: InteriorGalleryRequest,
+  sourcePrompt?: string,
+): Promise<InteriorGalleryResponse> {
+  const fd = new FormData();
+  fd.append("plan_image", planImage, "plan.png");
+  fd.append("req_json", JSON.stringify(req));
+  if (sourcePrompt) fd.append("source_prompt", sourcePrompt);
+
+  const res = await fetch(`${ENGINE_URL}/visualize/interior-gallery-edit`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = parseDetail(j.detail, detail); } catch { /* ignore */ }
+    throw new EngineError(res.status, detail);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Экстерьер-галерея: несколько ракурсов здания (hero/entrance/aerial/courtyard)
+// ---------------------------------------------------------------------------
+
+export type ExteriorGalleryRequest = VisualizeFromInputsRequest & {
+  /** Список ракурсов; пусто/undefined → дефолтные 4. */
+  views?: string[];
+};
+
+export type ExteriorGalleryItem = {
+  view: string;
+  label: string;
+  image_b64: string;
+  model_used: string;
+  enhancer_used: string;
+};
+
+export type ExteriorGalleryResponse = {
+  items: ExteriorGalleryItem[];
+  elapsed_ms: number;
+};
+
+export async function visualizeExteriorGallery(
+  req: ExteriorGalleryRequest,
+): Promise<ExteriorGalleryResponse> {
+  return request("/visualize/exterior-gallery", {
     method: "POST",
     body: JSON.stringify(req),
   });

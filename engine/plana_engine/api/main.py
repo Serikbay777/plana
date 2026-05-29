@@ -44,8 +44,10 @@ from ..cad.layout_schema import LayoutFloor
 from ..cad.floorplan_ifc import build_ifc_from_layout
 from ..types import BuildingPurpose
 from ..visualizer import (
+    DEFAULT_EXTERIOR_VIEWS, EXTERIOR_VIEWS,
     GenerationOptions, MarketingInputs, build_exterior_prompt,
-    build_floorplan_furniture_prompt, build_interior_prompt,
+    build_floorplan_furniture_prompt, build_floorplan_furniture_edit_prompt,
+    build_interior_prompt,
     build_marketing_prompt, build_site_placement_prompt,
     enhance_prompt, enhance_with_kz_norms, has_llm_key,
 )
@@ -316,6 +318,93 @@ def visualize_exterior(req: VisualizeFromInputsRequest) -> Response:
     )
 
 
+class ExteriorGalleryRequest(VisualizeFromInputsRequest):
+    """Расширение запроса экстерьера: список ракурсов для галереи.
+
+    `views=None` → DEFAULT_EXTERIOR_VIEWS (hero, entrance, aerial, courtyard).
+    """
+    views: list[str] | None = None
+
+
+class ExteriorGalleryItem(BaseModel):
+    view:          str
+    label:         str
+    image_b64:     str
+    model_used:    str
+    enhancer_used: str
+
+
+class ExteriorGalleryResponse(BaseModel):
+    items:      list[ExteriorGalleryItem]
+    elapsed_ms: float
+
+
+@app.post("/visualize/exterior-gallery", response_model=ExteriorGalleryResponse)
+def visualize_exterior_gallery(req: ExteriorGalleryRequest) -> ExteriorGalleryResponse:
+    """Несколько ракурсов экстерьера (параллельно), 1 картинка на ракурс."""
+    import base64 as _b64
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+    _validate_quality(req.quality)
+    inputs = _inputs_from_req(req)
+
+    # Дедуп + фильтр известных ракурсов с сохранением порядка.
+    requested = req.views or DEFAULT_EXTERIOR_VIEWS
+    seen: set[str] = set()
+    views: list[str] = []
+    for v in requested:
+        if v in EXTERIOR_VIEWS and v not in seen:
+            seen.add(v)
+            views.append(v)
+    if not views:
+        views = list(DEFAULT_EXTERIOR_VIEWS)
+
+    opts = GenerationOptions(quality=req.quality)  # type: ignore[arg-type]
+
+    def _one(idx: int, view: str) -> tuple[int, ExteriorGalleryItem]:
+        prompt = build_exterior_prompt(inputs, view)
+        enhanced, enhancer_src = enhance_prompt(prompt)
+        result = generate_image_with_meta(enhanced, opts, use_cache=True)
+        return idx, ExteriorGalleryItem(
+            view=view,
+            label=EXTERIOR_VIEWS[view]["label"],
+            image_b64=_b64.b64encode(result.png).decode(),
+            model_used=result.model_used,
+            enhancer_used=enhancer_src,
+        )
+
+    t0 = time.time()
+    ordered: list[ExteriorGalleryItem | None] = [None] * len(views)
+    last_exc: Exception | None = None
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(4, len(views))) as pool:
+            futures = {pool.submit(_one, i, v): i for i, v in enumerate(views)}
+            for fut in _as_completed(futures):
+                try:
+                    idx, item = fut.result()
+                    ordered[idx] = item
+                except (MissingAPIKey, OpenAIError):
+                    raise
+                except Exception as exc:
+                    last_exc = exc
+    except MissingAPIKey as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except OpenAIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    items = [it for it in ordered if it is not None]
+    if not items:
+        detail = f"All renders failed: {last_exc}" if last_exc else "No items generated"
+        raise HTTPException(status_code=502, detail=detail)
+
+    return ExteriorGalleryResponse(
+        items=items,
+        elapsed_ms=round((time.time() - t0) * 1000, 1),
+    )
+
+
 @app.post("/visualize/floorplan-furniture")
 def visualize_floorplan_furniture(req: VisualizeFromInputsRequest) -> Response:
     """Pinterest-grade top-down планировка с мебелью (для брошюр)."""
@@ -323,6 +412,54 @@ def visualize_floorplan_furniture(req: VisualizeFromInputsRequest) -> Response:
     inputs = _inputs_from_req(req)
     return _run_text_to_image(
         build_floorplan_furniture_prompt(inputs), req.quality, inputs=inputs,
+    )
+
+
+@app.post("/visualize/floorplan-furniture-edit")
+async def visualize_floorplan_furniture_edit(
+    plan_image: UploadFile = File(...),
+    req_json: str = Form(...),
+    source_prompt: str = Form(""),
+) -> Response:
+    """image-edit: обставляет мебелью РЕАЛЬНЫЙ план-чертёж (PNG), сохраняя
+    геометрию — согласовано с чертежом.
+
+    `req_json` — JSON тела VisualizeFromInputsRequest (для микса/качества);
+    `source_prompt` — исходный промпт чертежа (доп. контекст «то же здание»).
+    """
+    image_bytes = await plan_image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="empty plan_image")
+    try:
+        req = VisualizeFromInputsRequest.model_validate_json(req_json)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"bad req_json: {e}")
+
+    _validate_quality(req.quality)
+    inputs = _inputs_from_req(req)
+    prompt = build_floorplan_furniture_edit_prompt(inputs, source_prompt)
+    enhanced, enhancer_source = enhance_prompt(prompt)
+
+    try:
+        result = generate_image_edit_with_meta(
+            enhanced,
+            image_bytes,
+            GenerationOptions(quality=req.quality),  # type: ignore[arg-type]
+        )
+    except MissingAPIKey as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except OpenAIError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return Response(
+        content=result.png,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Model-Used": result.model_used,
+            "X-Enhancer-Used": enhancer_source,
+            "Access-Control-Expose-Headers": "X-Model-Used, X-Enhancer-Used",
+        },
     )
 
 
@@ -1058,6 +1195,9 @@ class InteriorGalleryItem(BaseModel):
     image_b64:     str
     model_used:    str
     enhancer_used: str
+    # Ракурс по комнате (см. _ROOM_FOCUS). Пусто = общий композит.
+    room_focus:    str = ""
+    view_label:    str = ""
 
 
 class InteriorGalleryResponse(BaseModel):
@@ -1065,8 +1205,85 @@ class InteriorGalleryResponse(BaseModel):
     elapsed_ms: float
 
 
-def _build_apt_interior_prompt(apt: AptTypeInput, floors: int, purpose: str) -> str:
-    """Точный интерьерный промпт на основе реальных данных тайла."""
+# Ракурсы интерьера: камера фокусируется на одной комнате. `scene` — что в
+# кадре, `zone` — короткое имя для строки «Featured room», `label` — подпись UI.
+_ROOM_FOCUS: dict[str, dict[str, str]] = {
+    "living_kitchen": {
+        "label": "Гостиная-кухня",
+        "zone": "open-plan living-kitchen",
+        "scene": "the OPEN-PLAN LIVING-KITCHEN — lounge sofa zone merging into a kitchen island with bar stools, a dining table set between them",
+    },
+    "living": {
+        "label": "Гостиная",
+        "zone": "living room",
+        "scene": "the LIVING ROOM — sectional sofa, coffee table, media/TV wall, area rug, floor-to-ceiling windows",
+    },
+    "kitchen": {
+        "label": "Кухня",
+        "zone": "kitchen",
+        "scene": "the KITCHEN — full cabinetry, island or peninsula with bar stools, integrated appliances, tiled backsplash",
+    },
+    "bedroom": {
+        "label": "Спальня",
+        "zone": "master bedroom",
+        "scene": "the MASTER BEDROOM — double bed with upholstered headboard, bedside tables with lamps, wardrobe, soft layered textiles",
+    },
+    "bedroom2": {
+        "label": "Спальня 2",
+        "zone": "second bedroom",
+        "scene": "the SECOND BEDROOM — single or twin bed, study desk with chair, compact wardrobe, lighter palette",
+    },
+    "bathroom": {
+        "label": "Санузел",
+        "zone": "bathroom",
+        "scene": "the BATHROOM — vanity with backlit mirror, walk-in glass shower or bathtub, large-format tiles, brass fixtures",
+    },
+}
+
+# Студии и «евро»-форматы — открытая планировка: гостиную и кухню снимаем
+# одним кадром, а не двумя.
+_OPEN_PLAN_TYPES = {"studio", "euro1", "euro2", "euro3"}
+
+
+def _apt_room_foci(apt: AptTypeInput) -> list[str]:
+    """Список ракурсов по комнатам квартиры на основе zone_kinds.
+
+    Открытая планировка → living+kitchen одним кадром. Спальни: master + (если
+    есть вторая) second, без размножения почти одинаковых кадров. Прихожую и
+    лоджию не снимаем — малоинформативны и раздувают стоимость.
+    """
+    counts: dict[str, int] = {}
+    for z in apt.zone_kinds:
+        counts[z] = counts.get(z, 0) + 1
+
+    foci: list[str] = []
+    has_living = counts.get("living", 0) > 0
+    has_kitchen = counts.get("kitchen", 0) > 0
+    if apt.apt_type in _OPEN_PLAN_TYPES and has_living and has_kitchen:
+        foci.append("living_kitchen")
+    else:
+        if has_living:
+            foci.append("living")
+        if has_kitchen:
+            foci.append("kitchen")
+    n_bed = counts.get("bedroom", 0)
+    if n_bed >= 1:
+        foci.append("bedroom")
+    if n_bed >= 2:
+        foci.append("bedroom2")
+    if counts.get("bathroom", 0) > 0:
+        foci.append("bathroom")
+    return foci or ["living"]
+
+
+def _build_apt_interior_prompt(
+    apt: AptTypeInput, floors: int, purpose: str, room_focus: str | None = None,
+) -> str:
+    """Точный интерьерный промпт на основе реальных данных тайла.
+
+    `room_focus` (см. _ROOM_FOCUS) фокусирует кадр на одной комнате; без него —
+    общий композит по всем зонам (старое поведение).
+    """
     type_desc_map: dict[str, str] = {
         "studio": f"studio apartment ({apt.area:.0f} m², {apt.width:.1f}×{apt.depth:.1f} m) — open-plan living, kitchen and sleeping zone in one space",
         "k1":     f"1-bedroom apartment ({apt.area:.0f} m², {apt.width:.1f}×{apt.depth:.1f} m) — separate bedroom, combined living-dining room, separate kitchen",
@@ -1098,12 +1315,23 @@ def _build_apt_interior_prompt(apt: AptTypeInput, floors: int, purpose: str) -> 
 
     furniture = _APT_FURNITURE.get(apt.apt_type, "modern furniture")
 
+    rf = _ROOM_FOCUS.get(room_focus) if room_focus else None
+    if rf is not None:
+        rooms_line = (
+            f"Featured room: {rf['zone']}, part of the {apt_desc}.\n"
+            f"FRAME AND COMPOSE the photo entirely around {rf['scene']}. "
+            f"Show only this room (adjacent spaces may be hinted through an opening)."
+        )
+    else:
+        rooms_line = f"Rooms visible: {zones_str}."
+
     return f"""Photorealistic interior architectural rendering, residential magazine quality.
 Eye-level perspective view, camera at 1.5 m height, wide-angle (28 mm equivalent), no fish-eye distortion.
 
 SUBJECT: {apt_desc}, in a newly built {floors}-storey residential building in Kazakhstan.
-Rooms visible: {zones_str}.
+{rooms_line}
 Modern Kazakh/Russian residential interior — contemporary Scandinavian-minimalist style with warm Central Asian accents.
+Keep the SAME apartment identity across views — consistent flooring, wall colors, style and finishes.
 
 FURNITURE & FURNISHINGS:
 {furniture}
@@ -1133,7 +1361,7 @@ OUTPUT: ultra-high-resolution photorealistic render, 16:10 aspect ratio, Archite
 
 @app.post("/visualize/interior-gallery", response_model=InteriorGalleryResponse)
 def visualize_interior_gallery(req: InteriorGalleryRequest) -> InteriorGalleryResponse:
-    """1 фотореалистичный интерьер на уникальный тип квартиры (параллельно)."""
+    """Несколько ракурсов по комнатам на уникальный тип квартиры (параллельно)."""
     import base64 as _b64
     import time
     from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
@@ -1149,12 +1377,18 @@ def visualize_interior_gallery(req: InteriorGalleryRequest) -> InteriorGalleryRe
             seen.add(apt.apt_type)
             unique.append(apt)
 
+    # Разворачиваем каждый тип в набор ракурсов по комнатам.
+    jobs: list[tuple[AptTypeInput, str]] = [
+        (apt, focus) for apt in unique for focus in _apt_room_foci(apt)
+    ]
+
     opts = GenerationOptions(quality=req.quality)  # type: ignore[arg-type]
 
-    def _one(idx: int, apt: AptTypeInput) -> tuple[int, InteriorGalleryItem]:
-        prompt = _build_apt_interior_prompt(apt, req.floors, req.purpose)
+    def _one(idx: int, apt: AptTypeInput, focus: str) -> tuple[int, InteriorGalleryItem]:
+        prompt = _build_apt_interior_prompt(apt, req.floors, req.purpose, room_focus=focus)
         enhanced, enhancer_src = enhance_prompt(prompt)
         result = generate_image_with_meta(enhanced, opts, use_cache=True)
+        rf = _ROOM_FOCUS.get(focus, {})
         return idx, InteriorGalleryItem(
             apt_type=apt.apt_type,
             label=_APT_TYPE_RU.get(apt.apt_type, apt.apt_type),
@@ -1163,17 +1397,19 @@ def visualize_interior_gallery(req: InteriorGalleryRequest) -> InteriorGalleryRe
             image_b64=_b64.b64encode(result.png).decode(),
             model_used=result.model_used,
             enhancer_used=enhancer_src,
+            room_focus=focus,
+            view_label=rf.get("label", focus),
         )
 
     t0 = time.time()
-    ordered: list[InteriorGalleryItem | None] = [None] * len(unique)
+    ordered: list[InteriorGalleryItem | None] = [None] * len(jobs)
     last_exc: Exception | None = None
 
     try:
-        with ThreadPoolExecutor(max_workers=min(4, len(unique))) as pool:
+        with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as pool:
             futures = {
-                pool.submit(_one, i, apt): i
-                for i, apt in enumerate(unique)
+                pool.submit(_one, i, apt, focus): i
+                for i, (apt, focus) in enumerate(jobs)
             }
             for fut in _as_completed(futures):
                 try:
@@ -1182,6 +1418,115 @@ def visualize_interior_gallery(req: InteriorGalleryRequest) -> InteriorGalleryRe
                 except (MissingAPIKey, OpenAIError):
                     raise
                 except Exception as exc:
+                    last_exc = exc
+    except MissingAPIKey as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except OpenAIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    items = [it for it in ordered if it is not None]
+    if not items:
+        detail = f"All renders failed: {last_exc}" if last_exc else "No items generated"
+        raise HTTPException(status_code=502, detail=detail)
+
+    return InteriorGalleryResponse(
+        items=items,
+        elapsed_ms=round((time.time() - t0) * 1000, 1),
+    )
+
+
+def _interior_edit_prompt(
+    apt: AptTypeInput, floors: int, purpose: str, focus: str, source_prompt: str = "",
+) -> str:
+    """Интерьер через image-edit: top-down мебельный план как референс → перспектива."""
+    base = _build_apt_interior_prompt(apt, floors, purpose, room_focus=focus)
+    ctx = ""
+    if source_prompt.strip():
+        brief = source_prompt.strip().replace("\n", " ")[:400]
+        ctx = f"\nReference-plan brief (same building): {brief}"
+    return (
+        "You are given a TOP-DOWN furnished floor plan of a residential building as a STYLE & LAYOUT "
+        "REFERENCE ONLY. Produce a NEW photorealistic EYE-LEVEL INTERIOR photograph (perspective, camera "
+        "at ~1.5 m height) of the apartment described below. Do NOT output a top-down or plan view — output "
+        "a normal photo taken from inside the room. Match the furniture style, materials, colours and "
+        "approximate room proportions implied by the reference plan."
+        f"{ctx}\n\n{base}"
+    )
+
+
+@app.post("/visualize/interior-gallery-edit", response_model=InteriorGalleryResponse)
+async def visualize_interior_gallery_edit(
+    plan_image: UploadFile = File(...),
+    req_json: str = Form(...),
+    source_prompt: str = Form(""),
+) -> InteriorGalleryResponse:
+    """Интерьеры через image-edit: сид — мебельный план (top-down), выход — перспектива.
+
+    Стиль/состав привязан к плану → «примерное» представление, согласованное с
+    чертежом. Картинок: по комнатам на каждый уникальный тип квартиры (параллельно).
+    """
+    import base64 as _b64
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+    image_bytes = await plan_image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="empty plan_image")
+    try:
+        req = InteriorGalleryRequest.model_validate_json(req_json)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"bad req_json: {e}")
+
+    _validate_quality(req.quality)
+    if not req.apt_types:
+        raise HTTPException(status_code=400, detail="apt_types must not be empty")
+
+    seen: set[str] = set()
+    unique: list[AptTypeInput] = []
+    for apt in req.apt_types:
+        if apt.apt_type not in seen:
+            seen.add(apt.apt_type)
+            unique.append(apt)
+    jobs: list[tuple[AptTypeInput, str]] = [
+        (apt, focus) for apt in unique for focus in _apt_room_foci(apt)
+    ]
+
+    opts = GenerationOptions(quality=req.quality)  # type: ignore[arg-type]
+
+    def _one(idx: int, apt: AptTypeInput, focus: str) -> tuple[int, InteriorGalleryItem]:
+        prompt = _interior_edit_prompt(apt, req.floors, req.purpose, focus, source_prompt)
+        enhanced, enhancer_src = enhance_prompt(prompt)
+        result = generate_image_edit_with_meta(enhanced, image_bytes, opts)
+        rf = _ROOM_FOCUS.get(focus, {})
+        return idx, InteriorGalleryItem(
+            apt_type=apt.apt_type,
+            label=_APT_TYPE_RU.get(apt.apt_type, apt.apt_type),
+            area=apt.area,
+            count=apt.count,
+            image_b64=_b64.b64encode(result.png).decode(),
+            model_used=result.model_used,
+            enhancer_used=enhancer_src,
+            room_focus=focus,
+            view_label=rf.get("label", focus),
+        )
+
+    t0 = time.time()
+    ordered: list[InteriorGalleryItem | None] = [None] * len(jobs)
+    last_exc: Exception | None = None
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as pool:
+            futures = {
+                pool.submit(_one, i, apt, focus): i
+                for i, (apt, focus) in enumerate(jobs)
+            }
+            for fut in _as_completed(futures):
+                try:
+                    idx, item = fut.result()
+                    ordered[idx] = item
+                except (MissingAPIKey, OpenAIError):
+                    raise
+                except Exception as exc:  # noqa: BLE001
                     last_exc = exc
     except MissingAPIKey as exc:
         raise HTTPException(status_code=503, detail=str(exc))

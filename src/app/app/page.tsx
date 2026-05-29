@@ -19,13 +19,14 @@ import {
   importGpzu,
   importFloorplanCad,
   analyzeContour,
-  visualizeExterior,
-  visualizeFloorplanFurniture,
   visualizeSitePlacement,
   visualizeFloorVariants,
   visualizeFloorByLevel,
   visualizeSitePlacementVariants,
   visualizeInteriorGallery,
+  visualizeInteriorGalleryEdit,
+  visualizeExteriorGallery,
+  visualizeFloorplanFurnitureEdit,
   editAiPlan,
   inpaintAiPlan,
   exportFloorplanDxf,
@@ -42,13 +43,15 @@ import {
   type PlacementVariant,
   type InteriorGalleryItem,
   type FloorPlanMetrics,
+  type LayoutFloor,
 } from "@/lib/engine";
 import { getSession, signOut, type Session } from "@/lib/auth";
 import { createProject, updateProject, uploadAsset, getProject, createRun, listProjects, type GenerationRun, type Project as ProjectType } from "@/lib/projects";
 import HistoryPanel from "@/components/HistoryPanel";
 import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
-import { ArchitecturalDrawingsTab } from "@/components/ArchitecturalDrawingsTab";
+import { ArchitecturalDrawingsTab, FloorPlanSvg } from "@/components/ArchitecturalDrawingsTab";
 import { AlbumImagesViewer } from "@/components/AlbumImagesViewer";
+import { svgToPngBlob } from "@/lib/export/toPng";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -71,7 +74,7 @@ const EMPTY_IMAGE_BAG: ImageBag = {
   state: "idle", imageUrl: null, modelUsed: null, enhancerUsed: null, errorMessage: null,
 };
 
-// Tab 3 — интерьер-галерея (1 рендер на тип квартиры)
+// Tab 3 — интерьер-галерея (несколько ракурсов по комнатам на тип квартиры)
 type InteriorGalleryBag = {
   state: GenState;
   items: InteriorGalleryItem[];
@@ -80,6 +83,45 @@ type InteriorGalleryBag = {
 };
 const EMPTY_INT_GALLERY: InteriorGalleryBag = {
   state: "idle", items: [], elapsedMs: null, errorMessage: null,
+};
+
+// Tab 3 — экстерьер-галерея (несколько ракурсов здания)
+// UI-форма элемента: imageUrl может быть data:-URL (свежая генерация) или
+// asset-URL (восстановление из проекта/истории).
+type ExtGalleryItemUI = {
+  view: string;
+  label: string;
+  imageUrl: string;
+  modelUsed: string | null;
+};
+type ExteriorGalleryBag = {
+  state: GenState;
+  items: ExtGalleryItemUI[];
+  elapsedMs: number | null;
+  errorMessage: string | null;
+};
+const EMPTY_EXT_GALLERY: ExteriorGalleryBag = {
+  state: "idle", items: [], elapsedMs: null, errorMessage: null,
+};
+// Подписи ракурсов экстерьера — для restore, где API-label недоступен.
+const EXTERIOR_VIEW_LABEL: Record<string, string> = {
+  hero: "Общий вид", aerial: "С высоты", landscape: "Благоустройство", yard: "Двор",
+  // legacy-ключи старых сохранений
+  entrance: "Вход", courtyard: "Двор",
+};
+// variant_key ассета («exterior» из старого формата или «exterior_hero») → view.
+function extViewFromVariantKey(key: string): string {
+  return key.replace(/^exterior_?/, "") || "hero";
+}
+
+// Единый контекст визуализации: захватывается при клике «Визуализация» в AI
+// Чертежах и связывает чертёж + параметры + промпт одним id, чтобы «С мебелью»
+// строилась ровно из того плана, что юзер видит, а не из заново сгенерированного.
+type VizSource = {
+  id: string;
+  req: VisualizeFromInputsRequest;
+  planImageUrl: string;   // картинка чертежа из AI Чертежей (data:/blob:/http)
+  planPrompt?: string;    // исходный промпт чертежа — как доп. контекст для edit
 };
 
 // Tab 4 — AI чертежи (5 PNG вариантов)
@@ -223,11 +265,18 @@ export default function AppPage() {
   // Tab 2
   const [siteBag, setSiteBag] = useState<ImageBag>(EMPTY_IMAGE_BAG);
   // Tab 3 — три независимых стейта
-  const [vizExtBag,     setVizExtBag]     = useState<ImageBag>(EMPTY_IMAGE_BAG);
+  const [vizExtGallery, setVizExtGallery] = useState<ExteriorGalleryBag>(EMPTY_EXT_GALLERY);
   const [vizFloorBag,   setVizFloorBag]   = useState<ImageBag>(EMPTY_IMAGE_BAG);
   const [vizIntBag,     setVizIntBag]     = useState<ImageBag>(EMPTY_IMAGE_BAG);      // fallback single image
   const [vizIntGallery, setVizIntGallery] = useState<InteriorGalleryBag>(EMPTY_INT_GALLERY);
   const [vizMode, setVizMode] = useState<VizMode>("exterior");
+  // Скрытый рендер плана для растеризации SVG → PNG (референс для «С мебелью»).
+  const [rasterLayout, setRasterLayout] = useState<LayoutFloor | null>(null);
+  const rasterContainerRef = useRef<HTMLDivElement | null>(null);
+  const rasterResolveRef = useRef<((blob: Blob) => void) | null>(null);
+  const rasterRejectRef = useRef<((e: Error) => void) | null>(null);
+  // Источник для «С мебелью»: чертёж + параметры, захваченные из AI Чертежей.
+  const [vizSource, setVizSource] = useState<VizSource | null>(null);
   // Tab 4 — per-floor bags
   const [floorBags, setFloorBags] = useState<Record<number, AiPlansBag>>({});
   const [currentFloor, setCurrentFloor] = useState(1);
@@ -297,8 +346,18 @@ export default function AppPage() {
           });
           setFloorBags(bags);
         }
-        const ext = p.assets.find((a) => a.tab === "viz_exterior");
-        if (ext) setVizExtBag({ state: "ready", imageUrl: ext.url, modelUsed: ext.model_used, enhancerUsed: null, errorMessage: null });
+        const extAssets = p.assets.filter((a) => a.tab === "viz_exterior");
+        if (extAssets.length > 0) {
+          setVizExtGallery({
+            state: "ready",
+            items: extAssets.map((a) => {
+              const view = extViewFromVariantKey(a.variant_key);
+              return { view, label: EXTERIOR_VIEW_LABEL[view] ?? "Экстерьер", imageUrl: a.url, modelUsed: a.model_used };
+            }),
+            elapsedMs: null,
+            errorMessage: null,
+          });
+        }
         const floorViz = p.assets.find((a) => a.tab === "viz_floor");
         if (floorViz) setVizFloorBag({ state: "ready", imageUrl: floorViz.url, modelUsed: floorViz.model_used, enhancerUsed: null, errorMessage: null });
         const site = p.assets.find((a) => a.tab === "site");
@@ -335,7 +394,11 @@ export default function AppPage() {
           });
         }
       });
-      if (vizExtBag.imageUrl)   uploads.push(uploadAsset(pid!, "viz_exterior", "exterior",  vizExtBag.imageUrl,   vizExtBag.modelUsed ?? undefined).catch(() => {}));
+      if (vizExtGallery.state === "ready") {
+        vizExtGallery.items.forEach((it) => {
+          uploads.push(uploadAsset(pid!, "viz_exterior", `exterior_${it.view}`, it.imageUrl, it.modelUsed ?? undefined).catch(() => {}));
+        });
+      }
       if (vizFloorBag.imageUrl) uploads.push(uploadAsset(pid!, "viz_floor",    "floor",     vizFloorBag.imageUrl, vizFloorBag.modelUsed ?? undefined).catch(() => {}));
       if (siteBag.imageUrl)     uploads.push(uploadAsset(pid!, "site",         "placement", siteBag.imageUrl,     siteBag.modelUsed ?? undefined).catch(() => {}));
       await Promise.all(uploads);
@@ -344,7 +407,7 @@ export default function AppPage() {
     } catch { /* ignore */ } finally {
       setSaving(false);
     }
-  }, [saving, projectId, projectName, form, floorBags, vizExtBag, vizFloorBag, siteBag]);
+  }, [saving, projectId, projectName, form, floorBags, vizExtGallery, vizFloorBag, siteBag]);
 
   // ---- авто-сохранение после генерации
   const autoSaveGeneration = useCallback((
@@ -396,7 +459,7 @@ export default function AppPage() {
     const timer = window.setTimeout(() => {
       if (restoringRef.current) return;
       setSiteBag(b => b.state === "ready" ? { ...b, state: "idle" } : b);
-      setVizExtBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
+      setVizExtGallery(b => b.state === "ready" ? EMPTY_EXT_GALLERY : b);
       setVizFloorBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
       setVizIntBag(b => b.state === "ready" ? EMPTY_IMAGE_BAG : b);
       setVizIntGallery(b => b.state === "ready" ? EMPTY_INT_GALLERY : b);
@@ -565,12 +628,22 @@ export default function AppPage() {
         zone_kinds: ["living", "bedroom", "bedroom", "kitchen", "bathroom", "hall"], count: 1,
       });
 
-      const res = await visualizeInteriorGallery({
+      const intReq = {
         floors: form.floors,
         purpose: form.purpose,
-        quality: "medium",
+        quality: "medium" as const,
         apt_types: aptTypes,
-      });
+      };
+      // Если есть мебельный план («С мебелью») — сидим им интерьеры через
+      // image-edit (стиль/состав по плану). Иначе — обычный text→image.
+      const seedUrl = vizFloorBag.state === "ready" ? vizFloorBag.imageUrl : null;
+      const res = seedUrl
+        ? await visualizeInteriorGalleryEdit(
+            await fetch(seedUrl).then((r) => r.blob()),
+            intReq,
+            vizSource?.planPrompt,
+          )
+        : await visualizeInteriorGallery(intReq);
       setVizIntGallery({ state: "ready", items: res.items, elapsedMs: res.elapsed_ms, errorMessage: null });
       autoSaveGeneration(
         "viz_interior", 1,
@@ -586,29 +659,118 @@ export default function AppPage() {
     }
   };
 
+  // Растеризация скрытого FloorPlanSvg в PNG. setRasterLayout монтирует план в
+  // offscreen-контейнер, ждём два кадра до paint, снимаем <svg> → PNG-блоб.
+  useEffect(() => {
+    if (!rasterLayout) return;
+    let cancelled = false;
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(async () => {
+        if (cancelled) return;
+        try {
+          const svg = rasterContainerRef.current?.querySelector("svg") as SVGSVGElement | null;
+          if (!svg) throw new Error("Не удалось отрендерить план для растеризации");
+          const blob = await svgToPngBlob(svg, { background: "#FFFFFF", scaleFactor: 70 });
+          rasterResolveRef.current?.(blob);
+        } catch (e) {
+          rasterRejectRef.current?.(e as Error);
+        } finally {
+          rasterResolveRef.current = null;
+          rasterRejectRef.current = null;
+          setRasterLayout(null);
+        }
+      });
+    });
+    return () => { cancelled = true; cancelAnimationFrame(raf); };
+  }, [rasterLayout]);
+
+  const rasterizePlanToPng = (layout: LayoutFloor): Promise<Blob> =>
+    new Promise<Blob>((resolve, reject) => {
+      rasterResolveRef.current = resolve;
+      rasterRejectRef.current = reject;
+      setRasterLayout(layout);
+    });
+
+  // «С мебелью» через image-edit. Если из AI Чертежей захвачен контекст
+  // (vizSource) — берём ТОТ ЖЕ чертёж и его параметры. Иначе fallback:
+  // генерим детерминированный план и растеризуем его.
+  const generateFloorplanFurniture = async () => {
+    setVizFloorBag({ ...EMPTY_IMAGE_BAG, state: "loading" });
+    try {
+      const req = vizSource?.req ?? buildVisReq(form);
+      let planBlob: Blob;
+      if (vizSource?.planImageUrl) {
+        planBlob = await fetch(vizSource.planImageUrl).then((r) => r.blob());
+      } else {
+        const layout = await generateFloorLayout(req);
+        planBlob = await rasterizePlanToPng(layout);
+      }
+      const result = await visualizeFloorplanFurnitureEdit(planBlob, req, vizSource?.planPrompt);
+      const imageUrl = URL.createObjectURL(result.blob);
+      setVizFloorBag({
+        state: "ready", imageUrl,
+        modelUsed: result.modelUsed, enhancerUsed: result.enhancerUsed,
+        errorMessage: null,
+      });
+      autoSaveGeneration(
+        "viz_floor", 1,
+        [{ variantKey: "floor", imageUrl, modelUsed: result.modelUsed ?? undefined }],
+        form,
+      );
+    } catch (e) {
+      setVizFloorBag({ ...EMPTY_IMAGE_BAG, state: "error", errorMessage: (e as Error).message });
+    }
+  };
+
+  // Экстерьер-галерея: несколько ракурсов здания (hero/entrance/aerial/courtyard).
+  const generateExteriorGallery = async () => {
+    setVizExtGallery({ ...EMPTY_EXT_GALLERY, state: "loading" });
+    try {
+      const res = await visualizeExteriorGallery(buildVisReq(form));
+      const items: ExtGalleryItemUI[] = res.items.map((it) => ({
+        view: it.view,
+        label: it.label,
+        imageUrl: `data:image/png;base64,${it.image_b64}`,
+        modelUsed: it.model_used,
+      }));
+      setVizExtGallery({ state: "ready", items, elapsedMs: res.elapsed_ms, errorMessage: null });
+      autoSaveGeneration(
+        "viz_exterior", 1,
+        items.map((it) => ({ variantKey: `exterior_${it.view}`, imageUrl: it.imageUrl, modelUsed: it.modelUsed ?? undefined })),
+        form,
+      );
+    } catch (e) {
+      setVizExtGallery({ ...EMPTY_EXT_GALLERY, state: "error", errorMessage: (e as Error).message });
+    }
+  };
+
   // Генерация одного режима (по активному vizMode) — для ручного запуска
   const generateViz = () => {
-    const req = buildVisReq(form);
-    if (vizMode === "exterior")                 wrapImageGen(setVizExtBag,   () => visualizeExterior(req),           { tab: "viz_exterior", variantKey: "exterior" });
-    else if (vizMode === "floorplan_furniture") wrapImageGen(setVizFloorBag, () => visualizeFloorplanFurniture(req), { tab: "viz_floor",    variantKey: "floor" });
+    if (vizMode === "exterior")                 generateExteriorGallery();
+    else if (vizMode === "floorplan_furniture") generateFloorplanFurniture();
     else                                        generateInteriorGallery();
   };
 
-  // Запуск всех параллельно — при переходе с AI Чертежей
+  // Запуск всех параллельно — ручная кнопка «Генерировать всё».
   const generateAllViz = () => {
-    const req = buildVisReq(form);
-    wrapImageGen(setVizExtBag,   () => visualizeExterior(req));
-    wrapImageGen(setVizFloorBag, () => visualizeFloorplanFurniture(req));
+    generateExteriorGallery();
+    generateFloorplanFurniture();
     generateInteriorGallery();
   };
 
-  // Переход в Визуализации + автозапуск всех
-  const goToVizAndGenerateAll = () => {
+  // Клик «Визуализация» в AI Чертежах: захватываем ИМЕННО этот чертёж +
+  // текущие параметры в единый контекст и переходим в Визуализации. Генерацию
+  // юзер запускает сам кнопкой в нужном блоке.
+  const goToViz = (planImageUrl?: string, planPrompt?: string) => {
+    if (planImageUrl) {
+      setVizSource({
+        id: (globalThis.crypto?.randomUUID?.() ?? String(Date.now())),
+        req: buildVisReq(form),
+        planImageUrl,
+        planPrompt,
+      });
+    }
     setTab("viz");
-    const req = buildVisReq(form);
-    wrapImageGen(setVizExtBag,   () => visualizeExterior(req));
-    wrapImageGen(setVizFloorBag, () => visualizeFloorplanFurniture(req));
-    generateInteriorGallery();
   };
 
   const generateAiPlans = async () => {
@@ -681,7 +843,7 @@ export default function AppPage() {
       contour: contourResult,
       aiPlans: currentFloorBag.state === "ready" ? currentFloorBag.variants : [],
       placement: placementBag.state === "ready" ? placementBag.variants : [],
-      exteriorUrl: vizExtBag.state === "ready" ? vizExtBag.imageUrl : null,
+      exteriorUrl: vizExtGallery.state === "ready" && vizExtGallery.items[0] ? vizExtGallery.items[0].imageUrl : null,
       floorplanFurnitureUrl: vizFloorBag.state === "ready" ? vizFloorBag.imageUrl : null,
       interiors: vizIntGallery.state === "ready" ? vizIntGallery.items : [],
       pdfViz: pdfVizResults,
@@ -705,8 +867,16 @@ export default function AppPage() {
       }));
       setCurrentFloor(run.floor);
       setTab("ai_plans");
-    } else if (run.tab === "viz_exterior" && run.assets[0]) {
-      setVizExtBag({ state: "ready", imageUrl: run.assets[0].url, modelUsed: run.assets[0].model_used, enhancerUsed: null, errorMessage: null });
+    } else if (run.tab === "viz_exterior" && run.assets.length > 0) {
+      setVizExtGallery({
+        state: "ready",
+        items: run.assets.map((a) => {
+          const view = extViewFromVariantKey(a.variant_key);
+          return { view, label: EXTERIOR_VIEW_LABEL[view] ?? "Экстерьер", imageUrl: a.url, modelUsed: a.model_used };
+        }),
+        elapsedMs: null,
+        errorMessage: null,
+      });
       setTab("viz");
     } else if (run.tab === "viz_floor" && run.assets[0]) {
       setVizFloorBag({ state: "ready", imageUrl: run.assets[0].url, modelUsed: run.assets[0].model_used, enhancerUsed: null, errorMessage: null });
@@ -733,7 +903,8 @@ export default function AppPage() {
     setProjectName("Без названия");
     setForm(DEFAULT_PROMPT_FORM);
     setFloorBags({});
-    setVizExtBag(EMPTY_IMAGE_BAG);
+    setVizSource(null);
+    setVizExtGallery(EMPTY_EXT_GALLERY);
     setVizFloorBag(EMPTY_IMAGE_BAG);
     setSiteBag(EMPTY_IMAGE_BAG);
     setCurrentFloor(1);
@@ -789,7 +960,7 @@ export default function AppPage() {
     : generateViz;
 
   // active state для индикатора loading в кнопке
-  const vizAnyLoading = vizExtBag.state === "loading" || vizFloorBag.state === "loading" || vizIntBag.state === "loading" || vizIntGallery.state === "loading";
+  const vizAnyLoading = vizExtGallery.state === "loading" || vizFloorBag.state === "loading" || vizIntBag.state === "loading" || vizIntGallery.state === "loading";
   const currentFloorBag = floorBags[currentFloor] ?? EMPTY_AI_PLANS;
   const isLoading =
     tab === "site"        ? siteBag.state === "loading"
@@ -875,7 +1046,7 @@ export default function AppPage() {
           )}
           {tab === "viz" && (
             <VizTab
-              extBag={vizExtBag}
+              extGallery={vizExtGallery}
               floorBag={vizFloorBag}
               intBag={vizIntBag}
               intGallery={vizIntGallery}
@@ -893,7 +1064,7 @@ export default function AppPage() {
               onChangeFloor={setCurrentFloor}
               floorBags={floorBags}
               onGenerate={generateAiPlans}
-              onGoToViz={goToVizAndGenerateAll}
+              onGoToViz={goToViz}
               dxfImportLoading={dxfImportLoading}
               dxfImportResult={dxfImportResult}
               dxfImportError={dxfImportError}
@@ -925,7 +1096,7 @@ export default function AppPage() {
               onExportFullReport={handleExportFullReport}
               hasExtraSections={
                 placementBag.state === "ready" ||
-                vizExtBag.state === "ready" ||
+                vizExtGallery.state === "ready" ||
                 vizFloorBag.state === "ready" ||
                 vizIntGallery.state === "ready" ||
                 Object.values(floorBags).some(b => b.state === "ready")
@@ -971,6 +1142,17 @@ export default function AppPage() {
         )}
         </div>
       </main>
+
+      {/* Offscreen-рендер плана для растеризации SVG → PNG (референс «С мебелью»).
+          viewBox в FloorPlanSvg задан, поэтому реальный размер контейнера на
+          результат не влияет — нужен лишь смонтированный <svg> в DOM. */}
+      <div
+        ref={rasterContainerRef}
+        aria-hidden
+        style={{ position: "fixed", left: -100000, top: 0, width: 1100, height: 760, pointerEvents: "none", opacity: 0, zIndex: -1 }}
+      >
+        {rasterLayout && <FloorPlanSvg layout={rasterLayout} />}
+      </div>
     </div>
   );
 }
@@ -1148,7 +1330,7 @@ function TabStrip({
     { key: "pdf_viz",        label: "PDF Визуализация",      icon: <FileText size={13} /> },
     { key: "arch_drawings",  label: "Архитектурные чертежи", icon: <Ruler size={13} /> },
   ];
-  const items = allItems.filter((it) => it.key === "ai_plans" || it.key === "arch_drawings");
+  const items = allItems.filter((it) => it.key === "ai_plans" || it.key === "arch_drawings" || it.key === "viz");
   return (
     <div className="px-6 pt-3 pb-1 border-b border-white/[0.04] flex items-center justify-between gap-3 flex-wrap">
       <div className="inline-flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.05]">
@@ -1356,10 +1538,42 @@ function SiteTab({
 // Tab 3 — Визуализации (3 саб-таба AI)
 // ---------------------------------------------------------------------------
 
-function VizTab({
-  extBag, floorBag, intBag, intGallery, mode, setMode, onGenerate, onGenerateAll,
+function VizSubTab({
+  active, loading, ready, icon, label, badge, onClick,
 }: {
-  extBag: ImageBag;
+  active: boolean;
+  loading: boolean;
+  ready: boolean;
+  icon: React.ReactNode;
+  label: string;
+  badge?: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        "h-9 px-3.5 rounded-lg text-[12.5px] flex items-center gap-2 transition border",
+        active
+          ? "bg-white/[0.07] border-white/15 text-white"
+          : "border-transparent text-white/60 hover:text-white/85 hover:bg-white/[0.03]",
+      ].join(" ")}
+    >
+      {loading ? (
+        <div className="size-3 rounded-full border border-white/30 border-t-white/80 animate-spin" />
+      ) : ready ? (
+        <CheckCircle2 size={13} className="text-emerald-400" />
+      ) : icon}
+      {label}
+      {badge}
+    </button>
+  );
+}
+
+function VizTab({
+  extGallery, floorBag, intBag, intGallery, mode, setMode, onGenerate, onGenerateAll,
+}: {
+  extGallery: ExteriorGalleryBag;
   floorBag: ImageBag;
   intBag: ImageBag;
   intGallery: InteriorGalleryBag;
@@ -1368,70 +1582,50 @@ function VizTab({
   onGenerate: () => void;
   onGenerateAll: () => void;
 }) {
-  // Для галереи — какой тип квартиры показываем
+  // Галереи — какой тип квартиры / какой ракурс показываем
   const [selectedIntIdx, setSelectedIntIdx] = useState(0);
+  const [selectedExtIdx, setSelectedExtIdx] = useState(0);
 
+  const extLoading = extGallery.state === "loading";
+  const extReady   = extGallery.state === "ready";
   const intIsLoading = intGallery.state === "loading" || intBag.state === "loading";
   const intIsReady   = intGallery.state === "ready" || intBag.state === "ready";
+  const floorReady = floorBag.state === "ready";
+  const floorLoading = floorBag.state === "loading";
 
-  const nonIntModes: Array<{ key: VizMode; label: string; icon: React.ReactNode; bag: ImageBag; downloadName: string }> = [
-    { key: "exterior",            label: "Экстерьер", icon: <Building2 size={13} />, bag: extBag,   downloadName: "plana-exterior" },
-    { key: "floorplan_furniture", label: "С мебелью", icon: <Sofa size={13} />,      bag: floorBag, downloadName: "plana-floorplan" },
-  ];
-
-  const anyReady = extBag.state === "ready" || floorBag.state === "ready" || intIsReady;
-  const allIdle  = extBag.state === "idle"  && floorBag.state === "idle"  && intGallery.state === "idle" && intBag.state === "idle";
-
-  const activeSingleBag = nonIntModes.find(m => m.key === mode)?.bag ?? null;
+  const anyReady = extReady || floorReady || intIsReady;
+  const allIdle  = extGallery.state === "idle" && floorBag.state === "idle"
+    && intGallery.state === "idle" && intBag.state === "idle";
 
   return (
     <>
       {/* ── Sub-tab strip ── */}
       <div className="px-5 pt-4 pb-3 border-b border-white/[0.04] flex items-center gap-2 flex-shrink-0">
-        {nonIntModes.map((m) => (
-          <button
-            key={m.key}
-            onClick={() => setMode(m.key)}
-            className={[
-              "h-9 px-3.5 rounded-lg text-[12.5px] flex items-center gap-2 transition border",
-              mode === m.key
-                ? "bg-white/[0.07] border-white/15 text-white"
-                : "border-transparent text-white/60 hover:text-white/85 hover:bg-white/[0.03]",
-            ].join(" ")}
-          >
-            {m.bag.state === "loading" ? (
-              <div className="size-3 rounded-full border border-white/30 border-t-white/80 animate-spin" />
-            ) : m.bag.state === "ready" ? (
-              <CheckCircle2 size={13} className="text-emerald-400" />
-            ) : m.icon}
-            {m.label}
-          </button>
-        ))}
-
-        {/* Кнопка Интерьер */}
-        <button
-          onClick={() => setMode("interior")}
-          className={[
-            "h-9 px-3.5 rounded-lg text-[12.5px] flex items-center gap-2 transition border",
-            mode === "interior"
-              ? "bg-white/[0.07] border-white/15 text-white"
-              : "border-transparent text-white/60 hover:text-white/85 hover:bg-white/[0.03]",
-          ].join(" ")}
-        >
-          {intIsLoading ? (
-            <div className="size-3 rounded-full border border-white/30 border-t-white/80 animate-spin" />
-          ) : intIsReady ? (
-            <CheckCircle2 size={13} className="text-emerald-400" />
-          ) : (
-            <Eye size={13} />
-          )}
-          Интерьер
-          {intGallery.state === "ready" && intGallery.items.length > 0 && (
+        <VizSubTab
+          active={mode === "exterior"} loading={extLoading} ready={extReady}
+          icon={<Building2 size={13} />} label="Экстерьер"
+          badge={extReady && extGallery.items.length > 0 ? (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 font-medium">
-              {intGallery.items.length} типа
+              {extGallery.items.length} вида
             </span>
-          )}
-        </button>
+          ) : null}
+          onClick={() => setMode("exterior")}
+        />
+        <VizSubTab
+          active={mode === "floorplan_furniture"} loading={floorLoading} ready={floorReady}
+          icon={<Sofa size={13} />} label="С мебелью"
+          onClick={() => setMode("floorplan_furniture")}
+        />
+        <VizSubTab
+          active={mode === "interior"} loading={intIsLoading} ready={intIsReady}
+          icon={<Eye size={13} />} label="Интерьер"
+          badge={intGallery.state === "ready" && intGallery.items.length > 0 ? (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 font-medium">
+              {intGallery.items.length} фото
+            </span>
+          ) : null}
+          onClick={() => setMode("interior")}
+        />
 
         <div className="h-4 w-px bg-white/[0.07] mx-1" />
 
@@ -1441,7 +1635,7 @@ function VizTab({
             className="h-9 px-3.5 rounded-lg text-[12.5px] flex items-center gap-2 border border-dashed border-white/20 text-white/55 hover:text-white/85 hover:border-white/35 hover:bg-white/[0.03] transition"
           >
             <Sparkles size={13} className="text-violet-300" />
-            Генерировать все 3
+            Генерировать всё
           </button>
         )}
       </div>
@@ -1449,7 +1643,6 @@ function VizTab({
       {/* ── Контент ── */}
       <div className="flex-1 relative min-h-0 overflow-hidden flex flex-col">
         {mode === "interior" ? (
-          /* ─── ГАЛЕРЕЯ ИНТЕРЬЕРОВ ─── */
           <InteriorGalleryPanel
             gallery={intGallery}
             fallbackBag={intBag}
@@ -1457,14 +1650,21 @@ function VizTab({
             onSelect={setSelectedIntIdx}
             onGenerate={onGenerate}
           />
-        ) : (
-          /* ─── Одиночное изображение (экстерьер / с мебелью) ─── */
-          <ImageCanvas
-            bag={activeSingleBag!}
+        ) : mode === "exterior" ? (
+          <ExteriorGalleryPanel
+            gallery={extGallery}
+            selectedIdx={selectedExtIdx}
+            onSelect={setSelectedExtIdx}
             onGenerate={onGenerate}
-            emptyTitle={mode === "exterior" ? "Внешний вид здания" : "План с мебелью"}
-            emptyText=""
-            loadingText={mode === "exterior" ? "AI рендерит экстерьер · 60–90 сек" : "AI расставляет мебель · 60–90 сек"}
+          />
+        ) : (
+          <ImageCanvas
+            bag={floorBag}
+            onGenerate={onGenerate}
+            emptyTitle="План с мебелью"
+            emptyText="Pinterest-стиль: top-down план типового этажа с расставленной мебелью."
+            loadingText="AI расставляет мебель · 60–90 сек"
+            showGenerate
           />
         )}
       </div>
@@ -1473,36 +1673,18 @@ function VizTab({
       {anyReady && (
         <div className="border-t border-white/[0.05] px-5 py-3 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
           <div className="flex items-center gap-2 text-[11px] text-white/40">
-            {nonIntModes.map(m => m.bag.state === "ready" ? (
-              <span key={m.key} className="flex items-center gap-1 text-emerald-400/70">
-                <CheckCircle2 size={10} /> {m.label}
-              </span>
-            ) : m.bag.state === "loading" ? (
-              <span key={m.key} className="flex items-center gap-1 text-white/30">
-                <div className="size-2 rounded-full border border-white/20 border-t-white/50 animate-spin" />
-                {m.label}
-              </span>
-            ) : null)}
-            {intIsReady && (
-              <span className="flex items-center gap-1 text-emerald-400/70">
-                <CheckCircle2 size={10} /> Интерьер
-              </span>
-            )}
-            {intIsLoading && (
-              <span className="flex items-center gap-1 text-white/30">
-                <div className="size-2 rounded-full border border-white/20 border-t-white/50 animate-spin" />
-                Интерьер
-              </span>
-            )}
+            <VizStatusChip ready={extReady} loading={extLoading} label="Экстерьер" />
+            <VizStatusChip ready={floorReady} loading={floorLoading} label="С мебелью" />
+            <VizStatusChip ready={intIsReady} loading={intIsLoading} label="Интерьер" />
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <button onClick={onGenerate} className="h-9 px-3.5 rounded-full surface text-[12px] flex items-center gap-1.5 hover:bg-white/[0.08] transition">
               <RefreshCw size={12} /> Перегенерировать
             </button>
-            {mode !== "interior" && activeSingleBag?.state === "ready" && activeSingleBag.imageUrl && (
+            {mode === "floorplan_furniture" && floorBag.state === "ready" && floorBag.imageUrl && (
               <a
-                href={activeSingleBag.imageUrl}
-                download={`${nonIntModes.find(m => m.key === mode)!.downloadName}.png`}
+                href={floorBag.imageUrl}
+                download="plana-floorplan.png"
                 className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5"
               >
                 <Download size={12} /> Скачать PNG
@@ -1511,6 +1693,179 @@ function VizTab({
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+function VizStatusChip({ ready, loading, label }: { ready: boolean; loading: boolean; label: string }) {
+  if (ready) {
+    return (
+      <span className="flex items-center gap-1 text-emerald-400/70">
+        <CheckCircle2 size={10} /> {label}
+      </span>
+    );
+  }
+  if (loading) {
+    return (
+      <span className="flex items-center gap-1 text-white/30">
+        <div className="size-2 rounded-full border border-white/20 border-t-white/50 animate-spin" />
+        {label}
+      </span>
+    );
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// ExteriorGalleryPanel — несколько ракурсов экстерьера
+// ---------------------------------------------------------------------------
+
+function ExteriorGalleryPanel({
+  gallery, selectedIdx, onSelect, onGenerate,
+}: {
+  gallery: ExteriorGalleryBag;
+  selectedIdx: number;
+  onSelect: (i: number) => void;
+  onGenerate: () => void;
+}) {
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+
+  if (gallery.state === "loading") {
+    return (
+      <div className="flex-1 grid place-items-center">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="size-12 rounded-full border-2 border-white/15 border-t-violet-400 animate-spin" />
+          <div>
+            <div className="text-[14px] text-white/80 font-medium mb-1">Рендерим ракурсы экстерьера…</div>
+            <div className="text-[12px] text-white/45">Hero · вход · аэро · двор — параллельно · 60–120 сек</div>
+          </div>
+          <div className="flex gap-2 mt-2">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-8 w-20 rounded-lg bg-white/[0.05] animate-pulse" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gallery.state === "error") {
+    return <ErrorState message={gallery.errorMessage} onRetry={onGenerate} />;
+  }
+
+  if (gallery.state === "idle") {
+    return (
+      <div className="flex-1 grid place-items-center">
+        <div className="text-center max-w-md px-8">
+          <div className="size-14 rounded-full bg-gradient-to-br from-violet-500/20 to-cyan-400/20 border border-white/10 grid place-items-center mx-auto mb-5">
+            <Building2 size={22} className="text-white/85" />
+          </div>
+          <div className="text-[20px] font-semibold tracking-display mb-2.5">Внешний вид здания</div>
+          <div className="text-[13px] text-white/50 leading-relaxed mb-5">
+            Сгенерирует несколько ракурсов одного здания: общий вид 3/4, вход с уровня
+            улицы, аэросъёмка и дворовый фасад.
+          </div>
+          <button onClick={onGenerate} className="btn-apple h-10 px-5 text-[13px] inline-flex items-center gap-2">
+            <Sparkles size={14} /> Сгенерировать ракурсы
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ready
+  const items = gallery.items;
+  const safeIdx = Math.min(selectedIdx, items.length - 1);
+  const active = items[safeIdx];
+
+  return (
+    <>
+      {/* Lightbox */}
+      {lightboxIdx !== null && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-6"
+          onClick={() => setLightboxIdx(null)}
+        >
+          <div className="relative max-w-5xl w-full" onClick={e => e.stopPropagation()}>
+            <button
+              className="absolute -top-10 right-0 text-white/60 hover:text-white text-[13px] flex items-center gap-1.5"
+              onClick={() => setLightboxIdx(null)}
+            >
+              <X size={16} /> Закрыть
+            </button>
+            <img
+              src={items[lightboxIdx].imageUrl}
+              alt={items[lightboxIdx].label}
+              className="w-full rounded-2xl shadow-2xl"
+            />
+            <div className="flex items-center justify-between mt-4">
+              <div>
+                <div className="text-[15px] font-semibold text-white">{items[lightboxIdx].label}</div>
+                <div className="text-[11px] text-white/45 mt-0.5">{items[lightboxIdx].modelUsed}</div>
+              </div>
+              <a
+                href={items[lightboxIdx].imageUrl}
+                download={`plana-exterior-${items[lightboxIdx].view}.png`}
+                className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5"
+              >
+                <Download size={12} /> PNG
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View selector tabs */}
+      <div className="px-5 pt-3 pb-2 flex items-center gap-2 flex-shrink-0 border-b border-white/[0.04]">
+        {items.map((item, i) => (
+          <button
+            key={item.view}
+            onClick={() => onSelect(i)}
+            className={[
+              "h-9 px-3.5 rounded-lg text-[12px] flex items-center gap-2 transition border",
+              i === safeIdx
+                ? "bg-white/[0.08] border-white/15 text-white font-medium"
+                : "border-transparent text-white/55 hover:text-white/85 hover:bg-white/[0.03]",
+            ].join(" ")}
+          >
+            {item.label}
+          </button>
+        ))}
+        {gallery.elapsedMs && (
+          <div className="ml-auto flex items-center gap-1 text-[11px] text-white/30">
+            <CheckCircle2 size={11} className="text-emerald-400/50" />
+            {(gallery.elapsedMs / 1000).toFixed(1)} сек
+          </div>
+        )}
+      </div>
+
+      {/* Main image */}
+      <div
+        className="flex-1 relative cursor-zoom-in min-h-0 overflow-hidden"
+        onClick={() => setLightboxIdx(safeIdx)}
+      >
+        <img src={active.imageUrl} alt={active.label} className="w-full h-full object-contain" />
+        <div className="absolute inset-0 flex items-end justify-end p-4 pointer-events-none">
+          <div className="bg-black/50 backdrop-blur-sm rounded-full px-3 py-1.5 text-[11px] text-white/70 flex items-center gap-1.5">
+            <Eye size={11} /> Открыть полностью
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="px-5 py-2.5 border-t border-white/[0.04] flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] font-medium text-white/80">{active.label}</span>
+          <span className="text-[10px] text-white/30">{active.modelUsed}</span>
+        </div>
+        <a
+          href={active.imageUrl}
+          download={`plana-exterior-${active.view}.png`}
+          className="h-8 px-3 rounded-full surface text-[11px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/60 hover:text-white"
+        >
+          <Download size={11} /> PNG
+        </a>
+      </div>
     </>
   );
 }
@@ -1528,7 +1883,11 @@ function InteriorGalleryPanel({
   onSelect: (i: number) => void;
   onGenerate: () => void;
 }) {
-  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  // Выбранный ракурс внутри активного типа квартиры.
+  const [selectedAngleIdx, setSelectedAngleIdx] = useState(0);
+  // Смена типа квартиры сбрасывает ракурс на первый (см. onClick таба типа).
+  const selectGroup = (i: number) => { onSelect(i); setSelectedAngleIdx(0); };
 
   // ── loading
   if (gallery.state === "loading") {
@@ -1537,8 +1896,8 @@ function InteriorGalleryPanel({
         <div className="flex flex-col items-center gap-4 text-center">
           <div className="size-12 rounded-full border-2 border-white/15 border-t-violet-400 animate-spin" />
           <div>
-            <div className="text-[14px] text-white/80 font-medium mb-1">Генерируем интерьеры по типам…</div>
-            <div className="text-[12px] text-white/45">Каждый тип квартиры получит свой рендер · 60–120 сек</div>
+            <div className="text-[14px] text-white/80 font-medium mb-1">Генерируем ракурсы по комнатам…</div>
+            <div className="text-[12px] text-white/45">Каждый тип квартиры — несколько кадров · 60–180 сек</div>
           </div>
           {/* skeleton tabs */}
           <div className="flex gap-2 mt-2">
@@ -1565,10 +1924,13 @@ function InteriorGalleryPanel({
             <Eye size={22} className="text-white/85" />
           </div>
           <div className="text-[20px] font-semibold tracking-display mb-2.5">Интерьеры по типам</div>
-          <div className="text-[13px] text-white/50 leading-relaxed">
-            Сгенерирует отдельный фотореалистичный рендер для каждого типа квартиры в плане —
-            студия, 1К, 2К, 3К — с реальными размерами и составом комнат.
+          <div className="text-[13px] text-white/50 leading-relaxed mb-5">
+            Для каждого типа квартиры (студия, 1К, 2К, 3К) сгенерирует несколько кадров
+            по комнатам — гостиная, кухня, спальня, санузел.
           </div>
+          <button onClick={onGenerate} className="btn-apple h-10 px-5 text-[13px] inline-flex items-center gap-2">
+            <Sparkles size={14} /> Сгенерировать интерьеры
+          </button>
         </div>
       </div>
     );
@@ -1583,41 +1945,55 @@ function InteriorGalleryPanel({
     );
   }
 
-  // ── ready: галерея
-  const items = gallery.items;
-  const safeIdx = Math.min(selectedIdx, items.length - 1);
-  const active = items[safeIdx];
+  // ── ready: галерея, сгруппированная по типу квартиры (тип → ракурсы комнат)
+  const groups: {
+    apt_type: string; label: string; area: number; count: number; items: InteriorGalleryItem[];
+  }[] = [];
+  const groupIndex: Record<string, number> = {};
+  for (const it of gallery.items) {
+    if (groupIndex[it.apt_type] === undefined) {
+      groupIndex[it.apt_type] = groups.length;
+      groups.push({ apt_type: it.apt_type, label: it.label, area: it.area, count: it.count, items: [] });
+    }
+    groups[groupIndex[it.apt_type]].items.push(it);
+  }
+  const safeGroupIdx = Math.min(selectedIdx, groups.length - 1);
+  const group = groups[safeGroupIdx];
+  const angles = group.items;
+  const safeAngleIdx = Math.min(selectedAngleIdx, angles.length - 1);
+  const active = angles[safeAngleIdx];
+  const angleLabel = (it: InteriorGalleryItem) => it.view_label || it.label;
 
   return (
     <>
-      {/* Lightbox */}
-      {lightboxIdx !== null && (
+      {/* Lightbox — показывает активный ракурс */}
+      {lightboxOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-6"
-          onClick={() => setLightboxIdx(null)}
+          onClick={() => setLightboxOpen(false)}
         >
           <div className="relative max-w-5xl w-full" onClick={e => e.stopPropagation()}>
             <button
               className="absolute -top-10 right-0 text-white/60 hover:text-white text-[13px] flex items-center gap-1.5"
-              onClick={() => setLightboxIdx(null)}
+              onClick={() => setLightboxOpen(false)}
             >
               <X size={16} /> Закрыть
             </button>
             <img
-              src={`data:image/png;base64,${items[lightboxIdx].image_b64}`}
-              alt={items[lightboxIdx].label}
+              src={`data:image/png;base64,${active.image_b64}`}
+              alt={angleLabel(active)}
               className="w-full rounded-2xl shadow-2xl"
             />
             <div className="flex items-center justify-between mt-4">
               <div>
                 <div className="text-[15px] font-semibold text-white">
-                  {items[lightboxIdx].label} · {items[lightboxIdx].area.toFixed(0)} м² · {items[lightboxIdx].count} кв.
+                  {group.label} · {angleLabel(active)} · {group.area.toFixed(0)} м² · {group.count} кв.
                 </div>
-                <div className="text-[11px] text-white/45 mt-0.5">{items[lightboxIdx].model_used}</div>
+                <div className="text-[11px] text-white/45 mt-0.5">{active.model_used}</div>
               </div>
               <a
-                href={`data:image/png;base64,${items[lightboxIdx].image_b64}`}
-                download={`plana-interior-${items[lightboxIdx].apt_type}.png`}
+                href={`data:image/png;base64,${active.image_b64}`}
+                download={`plana-interior-${active.apt_type}-${active.room_focus || "view"}.png`}
                 className="btn-apple h-9 px-4 text-[12px] flex items-center gap-1.5"
               >
                 <Download size={12} /> PNG
@@ -1629,20 +2005,20 @@ function InteriorGalleryPanel({
 
       {/* Type selector tabs */}
       <div className="px-5 pt-3 pb-2 flex items-center gap-2 flex-shrink-0 border-b border-white/[0.04]">
-        {items.map((item, i) => (
+        {groups.map((g, i) => (
           <button
-            key={item.apt_type}
-            onClick={() => onSelect(i)}
+            key={g.apt_type}
+            onClick={() => selectGroup(i)}
             className={[
               "h-9 px-3.5 rounded-lg text-[12px] flex items-center gap-2 transition border",
-              i === safeIdx
+              i === safeGroupIdx
                 ? "bg-white/[0.08] border-white/15 text-white font-medium"
                 : "border-transparent text-white/55 hover:text-white/85 hover:bg-white/[0.03]",
             ].join(" ")}
           >
-            <span>{item.label}</span>
-            <span className="text-[10px] text-white/35">{item.area.toFixed(0)} м²</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/[0.06] text-white/40">×{item.count}</span>
+            <span>{g.label}</span>
+            <span className="text-[10px] text-white/35">{g.area.toFixed(0)} м²</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/[0.06] text-white/40">{g.items.length} фото</span>
           </button>
         ))}
         {gallery.elapsedMs && (
@@ -1653,14 +2029,42 @@ function InteriorGalleryPanel({
         )}
       </div>
 
+      {/* Room-angle thumbnail strip для активного типа */}
+      {angles.length > 1 && (
+        <div className="px-5 pt-2.5 pb-2 flex items-center gap-2 flex-shrink-0 overflow-x-auto">
+          {angles.map((it, i) => (
+            <button
+              key={it.room_focus || i}
+              onClick={() => setSelectedAngleIdx(i)}
+              className={[
+                "group relative h-14 w-20 rounded-lg overflow-hidden border flex-shrink-0 transition",
+                i === safeAngleIdx
+                  ? "border-violet-400/70 ring-1 ring-violet-400/40"
+                  : "border-white/10 hover:border-white/30",
+              ].join(" ")}
+              title={angleLabel(it)}
+            >
+              <img
+                src={`data:image/png;base64,${it.image_b64}`}
+                alt={angleLabel(it)}
+                className="w-full h-full object-cover"
+              />
+              <span className="absolute inset-x-0 bottom-0 bg-black/55 text-[9px] text-white/85 text-center py-0.5 truncate px-1">
+                {angleLabel(it)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Main image */}
       <div
         className="flex-1 relative cursor-zoom-in min-h-0 overflow-hidden"
-        onClick={() => setLightboxIdx(safeIdx)}
+        onClick={() => setLightboxOpen(true)}
       >
         <img
           src={`data:image/png;base64,${active.image_b64}`}
-          alt={active.label}
+          alt={angleLabel(active)}
           className="w-full h-full object-contain"
         />
         {/* Zoom hint */}
@@ -1674,7 +2078,7 @@ function InteriorGalleryPanel({
       {/* Image footer */}
       <div className="px-5 py-2.5 border-t border-white/[0.04] flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-[12px] font-medium text-white/80">{active.label} · {active.area.toFixed(0)} м²</span>
+          <span className="text-[12px] font-medium text-white/80">{group.label} · {angleLabel(active)} · {group.area.toFixed(0)} м²</span>
           {active.enhancer_used && active.enhancer_used !== "fallback" && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 border border-violet-400/25 text-violet-300">
               ✨ {active.enhancer_used}
@@ -1684,7 +2088,7 @@ function InteriorGalleryPanel({
         </div>
         <a
           href={`data:image/png;base64,${active.image_b64}`}
-          download={`plana-interior-${active.apt_type}.png`}
+          download={`plana-interior-${active.apt_type}-${active.room_focus || "view"}.png`}
           className="h-8 px-3 rounded-full surface text-[11px] flex items-center gap-1.5 hover:bg-white/[0.08] transition text-white/60 hover:text-white"
         >
           <Download size={11} /> PNG
@@ -1699,13 +2103,14 @@ function InteriorGalleryPanel({
 // ---------------------------------------------------------------------------
 
 function ImageCanvas({
-  bag, onGenerate, emptyTitle, emptyText, loadingText,
+  bag, onGenerate, emptyTitle, emptyText, loadingText, showGenerate = false,
 }: {
   bag: ImageBag;
   onGenerate: () => void;
   emptyTitle: string;
   emptyText: string;
   loadingText: string;
+  showGenerate?: boolean;
 }) {
   if (bag.state === "ready" && bag.imageUrl) {
     return (
@@ -1730,6 +2135,11 @@ function ImageCanvas({
         </div>
         <div className="text-[20px] font-semibold tracking-display mb-2.5">{emptyTitle}</div>
         <div className="text-[13px] text-white/55 leading-relaxed">{emptyText}</div>
+        {showGenerate && (
+          <button onClick={onGenerate} className="btn-apple h-10 px-5 text-[13px] inline-flex items-center gap-2 mt-5">
+            <Sparkles size={14} /> Сгенерировать
+          </button>
+        )}
       </div>
     </div>
   );
@@ -2519,7 +2929,7 @@ function AiPlansTab({
   onChangeFloor: (f: number) => void;
   floorBags: Record<number, AiPlansBag>;
   onGenerate: () => void;
-  onGoToViz: () => void;
+  onGoToViz: (planImageUrl?: string, planPrompt?: string) => void;
   onExportDxf: () => Promise<void>;
   onExportIfc: () => Promise<void>;
   cadExportLoading: CadExportKind | null;
@@ -3115,6 +3525,13 @@ function AiPlansTab({
                     <div className="text-[10px] text-white/35 mt-0.5">{v.modelUsed}</div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onGoToViz(v.imageUrl, v.promptUsed); }}
+                      className="btn-apple h-8 px-3 text-[11px] flex items-center gap-1.5"
+                      title="В Визуализации с этим чертежом — «С мебелью» построится из него"
+                    >
+                      <ImageIcon size={12} /> Визуализация
+                    </button>
                     <a
                       href={v.imageUrl}
                       download={`plana-ai-plan.png`}

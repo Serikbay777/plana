@@ -20,7 +20,9 @@ from .agent_enhancer import (
 )
 from .enhancer import enhance_prompt, has_llm_key
 from .extra_prompts import (
+    DEFAULT_EXTERIOR_VIEWS, EXTERIOR_VIEWS,
     build_exterior_prompt, build_floorplan_furniture_prompt,
+    build_floorplan_furniture_edit_prompt,
     build_interior_prompt, build_site_placement_prompt,
 )
 from .kz_norms import (
@@ -35,7 +37,9 @@ __all__ = [
     # промпт-билдеры
     "build_marketing_prompt",
     "build_site_placement_prompt", "build_exterior_prompt",
-    "build_floorplan_furniture_prompt", "build_interior_prompt",
+    "build_floorplan_furniture_prompt", "build_floorplan_furniture_edit_prompt",
+    "build_interior_prompt",
+    "EXTERIOR_VIEWS", "DEFAULT_EXTERIOR_VIEWS",
     "MarketingInputs",
     # генерация
     "generate_image", "GenerationOptions",

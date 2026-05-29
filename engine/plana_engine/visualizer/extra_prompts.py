@@ -36,7 +36,7 @@ def build_site_placement_prompt(inputs: MarketingInputs) -> str:
     n_floors = inputs.floors
     inner_w = inputs.site_width_m - 2 * inputs.setback_side_m
     inner_h = inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m
-    parking_total = int(_approx_unit_count(inputs) * inputs.floors * inputs.parking_spaces_per_apt)
+    parking_total = int(_approx_unit_count(inputs, inner_w, inner_h) * inputs.floors * inputs.parking_spaces_per_apt)
 
     return f"""Place a {purpose_descriptor} ({n_floors} storeys, footprint approximately {inner_w:.0f}×{inner_h:.0f} meters) onto this aerial site photo.
 
@@ -73,55 +73,119 @@ OUTPUT: the same aerial photo, but with the new {purpose_descriptor} fitted onto
 
 
 # ---------------------------------------------------------------------------
-# 2. EXTERIOR (text-to-image)
+# 2. EXTERIOR (text-to-image) — несколько ракурсов
 # ---------------------------------------------------------------------------
 
+# Единая «личность» фасада — чтобы все 4 ракурса выглядели как один проект.
+# Описывает стиль с референсов: айвори-штукатурка + кирпичный акцент + камень
+# по цоколю + французские балкончики, плоская кровля.
+_FACADE_IDENTITY = (
+    "Contemporary classic-modern residential architecture: ivory and warm beige plaster walls with crisp white "
+    "pilaster/lesene framing, large windows with dark grey frames and tall glazing, a vertical accent bay clad in "
+    "warm brown clinker brick, dark anthracite-grey accent volumes near the roofline and at the corner, rusticated "
+    "light beige stone cladding on the ground-floor base, slim Juliet balconies with thin black metal railings, "
+    "flat roof with a clean parapet. Newly built, premium developer quality, fresh clean materials."
+)
 
-def build_exterior_prompt(inputs: MarketingInputs) -> str:
-    """Внешний вид здания, 3/4 перспектива, в окружении."""
-    purpose_lookup = {
-        "residential": (
-            "Modern multi-storey residential apartment building, balconies and large windows, "
-            "warm beige/white facade with timber accents, contemporary Russian/Kazakh urban architecture"
+# Пресеты ракурсов экстерьера, заточенные под 4 референс-кадра.
+# `camera` — постановка камеры/ракурс, `scene` — наполнение кадра, `aspect` —
+# пропорции. `label` — русская подпись для UI/ключей ассетов.
+EXTERIOR_VIEWS: dict[str, dict[str, str]] = {
+    # Фото 1 — угловой 3/4 одного дома с уровня улицы.
+    "hero": {
+        "label": "Общий вид",
+        "aspect": "3:2",
+        "camera": (
+            "Photorealistic architectural render. Three-quarter corner perspective at street level, camera "
+            "slightly below eye level looking up at the building corner, ONE full building filling the frame, "
+            "35mm lens, no fish-eye distortion"
         ),
-        "commercial": (
-            "Modern glass-facade commercial office building, full-height curtain wall, sleek minimalist "
-            "design, accent stone or aluminum cladding, professional business district aesthetic"
+        "scene": (
+            "A single residential building seen from its street corner on a clear sunny day, deep blue sky with "
+            "a few soft clouds. Both main facades visible at once. Foreground: clean light paving-stone sidewalk, "
+            "low neatly trimmed boxwood hedges and a couple of young green trees. Crisp directional sunlight, sharp "
+            "accurate shadows. No people, no cars in the foreground."
         ),
-        "mixed_use": (
-            "Mixed-use building: 2-3 storey retail/F&B podium with large storefront windows on the ground "
-            "level, residential tower above with balconies, layered architectural composition"
+    },
+    # Фото 2 — аэросъёмка всего ЖК в лесу с горами на горизонте.
+    "aerial": {
+        "label": "С высоты",
+        "aspect": "16:9",
+        "camera": (
+            "Photorealistic aerial drone render. High bird's-eye view at about 60 degrees downward, the ENTIRE "
+            "residential complex of several identical buildings visible from above"
         ),
-        "hotel": (
-            "Boutique hotel exterior, signature canopy at the entrance, curved or distinctive architectural "
-            "element on top, warm lighting visible through windows even during day, landscaped forecourt"
+        "scene": (
+            "An aerial shot of a residential micro-district: six to eight identical 4-storey buildings arranged in "
+            "a regular grid, set in a clearing surrounded by dense green coniferous forest, with snow-capped "
+            "Tien-Shan mountains on the horizon under a clear sky. Internal courtyards with children's playgrounds, "
+            "a small football pitch and green lawns; surface parking lots with cars along the perimeter; paved "
+            "internal roads and pedestrian paths with crosswalks. Soft natural midday light."
         ),
-    }
-    subject = purpose_lookup.get(inputs.purpose, purpose_lookup["residential"])
+    },
+    # Фото 3 — макро благоустройства: дорожка, клумба, боллард, размытый дом.
+    "landscape": {
+        "label": "Благоустройство",
+        "aspect": "3:2",
+        "camera": (
+            "Photorealistic landscaping close-up render. Low eye-level shot near a garden path with shallow depth "
+            "of field (85mm, f/2.8), the residential building softly blurred in the background (creamy bokeh)"
+        ),
+        "scene": (
+            "A golden-hour morning close-up of the complex landscaping: a clean paving-stone walkway in the "
+            "foreground, neatly trimmed boxwood hedges, a flower bed with purple, yellow and white blossoms and "
+            "ornamental grasses, a sleek modern black bollard light. A children's playground and one residential "
+            "building are softly out of focus in the warm hazy background. Intimate premium lifestyle-magazine mood. "
+            "No people in frame."
+        ),
+    },
+    # Фото 4 — двор с детской площадкой, людьми и домом на фоне.
+    "yard": {
+        "label": "Двор",
+        "aspect": "3:2",
+        "camera": (
+            "Photorealistic architectural render. Eye-level view from inside the landscaped courtyard, camera at "
+            "human height looking across the yard toward one building, 28mm wide angle, no fish-eye distortion"
+        ),
+        "scene": (
+            "The courtyard of the residential complex on a warm sunny day: a colorful children's playground with "
+            "slides and swings on soft rubber safety surfacing in the foreground, wooden benches, classic black "
+            "street lamps, flower beds with red and yellow blooms, young trees and trimmed hedges, paved walkways. "
+            "A few residents for life and scale — a couple walking, a parent with a small child. One 4-storey "
+            "building rises behind, fully in focus."
+        ),
+    },
+}
+
+# Порядок ракурсов по умолчанию для галереи (как присланы референсы).
+DEFAULT_EXTERIOR_VIEWS: list[str] = ["hero", "aerial", "landscape", "yard"]
+
+
+def build_exterior_prompt(inputs: MarketingInputs, view: str = "hero") -> str:
+    """Внешний вид ЖК. `view` выбирает ракурс из EXTERIOR_VIEWS.
+
+    Промпты заточены под 4 присланных референса (угловой 3/4, аэро, макро
+    благоустройства, двор). Единый стиль фасада — через _FACADE_IDENTITY.
+    """
+    preset = EXTERIOR_VIEWS.get(view, EXTERIOR_VIEWS["hero"])
     n_floors = inputs.floors
     height_m = inputs.floors * 3
+    aspect = preset.get("aspect", "16:10")
 
-    return f"""Photorealistic architectural rendering, 3/4 perspective view (front + one side visible).
+    return f"""{preset['camera']}.
 
-SUBJECT: {subject}. {n_floors} storeys, approximately {height_m}m tall. Footprint matching {inputs.site_width_m:.0f}×{inputs.site_depth_m:.0f}m plot.
+SUBJECT: a {n_floors}-storey residential apartment building (~{height_m}m tall), footprint about {inputs.site_width_m:.0f}×{inputs.site_depth_m:.0f}m.
+{_FACADE_IDENTITY}
 
-ENVIRONMENT:
-• Daytime, natural daylight, partly cloudy sky with soft sunlight from upper-left
-• Foreground: pedestrian pathway with people walking (couples, family, professionals)
-• Mid-ground: landscaped grounds with mature trees, flowering shrubs, manicured lawn, a few cars parked along curb
-• Background: slight blur, urban context (other modern buildings, skyline) — implies prosperous district
-• Materials visible: glass railings on balconies, warm timber/stone accents, polished entrance lobby through glass
+SCENE: {preset['scene']}
 
-QUALITY MARKERS:
-• Photorealistic but slightly idealized — like a high-end developer brochure cover or magazine spread
-• Crisp shadows, accurate perspective, no fish-eye distortion
-• Slight haze/atmospheric effect on distant elements for depth
-• People rendered tastefully, not too prominent
-• Building looks newly built — clean, no weathering, fresh landscaping
+CONSISTENCY: keep the SAME building identity across every view — identical facade materials, colours, window pattern, proportions and floor count.
 
-NEGATIVE: no exaggerated lens flares, no cartoonish style, no abandoned/grungy aesthetic, no nighttime, no rain.
+QUALITY: photorealistic marketing-grade architectural visualization, developer-brochure look, crisp shadows, accurate perspective, no fish-eye distortion, soft natural daylight.
 
-OUTPUT: 16:10 aspect ratio, ultra-high resolution, marketing-grade architectural rendering for a developer's website hero image."""
+NEGATIVE: no cartoonish or illustrated style, no nighttime, no rain, no exaggerated lens flares, no distorted geometry, no text or watermarks.
+
+OUTPUT: {aspect} aspect ratio, ultra-high resolution."""
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +195,9 @@ OUTPUT: 16:10 aspect ratio, ultra-high resolution, marketing-grade architectural
 
 def build_floorplan_furniture_prompt(inputs: MarketingInputs) -> str:
     """Pinterest-grade top-down с мебелью — для брошюр, не CAD."""
-    n_units = _approx_unit_count(inputs)
     inner_w = inputs.site_width_m - 2 * inputs.setback_side_m
     inner_h = inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m
+    n_units = _approx_unit_count(inputs, inner_w, inner_h)
 
     mix_parts = []
     if inputs.studio_pct > 0.01:
@@ -177,6 +241,51 @@ ANNOTATIONS in Cyrillic:
 QUALITY: 4K, ultra-detailed, Pinterest-grade, no Latin labels (Cyrillic only), no 3D perspective, strict 2D top-down view. Soft natural daylight from windows on facade walls. Subtle long shadows from interior walls.
 
 OUTPUT: a single image. Like the cover of a developer's apartment-mix presentation booklet."""
+
+
+def build_floorplan_furniture_edit_prompt(
+    inputs: MarketingInputs, source_prompt: str = "",
+) -> str:
+    """Промпт для image-edit: «обставь ЭТОТ план мебелью, не трогая геометрию».
+
+    На вход image-edit идёт реальный план-чертёж (PNG), поэтому число квартир/
+    комнат/стен берётся из картинки, а не оценивается заново — это и даёт
+    согласованность с чертежом. `source_prompt` — исходный промпт чертежа,
+    добавляется как контекст «то же здание».
+    """
+    mix_parts = []
+    if inputs.studio_pct > 0.01:
+        mix_parts.append(f"{int(inputs.studio_pct*100)}% studios")
+    if inputs.k1_pct > 0.01:
+        mix_parts.append(f"{int(inputs.k1_pct*100)}% 1-bedroom")
+    if inputs.k2_pct > 0.01:
+        mix_parts.append(f"{int(inputs.k2_pct*100)}% 2-bedroom")
+    if inputs.k3_pct > 0.01:
+        mix_parts.append(f"{int(inputs.k3_pct*100)}% 3-bedroom")
+    mix = ", ".join(mix_parts) or "balanced typology"
+
+    context = ""
+    if source_prompt.strip():
+        # Берём начало исходного брифа чертежа как контекст «то же здание».
+        brief = source_prompt.strip().replace("\n", " ")[:600]
+        context = f"\n\nORIGINAL PLAN BRIEF (same building — keep it consistent): {brief}"
+
+    return f"""You are given a technical architectural floor plan (top-down black line drawing on white paper, with room labels and apartment numbers). TRANSFORM it into a polished top-down MARKETING floor plan in magazine / Pinterest brochure style (photorealistic-illustrated).{context}
+
+STRICTLY PRESERVE the geometry of the input drawing — this is the most important rule:
+• Keep EVERY wall, partition and room boundary exactly where it is. Do NOT move, add, remove or redraw any wall.
+• Keep the SAME number of apartments and rooms, the same room shapes, and the same apartment numbers/labels in the same positions.
+• Keep the same overall proportions, footprint and orientation as the input image. Same aspect ratio.
+
+ADD on top of the preserved layout (apartment mix for reference: {mix}):
+• Realistic top-down furniture in every room — beds + wardrobes in bedrooms; sofas, coffee tables, rugs, TV in living rooms; L-shaped counters, islands and appliances in kitchens; bathtub or shower, toilet, vanity in bathrooms; dining tables with chairs; built-in storage in hallways; plants and chairs on loggias/balconies.
+• Warm wood parquet inside apartments, matte tiles in bathrooms, light flooring in corridors and the central core.
+• A soft pastel fill per apartment (cream, sage green, dusty rose, powder blue, terracotta, lavender, mint, peach) at about 70% opacity, so each apartment reads as a separate unit.
+• Keep the walls as clean grey/black bands; keep the central stair/lift core readable.
+
+STYLE: 4K, ultra-detailed, soft natural daylight from facade windows, subtle interior shadows, Cyrillic labels only (no Latin text), strict 2D top-down view (NO 3D, NO perspective). Premium developer apartment-mix booklet aesthetic.
+
+OUTPUT: the SAME plan — furnished and styled — with its geometry completely untouched."""
 
 
 # ---------------------------------------------------------------------------
