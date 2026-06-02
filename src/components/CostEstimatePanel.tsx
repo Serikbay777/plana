@@ -20,6 +20,8 @@ type Props = {
   floors: number;
   buildingType?: string;
   debounceMs?: number;
+  /** сплошной непрозрачный фон — для оверлея поверх изображения (контраст) */
+  solid?: boolean;
 };
 
 /**
@@ -28,7 +30,7 @@ type Props = {
  * AACE Class 5 и стеком ССР. Это НЕ смета — дисклеймер показывается явно.
  */
 export function CostEstimatePanel({
-  widthM, depthM, floors, buildingType = "residential", debounceMs = 500,
+  widthM, depthM, floors, buildingType = "residential", debounceMs = 500, solid = false,
 }: Props) {
   const [region, setRegion] = useState("Алматы");
   const [data, setData] = useState<AggregateCostEstimate | null>(null);
@@ -60,8 +62,12 @@ export function CostEstimatePanel({
     return () => { cancelled = true; clearTimeout(t); };
   }, [gfa, region, buildingType, debounceMs]);
 
+  const rootCls = solid
+    ? "bg-neutral-950/95 backdrop-blur-md shadow-2xl ring-1 ring-white/10 rounded-2xl px-3 py-2.5 text-white"
+    : "surface-strong rounded-2xl px-3 py-2.5 text-white";
+
   return (
-    <div className="surface-strong rounded-2xl px-3 py-2.5 text-white">
+    <div className={rootCls}>
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}

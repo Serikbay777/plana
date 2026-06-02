@@ -1452,8 +1452,8 @@ function SiteTab({
       <div className="flex-1 min-h-0 overflow-y-auto relative">
 
         {/* Укрупнённая расчётная стоимость — оверлей поверх рендера */}
-        <div className="absolute top-3 right-3 z-10 w-[300px] max-w-[calc(100%-1.5rem)]">
-          <CostEstimatePanel widthM={siteW} depthM={siteD} floors={floors} />
+        <div className="absolute top-3 right-3 z-10 w-[300px] max-w-[calc(100%-1.5rem)] max-h-[calc(100%-1.5rem)] overflow-y-auto">
+          <CostEstimatePanel widthM={siteW} depthM={siteD} floors={floors} solid />
         </div>
 
         {/* Результат */}
