@@ -1105,26 +1105,16 @@ export default function AppPage() {
             />
           )}
           {tab === "placement" && (
-            <>
-              <PlacementTab
-                bag={placementBag}
-                siteFile={placementSiteFile}
-                sitePreview={placementSitePreview}
-                bldFile={placementBldFile}
-                bldPreview={placementBldPreview}
-                onSiteFile={(f) => { if (placementSitePreview) URL.revokeObjectURL(placementSitePreview); setPlacementSiteFile(f); setPlacementSitePreview(f ? URL.createObjectURL(f) : null); }}
-                onBldFile={(f)  => { if (placementBldPreview)  URL.revokeObjectURL(placementBldPreview);  setPlacementBldFile(f);  setPlacementBldPreview(f  ? URL.createObjectURL(f)  : null); }}
-                onGenerate={generatePlacement}
-              />
-              <div className="mt-3 w-full max-w-md">
-                <CostEstimatePanel
-                  widthM={form.building_width_m}
-                  depthM={form.building_depth_m}
-                  floors={form.floors}
-                  buildingType={form.purpose === "commercial" || form.purpose === "hotel" ? "commercial" : "residential"}
-                />
-              </div>
-            </>
+            <PlacementTab
+              bag={placementBag}
+              siteFile={placementSiteFile}
+              sitePreview={placementSitePreview}
+              bldFile={placementBldFile}
+              bldPreview={placementBldPreview}
+              onSiteFile={(f) => { if (placementSitePreview) URL.revokeObjectURL(placementSitePreview); setPlacementSiteFile(f); setPlacementSitePreview(f ? URL.createObjectURL(f) : null); }}
+              onBldFile={(f)  => { if (placementBldPreview)  URL.revokeObjectURL(placementBldPreview);  setPlacementBldFile(f);  setPlacementBldPreview(f  ? URL.createObjectURL(f)  : null); }}
+              onGenerate={generatePlacement}
+            />
           )}
           {tab === "pdf_viz" && (
             <PdfVizTab
@@ -1460,6 +1450,11 @@ function SiteTab({
 
       {/* Контент */}
       <div className="flex-1 min-h-0 overflow-y-auto relative">
+
+        {/* Укрупнённая расчётная стоимость — оверлей поверх рендера */}
+        <div className="absolute top-3 right-3 z-10 w-[300px] max-w-[calc(100%-1.5rem)]">
+          <CostEstimatePanel widthM={siteW} depthM={siteD} floors={floors} />
+        </div>
 
         {/* Результат */}
         {bag.state === "ready" && bag.imageUrl && (
