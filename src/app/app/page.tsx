@@ -13,6 +13,7 @@ import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/compone
 import { ValidationPanel } from "@/components/ValidationPanel";
 import { InsolationPanel } from "@/components/InsolationPanel";
 import { KvartirografiyaPanel } from "@/components/KvartirografiyaPanel";
+import { CostEstimatePanel } from "@/components/CostEstimatePanel";
 import MaskCanvas, { type MaskCanvasHandle } from "@/components/MaskCanvas";
 import { exportAiPlansPdf, exportFullReportPdf } from "@/lib/pdf-export";
 import {
@@ -1104,16 +1105,26 @@ export default function AppPage() {
             />
           )}
           {tab === "placement" && (
-            <PlacementTab
-              bag={placementBag}
-              siteFile={placementSiteFile}
-              sitePreview={placementSitePreview}
-              bldFile={placementBldFile}
-              bldPreview={placementBldPreview}
-              onSiteFile={(f) => { if (placementSitePreview) URL.revokeObjectURL(placementSitePreview); setPlacementSiteFile(f); setPlacementSitePreview(f ? URL.createObjectURL(f) : null); }}
-              onBldFile={(f)  => { if (placementBldPreview)  URL.revokeObjectURL(placementBldPreview);  setPlacementBldFile(f);  setPlacementBldPreview(f  ? URL.createObjectURL(f)  : null); }}
-              onGenerate={generatePlacement}
-            />
+            <>
+              <PlacementTab
+                bag={placementBag}
+                siteFile={placementSiteFile}
+                sitePreview={placementSitePreview}
+                bldFile={placementBldFile}
+                bldPreview={placementBldPreview}
+                onSiteFile={(f) => { if (placementSitePreview) URL.revokeObjectURL(placementSitePreview); setPlacementSiteFile(f); setPlacementSitePreview(f ? URL.createObjectURL(f) : null); }}
+                onBldFile={(f)  => { if (placementBldPreview)  URL.revokeObjectURL(placementBldPreview);  setPlacementBldFile(f);  setPlacementBldPreview(f  ? URL.createObjectURL(f)  : null); }}
+                onGenerate={generatePlacement}
+              />
+              <div className="mt-3 w-full max-w-md">
+                <CostEstimatePanel
+                  widthM={form.building_width_m}
+                  depthM={form.building_depth_m}
+                  floors={form.floors}
+                  buildingType={form.purpose === "commercial" || form.purpose === "hotel" ? "commercial" : "residential"}
+                />
+              </div>
+            </>
           )}
           {tab === "pdf_viz" && (
             <PdfVizTab

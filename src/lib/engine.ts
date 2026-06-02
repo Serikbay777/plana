@@ -1039,6 +1039,49 @@ export async function getKvartirografiya(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Стоимость (Высота-1: укрупнённая расчётная стоимость стадии посадки)
+// ---------------------------------------------------------------------------
+
+export type CostLine = { label: string; amount: number; note: string };
+
+export type AggregateCostEstimate = {
+  region: string;
+  building_type: string;
+  gfa_m2: number;
+  rate_per_m2: number;
+  rate_official: boolean;
+  price_level: string;
+  base_construction: number;
+  buildup: CostLine[];
+  subtotal_ex_vat: number;
+  vat: number;
+  total: number;
+  total_low: number;
+  total_high: number;
+  currency: string;
+  estimate_class: string;
+  is_certified_smeta: boolean;
+  disclaimer: string;
+  warnings: string[];
+};
+
+export type AggregateCostRequest = {
+  gfa_m2?: number;
+  region?: string;
+  building_type?: string;
+  n_floors?: number;
+};
+
+export async function costAggregate(
+  req: AggregateCostRequest,
+): Promise<AggregateCostEstimate> {
+  return request("/cost/aggregate", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 export type FacadeInsolation = {
   name: string;
   azimuth_deg: number;
