@@ -10,11 +10,33 @@
   - svod.py — Сводный сметный расчёт (НР + прибыль + лимитированные + НДС).
 """
 
+from .aggregate_cost import (
+    AggregateCostEstimate,
+    CapacityMetrics,
+    CostBuildupConfig,
+    CostLine,
+    RegionRate,
+    capacity_from_ifc,
+    estimate_aggregate_cost,
+    estimate_aggregate_cost_from_ifc,
+    get_region_rate,
+)
 from .qto import BillOfQuantities, QtyLine, aggregate_quantities, quantities_from_ifc
 
 __all__ = [
+    # qto (Высота-0: объёмы)
     "BillOfQuantities",
     "QtyLine",
     "aggregate_quantities",
     "quantities_from_ifc",
+    # aggregate cost (Высота-1: укрупнённая расчётная стоимость)
+    "AggregateCostEstimate",
+    "CapacityMetrics",
+    "CostBuildupConfig",
+    "CostLine",
+    "RegionRate",
+    "capacity_from_ifc",
+    "estimate_aggregate_cost",
+    "estimate_aggregate_cost_from_ifc",
+    "get_region_rate",
 ]
