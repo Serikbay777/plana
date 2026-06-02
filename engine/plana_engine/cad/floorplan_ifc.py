@@ -52,6 +52,7 @@ def build_floorplan_ifc(project: Project, *, schema: str = "IFC4") -> bytes:
         import ifcopenshell.api.context
         import ifcopenshell.api.geometry
         import ifcopenshell.api.project
+        import ifcopenshell.api.pset
         import ifcopenshell.api.root
         import ifcopenshell.api.spatial
         import ifcopenshell.api.unit
@@ -206,6 +207,12 @@ def _make_slab(
     pts = outline if outline is not None else [(0, 0), (W, 0), (W, D), (0, D)]
     shape = _rect_extrusion(model, body_ctx, pts, thickness)
     ifc.api.geometry.assign_representation(model, product=slab, representation=shape)
+    try:
+        _poly = ShPolygon(pts)
+        _area, _perim = float(_poly.area), float(_poly.length)
+    except Exception:
+        _area, _perim = float(W) * float(D), 2.0 * (float(W) + float(D))
+    _add_slab_qto(model, ifc, slab, area=_area, perimeter=_perim, thickness=thickness)
     return slab
 
 
@@ -240,6 +247,7 @@ def _make_perimeter_walls(
             length=float(length), height=float(height), thickness=float(thickness),
         )
         ifc.api.geometry.assign_representation(model, product=wall, representation=repr_)
+        _add_wall_qto(model, ifc, wall, length=length, height=height, thickness=thickness)
         walls.append(wall)
     return walls
 
@@ -268,6 +276,7 @@ def _make_fire_wall(
         length=float(D), height=float(height), thickness=float(thickness),
     )
     ifc.api.geometry.assign_representation(model, product=wall, representation=repr_)
+    _add_wall_qto(model, ifc, wall, length=D, height=height, thickness=thickness)
     return [wall]
 
 
@@ -315,6 +324,7 @@ def _make_core_walls(
             length=float(length), height=float(height), thickness=float(t),
         )
         ifc.api.geometry.assign_representation(model, product=wall, representation=repr_)
+        _add_wall_qto(model, ifc, wall, length=length, height=height, thickness=t)
         walls.append(wall)
 
     return walls
@@ -366,6 +376,7 @@ def _make_corridor_walls(
                     length=float(seg_len_l), height=float(height), thickness=float(t),
                 )
                 ifc.api.geometry.assign_representation(model, product=w, representation=repr_)
+                _add_wall_qto(model, ifc, w, length=seg_len_l, height=height, thickness=t)
                 walls.append(w)
 
             # Правый сегмент (после ядра)
@@ -383,6 +394,7 @@ def _make_corridor_walls(
                     length=float(seg_len_r), height=float(height), thickness=float(t),
                 )
                 ifc.api.geometry.assign_representation(model, product=w, representation=repr_)
+                _add_wall_qto(model, ifc, w, length=seg_len_r, height=height, thickness=t)
                 walls.append(w)
 
     return walls
@@ -448,6 +460,7 @@ def _make_apartment_spaces(
                     height=2.7,  # чистая высота помещения
                 )
                 ifc.api.geometry.assign_representation(model, product=sp, representation=shape)
+                _add_space_qto(model, ifc, sp, w=xb - xa, d=yb - ya, height=2.7)
                 ifc.api.aggregate.assign_object(
                     model, relating_object=storey, products=[sp],
                 )
@@ -497,6 +510,88 @@ def _placement(x: float, y: float, z: float, yaw_rad: float) -> np.ndarray:
     return m
 
 
+# ── quantity (Qto) helpers — BaseQuantities for material takeoff ───────────
+# Количества навешиваются из АНАЛИТИЧЕСКИХ габаритов, известных в момент
+# создания элемента (length / height / thickness / area). Это надёжнее, чем
+# повторно мешировать геометрию (минует путаницу Net/Gross при импорте чужого
+# IFC) и делает модель takeoff-ready: ВОР / QTO → смета. Объёмы считаются как
+# прямоугольная экструзия; перекрытие стен в углах — незначительный (Class-5)
+# двойной счёт, допустимый на стадии посадки.
+
+
+def _add_qto(model: Any, ifc: Any, product: Any, name: str, props: dict) -> None:
+    """Навесить набор *BaseQuantities на product. Никогда не ломает экспорт:
+    количества — аддитивные метаданные, любой сбой проглатывается."""
+    try:
+        qto = ifc.api.pset.add_qto(model, product=product, name=name)
+        ifc.api.pset.edit_qto(model, qto=qto, properties=props)
+    except Exception:
+        pass
+
+
+def _add_wall_qto(
+    model: Any, ifc: Any, wall: Any, *,
+    length: float, height: float, thickness: float,
+) -> None:
+    side = float(length) * float(height)
+    foot = float(length) * float(thickness)
+    _add_qto(model, ifc, wall, "Qto_WallBaseQuantities", {
+        "Length": float(length),
+        "Width": float(thickness),
+        "Height": float(height),
+        "NetFootprintArea": foot,
+        "GrossFootprintArea": foot,
+        "NetSideArea": side,
+        "GrossSideArea": side,
+        "NetVolume": side * float(thickness),
+        "GrossVolume": side * float(thickness),
+    })
+
+
+def _add_slab_qto(
+    model: Any, ifc: Any, slab: Any, *,
+    area: float, perimeter: float, thickness: float,
+) -> None:
+    _add_qto(model, ifc, slab, "Qto_SlabBaseQuantities", {
+        "Width": float(thickness),
+        "Perimeter": float(perimeter),
+        "GrossArea": float(area),
+        "NetArea": float(area),
+        "GrossVolume": float(area) * float(thickness),
+        "NetVolume": float(area) * float(thickness),
+    })
+
+
+def _add_space_qto(
+    model: Any, ifc: Any, space: Any, *,
+    w: float, d: float, height: float,
+) -> None:
+    area = float(w) * float(d)
+    perim = 2.0 * (float(w) + float(d))
+    _add_qto(model, ifc, space, "Qto_SpaceBaseQuantities", {
+        "Height": float(height),
+        "GrossFloorArea": area,
+        "NetFloorArea": area,
+        "GrossPerimeter": perim,
+        "NetPerimeter": perim,
+        "GrossVolume": area * float(height),
+        "NetVolume": area * float(height),
+    })
+
+
+def _add_opening_qto(
+    model: Any, ifc: Any, element: Any, *,
+    kind: str, width: float, height: float,
+) -> None:
+    name = "Qto_DoorBaseQuantities" if kind == "door" else "Qto_WindowBaseQuantities"
+    _add_qto(model, ifc, element, name, {
+        "Width": float(width),
+        "Height": float(height),
+        "Perimeter": 2.0 * (float(width) + float(height)),
+        "Area": float(width) * float(height),
+    })
+
+
 # ── generic wall-segment helper (Phase 3b) ────────────────────────────────
 
 
@@ -521,6 +616,7 @@ def _make_wall_segment(
         length=float(length), height=float(height), thickness=float(thickness),
     )
     ifc.api.geometry.assign_representation(model, product=wall, representation=repr_)
+    _add_wall_qto(model, ifc, wall, length=length, height=height, thickness=thickness)
     return wall
 
 
@@ -641,6 +737,7 @@ def _make_wall_with_openings(
             panel_h,
         )
         ifc.api.geometry.assign_representation(model, product=ent, representation=shape)
+        _add_opening_qto(model, ifc, ent, kind=op["kind"], width=w_op, height=panel_h)
         out.append(ent)
 
         cursor = off + w_op
@@ -721,6 +818,7 @@ def build_ifc_from_layout(
         import ifcopenshell.api.context
         import ifcopenshell.api.geometry
         import ifcopenshell.api.project
+        import ifcopenshell.api.pset
         import ifcopenshell.api.root
         import ifcopenshell.api.spatial
         import ifcopenshell.api.unit
@@ -937,6 +1035,7 @@ def _make_space_rect(
     )
     shape = _rect_extrusion(model, body_ctx, [(0, 0), (w, 0), (w, d), (0, d)], height)
     ifc.api.geometry.assign_representation(model, product=sp, representation=shape)
+    _add_space_qto(model, ifc, sp, w=w, d=d, height=height)
     return sp
 
 
