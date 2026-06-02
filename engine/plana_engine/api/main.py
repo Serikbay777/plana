@@ -42,6 +42,9 @@ from ..cad import (
 )
 from ..cad.layout_schema import LayoutFloor
 from ..cad.floorplan_ifc import build_ifc_from_layout
+from ..cost import (
+    AggregateCostEstimate, CostBuildupConfig, estimate_aggregate_cost,
+)
 from ..types import BuildingPurpose
 from ..visualizer import (
     DEFAULT_EXTERIOR_VIEWS, EXTERIOR_VIEWS,
@@ -2733,6 +2736,60 @@ def export_floorplan_ifc(req: ExportIfcRequest) -> Response:
             "Access-Control-Expose-Headers":
                 "X-Buildings-Count, X-Site-Area, X-Footprint-Area, X-Coverage-Pct",
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Стоимость (Высота-1: укрупнённая расчётная стоимость стадии посадки)
+# ---------------------------------------------------------------------------
+
+
+class AggregateCostRequest(BaseModel):
+    """Вход для /cost/aggregate.
+
+    Либо задаётся gfa_m2 напрямую, либо передаётся layout (+n_floors) — тогда
+    GFA выводится как площадь контура этажа × число этажей.
+    """
+    gfa_m2: float | None = None
+    region: str = "default"
+    building_type: str = "residential"
+    n_floors: int = 1
+    layout: LayoutFloor | None = None
+    config: CostBuildupConfig | None = None
+
+
+@app.post("/cost/aggregate", response_model=AggregateCostEstimate)
+def cost_aggregate(req: AggregateCostRequest) -> AggregateCostEstimate:
+    """Укрупнённая РАСЧЁТНАЯ стоимость стадии посадки (НДЦС РК 8.01-08 п.6.3).
+
+    Возвращает диапазон (AACE Class 5) и прозрачный Сводный-сметный-расчёт-стек.
+    Это индикатор go/no-go, НЕ сметная стоимость и НЕ сертифицированная смета
+    (см. поля is_certified_smeta / disclaimer / warnings в ответе).
+    """
+    gfa = req.gfa_m2
+    if gfa is None:
+        if req.layout is None:
+            raise HTTPException(
+                status_code=422, detail="Нужен gfa_m2 либо layout для расчёта GFA",
+            )
+        lay = req.layout
+        if lay.outline and len(lay.outline) >= 3:
+            from shapely.geometry import Polygon as _ShPoly
+            footprint = float(
+                _ShPoly([(float(x), float(y)) for x, y in lay.outline]).area
+            )
+        else:
+            footprint = float(lay.width_m) * float(lay.depth_m)
+        gfa = footprint * max(1, req.n_floors)
+
+    if gfa <= 0:
+        raise HTTPException(status_code=422, detail="GFA должна быть > 0")
+
+    return estimate_aggregate_cost(
+        gfa_m2=gfa,
+        region=req.region,
+        building_type=req.building_type,
+        config=req.config,
     )
 
 
