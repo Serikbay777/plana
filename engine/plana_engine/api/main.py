@@ -1951,9 +1951,20 @@ class ProjectValidationResponse(BaseModel):
     infos_count: int
 
 
+class ValidateProjectRequest(VisualizeFromInputsRequest):
+    """Расширение для /validate/project: опциональная AI-планировка.
+
+    Если layout передан (правки редактора) — валидаторы работают на РЕАЛЬНОЙ
+    геометрии комнат через layout_to_project; без него — прежний путь
+    marketing_to_project (floors=[], комнатные проверки молчат). Совместимо
+    со старыми клиентами, которые layout не шлют (precedent: ExportIfcRequest).
+    """
+    layout: LayoutFloor | None = None
+
+
 @app.post("/validate/project", response_model=ProjectValidationResponse)
 def validate_project_endpoint(
-    req: VisualizeFromInputsRequest,
+    req: ValidateProjectRequest,
 ) -> ProjectValidationResponse:
     """Прогнать форму через доменную модель и KZ-валидаторы.
 
@@ -1962,12 +1973,18 @@ def validate_project_endpoint(
         • shapely 2.x для real-area расчётов
         • research/kz-norms/ для ссылок на СН/СП РК
         • ГПЗУ-параметрах формы (max_coverage_pct, max_height_m, ...)
+
+    Если в запросе есть layout — комнатные валидаторы работают на реальной
+    геометрии; иначе прежний путь без вложенной геометрии квартир.
     """
-    from ..domain import marketing_to_project
+    from ..domain import layout_to_project, marketing_to_project
     from ..validators import validate_project
 
     inputs = _inputs_from_req(req)
-    project = marketing_to_project(inputs)
+    if req.layout is not None:
+        project = layout_to_project(req.layout, inputs)
+    else:
+        project = marketing_to_project(inputs)
     violations = validate_project(project)
 
     summary = ProjectValidationSummary(
