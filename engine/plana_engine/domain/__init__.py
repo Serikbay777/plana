@@ -21,6 +21,7 @@ from .model import (
     Floor, GpzuConstraints, Project, Room, RoomKind,
     Setbacks, Shaft, ShaftPurpose, Site,
 )
+from .layout_bridge import layout_to_project
 
 __all__ = [
     # Модель
@@ -35,8 +36,9 @@ __all__ = [
     "Setbacks",
     "Shaft", "ShaftPurpose",
     "Site",
-    # Мост
+    # Мосты
     "marketing_to_project",
+    "layout_to_project",
     # Geometry-поля для расширения схемы
     "PolygonField", "MultiPolygonField",
 ]

@@ -128,6 +128,7 @@ class LayoutSection(BaseModel):
 
 class LayoutFloor(BaseModel):
     """Планировка типового этажа — результат GPT-4o structured output."""
+    schema_version: int = 1   # migration hook; additive — old payloads default to 1
     width_m: float
     depth_m: float
     sections: list[LayoutSection] = []
