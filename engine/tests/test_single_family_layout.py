@@ -9,8 +9,6 @@
 """
 from __future__ import annotations
 
-import pytest
-
 from plana_engine.visualizer.layout_generator import generate_floor_layout
 from plana_engine.visualizer.marketing_prompt import MarketingInputs
 

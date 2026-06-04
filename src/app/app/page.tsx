@@ -47,7 +47,7 @@ import {
   type LayoutFloor,
 } from "@/lib/engine";
 import { getSession, signOut, type Session } from "@/lib/auth";
-import { createProject, updateProject, uploadAsset, getProject, createRun, listProjects, type GenerationRun, type Project as ProjectType } from "@/lib/projects";
+import { createProject, updateProject, uploadAsset, getProject, createRun, listProjects, type GenerationRun, type ProjectAsset, type Project as ProjectType } from "@/lib/projects";
 import HistoryPanel from "@/components/HistoryPanel";
 import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
 import { ArchitecturalDrawingsTab, FloorPlanSvg } from "@/components/ArchitecturalDrawingsTab";
@@ -62,6 +62,12 @@ type GenState = "idle" | "loading" | "ready" | "error";
 type CadExportKind = "dxf" | "ifc";
 type TopTab = "site" | "viz" | "ai_plans" | "placement" | "pdf_viz" | "arch_drawings";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
+
+function topTabForRun(tab: string): TopTab {
+  if (tab.startsWith("viz_")) return "viz";
+  if (tab === "site" || tab === "ai_plans" || tab === "placement" || tab === "pdf_viz" || tab === "arch_drawings") return tab;
+  return "ai_plans";
+}
 
 // Tab 2/3 — AI картинки
 type ImageBag = {
@@ -263,6 +269,8 @@ export default function AppPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [autoSaving, setAutoSaving] = useState(false);
   const [autoSaveLabel, setAutoSaveLabel] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [restoredRun, setRestoredRun] = useState<GenerationRun | null>(null);
   const [recentProjects, setRecentProjects] = useState<ProjectType[]>([]);
   const [projectName, setProjectName] = useState("Без названия");
   const [saving, setSaving] = useState(false);
@@ -339,7 +347,9 @@ export default function AppPage() {
   // ---- загрузка последних проектов для переключателя
   useEffect(() => {
     if (!authChecked) return;
-    listProjects().then(setRecentProjects).catch(() => {});
+    listProjects()
+      .then(setRecentProjects)
+      .catch((e: unknown) => setSaveError((e as Error).message || "Не удалось загрузить список проектов"));
   }, [authChecked]);
 
   // ---- загрузка проекта по ?project=ID
@@ -347,6 +357,7 @@ export default function AppPage() {
     const pid = new URLSearchParams(window.location.search).get("project");
     if (!pid || !authChecked) return;
     getProject(pid).then((p) => {
+      setSaveError(null);
       restoringRef.current = true;
       setProjectId(p.id);
       setProjectName(p.name);
@@ -382,7 +393,9 @@ export default function AppPage() {
         if (site) setSiteBag({ state: "ready", imageUrl: site.url, modelUsed: site.model_used, enhancerUsed: null, errorMessage: null });
       }
       setTimeout(() => { restoringRef.current = false; }, 50);
-    }).catch(() => { /* проект не найден — просто игнорируем */ });
+    }).catch((e: unknown) => {
+      setSaveError((e as Error).message || "Не удалось открыть проект");
+    });
   }, [authChecked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- сохранение проекта
@@ -390,6 +403,7 @@ export default function AppPage() {
     if (saving) return;
     setSaving(true);
     setSaveOk(false);
+    setSaveError(null);
     try {
       let pid = projectId;
       if (!pid) {
@@ -408,21 +422,23 @@ export default function AppPage() {
         const fl = Number(floorStr);
         if (bag.state === "ready") {
           bag.variants.forEach((v) => {
-            uploads.push(uploadAsset(pid!, "ai_plans", v.key, v.imageUrl, v.modelUsed, fl).catch(() => {}));
+            uploads.push(uploadAsset(pid!, "ai_plans", v.key, v.imageUrl, v.modelUsed, fl));
           });
         }
       });
       if (vizExtGallery.state === "ready") {
         vizExtGallery.items.forEach((it) => {
-          uploads.push(uploadAsset(pid!, "viz_exterior", `exterior_${it.view}`, it.imageUrl, it.modelUsed ?? undefined).catch(() => {}));
+          uploads.push(uploadAsset(pid!, "viz_exterior", `exterior_${it.view}`, it.imageUrl, it.modelUsed ?? undefined));
         });
       }
-      if (vizFloorBag.imageUrl) uploads.push(uploadAsset(pid!, "viz_floor",    "floor",     vizFloorBag.imageUrl, vizFloorBag.modelUsed ?? undefined).catch(() => {}));
-      if (siteBag.imageUrl)     uploads.push(uploadAsset(pid!, "site",         "placement", siteBag.imageUrl,     siteBag.modelUsed ?? undefined).catch(() => {}));
+      if (vizFloorBag.imageUrl) uploads.push(uploadAsset(pid!, "viz_floor",    "floor",     vizFloorBag.imageUrl, vizFloorBag.modelUsed ?? undefined));
+      if (siteBag.imageUrl)     uploads.push(uploadAsset(pid!, "site",         "placement", siteBag.imageUrl,     siteBag.modelUsed ?? undefined));
       await Promise.all(uploads);
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 2500);
-    } catch { /* ignore */ } finally {
+    } catch (e) {
+      setSaveError((e as Error).message || "Не удалось сохранить проект");
+    } finally {
       setSaving(false);
     }
   }, [saving, projectId, projectName, form, floorBags, vizExtGallery, vizFloorBag, siteBag]);
@@ -436,6 +452,7 @@ export default function AppPage() {
   ) => {
     const task = async () => {
       setAutoSaving(true);
+      setSaveError(null);
       try {
         // Создаём проект автоматически если его ещё нет.
         // projectIdRef, а не state — чтобы поставленные в очередь сохранения
@@ -453,17 +470,19 @@ export default function AppPage() {
           window.history.replaceState(null, "", `?project=${pid}`);
           setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
         } else {
-          await updateProject(pid, { params: currentForm }).catch(() => {});
+          await updateProject(pid, { params: currentForm });
         }
         const run = await createRun(pid, tab, floor, currentForm);
         await Promise.all(
           assets.map((a) =>
-            uploadAsset(pid!, tab, a.variantKey, a.imageUrl, a.modelUsed, floor, run.id).catch(() => {}),
+            uploadAsset(pid!, tab, a.variantKey, a.imageUrl, a.modelUsed, floor, run.id),
           ),
         );
         setAutoSaveLabel(pname || "проект");
         setTimeout(() => setAutoSaveLabel(null), 3000);
-      } catch { /* silent */ } finally {
+      } catch (e) {
+        setSaveError((e as Error).message || "Не удалось автосохранить результат");
+      } finally {
         setAutoSaving(false);
       }
     };
@@ -870,6 +889,7 @@ export default function AppPage() {
 
   // ---- восстановление из истории
   const handleRestoreRun = useCallback((run: GenerationRun) => {
+    setRestoredRun(null);
     if (run.tab === "ai_plans") {
       const variants: AiPlanVariant[] = run.assets.map((a) => ({
         key: a.variant_key,
@@ -892,20 +912,18 @@ export default function AppPage() {
         elapsedMs: null,
         errorMessage: null,
       });
+      setVizMode("exterior");
       setTab("viz");
     } else if (run.tab === "viz_floor" && run.assets[0]) {
       setVizFloorBag({ state: "ready", imageUrl: run.assets[0].url, modelUsed: run.assets[0].model_used, enhancerUsed: null, errorMessage: null });
+      setVizMode("floorplan_furniture");
       setTab("viz");
     } else if (run.tab === "site" && run.assets[0]) {
       setSiteBag({ state: "ready", imageUrl: run.assets[0].url, modelUsed: run.assets[0].model_used, enhancerUsed: null, errorMessage: null });
       setTab("site");
-    } else if (run.tab === "pdf_viz") {
-      // Полноценный restore PDF-альбома требовал бы хранить исходный PDF —
-      // в MVP просто переключаем таб; превью сохранённых ассетов остаётся в Истории.
-      setTab("pdf_viz");
-    } else if (run.tab === "arch_drawings") {
-      // Этап 1: restore = просто переключение таба + превью в Истории.
-      setTab("arch_drawings");
+    } else if (run.assets.length > 0) {
+      setRestoredRun(run);
+      setTab(topTabForRun(run.tab));
     }
   }, []);
 
@@ -1001,6 +1019,7 @@ export default function AppPage() {
         saveOk={saveOk}
         autoSaving={autoSaving}
         autoSaveLabel={autoSaveLabel}
+        saveError={saveError}
         projectName={projectName}
         onRenameProject={setProjectName}
         historyOpen={historyOpen}
@@ -1011,7 +1030,10 @@ export default function AppPage() {
       />
       <TabStrip
         tab={tab}
-        onChange={setTab}
+        onChange={(nextTab) => {
+          setRestoredRun(null);
+          setTab(nextTab);
+        }}
         onExportDxf={handleExportDxf}
         onExportIfc={handleExportIfc}
         cadExportLoading={cadExportLoading}
@@ -1039,6 +1061,9 @@ export default function AppPage() {
         {/* RIGHT — зависит от таба + панель истории */}
         <div className="flex min-h-[660px] gap-0 rounded-2xl overflow-hidden">
         <section className="surface-strong relative overflow-hidden flex flex-col flex-1 min-w-0 rounded-2xl" style={historyOpen ? { borderRadius: "1rem 0 0 1rem" } : {}}>
+          {restoredRun && topTabForRun(restoredRun.tab) === tab && (
+            <SavedRunGallery run={restoredRun} onClose={() => setRestoredRun(null)} />
+          )}
           {tab === "site" && (
             <SiteTab
               bag={siteBag}
@@ -1130,21 +1155,22 @@ export default function AppPage() {
               onGenerate={generatePlacement}
             />
           )}
-          {tab === "pdf_viz" && (
+          <div className={tab === "pdf_viz" ? "flex flex-col flex-1 min-h-0" : "hidden"}>
             <PdfVizTab
               onAutoSave={(pageIndex, asset) => {
                 autoSaveGeneration("pdf_viz", pageIndex, [asset], form);
               }}
               onResultsChange={setPdfVizResults}
             />
-          )}
-          {tab === "arch_drawings" && (
+          </div>
+          <div className={tab === "arch_drawings" ? "flex flex-col flex-1 min-h-0" : "hidden"}>
             <ArchitecturalDrawingsTab
+              active={tab === "arch_drawings"}
               onAutoSave={(asset) => {
                 autoSaveGeneration("arch_drawings", 1, [asset], form);
               }}
             />
-          )}
+          </div>
         </section>
         {historyOpen && (
           <HistoryPanel
@@ -1176,8 +1202,56 @@ export default function AppPage() {
 // Header & TabStrip
 // ---------------------------------------------------------------------------
 
+function SavedRunGallery({ run, onClose }: { run: GenerationRun; onClose: () => void }) {
+  return (
+    <div data-testid="saved-run-gallery" className="absolute inset-0 z-20 bg-[#111] flex flex-col">
+      <div className="px-5 py-4 border-b border-white/[0.06] flex items-center gap-3">
+        <History size={14} className="text-violet-300" />
+        <div>
+          <div className="text-[13px] font-medium text-white/85">Сохраненный результат</div>
+          <div className="text-[11px] text-white/35">{run.tab} · {run.assets.length} изображений</div>
+        </div>
+        <button
+          onClick={onClose}
+          className="ml-auto h-8 px-3 rounded-full border border-white/[0.08] bg-white/[0.04] text-[11.5px] text-white/60 hover:text-white transition flex items-center gap-1.5"
+        >
+          <X size={11} /> Вернуться в рабочую область
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {run.assets.map((asset) => <SavedAssetCard key={asset.id} asset={asset} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SavedAssetCard({ asset }: { asset: ProjectAsset }) {
+  return (
+    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] overflow-hidden">
+      <a href={asset.url} target="_blank" rel="noreferrer" className="block bg-black/20">
+        <img src={asset.url} alt={asset.variant_key} className="w-full h-56 object-contain" />
+      </a>
+      <div className="px-4 py-3 flex items-center gap-3">
+        <div className="min-w-0">
+          <div className="text-[12px] text-white/80 truncate">{asset.variant_key}</div>
+          <div className="text-[10.5px] text-white/35 truncate">{asset.model_used || "модель не указана"}</div>
+        </div>
+        <a
+          href={asset.url}
+          download={`plana-${asset.tab}-${asset.variant_key}.png`}
+          className="ml-auto h-7 px-2.5 rounded-full border border-white/[0.08] bg-white/[0.04] text-[10.5px] text-white/60 hover:text-white transition flex items-center gap-1"
+        >
+          <Download size={10} /> PNG
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function Header({
-  session, onSignOut, onSave, saving, saveOk, autoSaving, autoSaveLabel,
+  session, onSignOut, onSave, saving, saveOk, autoSaving, autoSaveLabel, saveError,
   projectName, onRenameProject,
   historyOpen, onToggleHistory, recentProjects, onNewProject, onOpenProject,
 }: {
@@ -1188,6 +1262,7 @@ function Header({
   saveOk: boolean;
   autoSaving: boolean;
   autoSaveLabel: string | null;
+  saveError: string | null;
   projectName: string;
   onRenameProject: (name: string) => void;
   historyOpen: boolean;
@@ -1284,6 +1359,11 @@ function Header({
             <Check size={10} /> Автосохранено
           </div>
         )}
+        {saveError && !autoSaving && (
+          <div className="flex items-center gap-1.5 text-[11px] text-red-300/75 max-w-72 truncate" title={saveError}>
+            <AlertCircle size={10} className="flex-shrink-0" /> Не сохранено: {saveError}
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <button
@@ -1352,6 +1432,7 @@ function TabStrip({
         {items.map((it) => (
           <button
             key={it.key}
+            data-testid={`top-tab-${it.key}`}
             onClick={() => onChange(it.key)}
             className={[
               "h-8 px-3.5 rounded-lg text-[12.5px] flex items-center gap-1.5 transition",
@@ -2992,6 +3073,7 @@ function AiPlansTab({
   const [maskMode, setMaskMode] = useState(false);
   const maskCanvasRef = useRef<MaskCanvasHandle>(null);
   const [lightboxImgSize, setLightboxImgSize] = useState<{ w: number; h: number } | null>(null);
+  const [lightboxDisplaySize, setLightboxDisplaySize] = useState<{ w: number; h: number } | null>(null);
   const lightboxImgRef = useRef<HTMLImageElement>(null);
 
   // Сброс edit-состояния при смене картинки в lightbox
@@ -3133,17 +3215,20 @@ function AiPlansTab({
                 className="w-full rounded-2xl shadow-2xl"
                 onLoad={() => {
                   const el = lightboxImgRef.current;
-                  if (el) setLightboxImgSize({ w: el.naturalWidth, h: el.naturalHeight });
+                  if (el) {
+                    setLightboxImgSize({ w: el.naturalWidth, h: el.naturalHeight });
+                    setLightboxDisplaySize({ w: el.clientWidth, h: el.clientHeight });
+                  }
                 }}
               />
-              {maskMode && !editing && lightboxImgSize && lightboxImgRef.current && (
+              {maskMode && !editing && lightboxImgSize && lightboxDisplaySize && (
                 <div className="absolute inset-0 rounded-2xl overflow-hidden">
                   <MaskCanvas
                     ref={maskCanvasRef}
                     imageWidth={lightboxImgSize.w}
                     imageHeight={lightboxImgSize.h}
-                    displayWidth={lightboxImgRef.current.clientWidth}
-                    displayHeight={lightboxImgRef.current.clientHeight}
+                    displayWidth={lightboxDisplaySize.w}
+                    displayHeight={lightboxDisplaySize.h}
                   />
                 </div>
               )}

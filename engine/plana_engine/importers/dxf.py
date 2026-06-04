@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 import math
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,8 +20,8 @@ from .._platform import avoid_windows_wmi_platform_probe
 
 avoid_windows_wmi_platform_probe()
 
-import ezdxf
-from ezdxf.lldxf.const import DXFError
+import ezdxf  # noqa: E402
+from ezdxf.lldxf.const import DXFError  # noqa: E402
 
 
 class DxfImportError(RuntimeError):

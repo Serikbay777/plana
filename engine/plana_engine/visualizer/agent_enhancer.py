@@ -296,7 +296,7 @@ def _critic_call(
     try:
         # Сначала пробуем с json_schema (если модель поддерживает)
         try:
-            resp = client.chat.completions.create(
+            resp = client.chat.completions.create(  # type: ignore[call-overload]
                 model=model,
                 messages=[
                     {"role": "system", "content": _CRITIC_SYSTEM},
@@ -404,8 +404,8 @@ def _format_critique_for_composer(c: Critique) -> str:
 
     if c.risks:
         lines.append("РИСКИ (учти при компоновке промпта):")
-        for r in c.risks[:5]:
-            lines.append(f"  • [{r.severity}] {r.description}")
+        for risk in c.risks[:5]:
+            lines.append(f"  • [{risk.severity}] {risk.description}")
 
     return "\n".join(lines)
 

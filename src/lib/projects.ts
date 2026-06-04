@@ -101,10 +101,15 @@ export async function updateProject(id: string, data: { name?: string; params?: 
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  await fetch(`${ENGINE_URL}/projects/${id}`, {
+  const res = await fetch(`${ENGINE_URL}/projects/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const b = await res.json(); detail = b.detail ?? detail; } catch { /* ignore */ }
+    throw new ProjectsError(res.status, detail);
+  }
 }
 
 export async function uploadAsset(

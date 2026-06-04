@@ -9,10 +9,7 @@
 """
 from __future__ import annotations
 
-from plana_engine.visualizer.layout_generator import (
-    _generate_t_shape_floor,
-    generate_floor_layout,
-)
+from plana_engine.visualizer.layout_generator import generate_floor_layout
 from plana_engine.visualizer.marketing_prompt import MarketingInputs
 
 

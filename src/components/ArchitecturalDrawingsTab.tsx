@@ -10,7 +10,7 @@
 // Этапы 2-3 (drag-edit стен, авто-замыкание комнат, размеры) — следующие
 // итерации поверх той же модели данных.
 
-import { useState, useRef, useCallback, useEffect, useReducer, type ReactElement } from "react";
+import { useState, useRef, useCallback, useEffect, useId, useReducer, type ReactElement } from "react";
 import {
   Sparkles, Loader2, Download, AlertCircle, Wand2, Network, FileText,
   Pencil, RefreshCw, Undo2, Redo2, Grid3x3, Box,
@@ -94,8 +94,10 @@ function buildVisReq(form: PromptFormState): VisualizeFromInputsRequest {
 
 export function ArchitecturalDrawingsTab({
   onAutoSave,
+  active = true,
 }: {
   onAutoSave?: (asset: { variantKey: string; imageUrl: string; modelUsed?: string }) => void;
+  active?: boolean;
 } = {}) {
   // Структурированная форма (как в табе «AI Чертежи»), вместо free-form ТЗ.
   const [form, setForm] = useState<PromptFormState>(DEFAULT_PROMPT_FORM);
@@ -151,7 +153,7 @@ export function ArchitecturalDrawingsTab({
   // действий (lock, delete) пока заглушки до Sprint 5.
   const [helpOpen, setHelpOpen] = useState(false);
   useEffect(() => {
-    if (!project) return;
+    if (!project || !active) return;
     const onKey = (e: KeyboardEvent) => {
       const m = matchHotkey(e);
       if (!m) return;
@@ -190,7 +192,7 @@ export function ArchitecturalDrawingsTab({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [project, undo, redo, editorState.selection, editorState.selected]);
+  }, [project, active, undo, redo, editorState.selection, editorState.selected]);
 
   const handleGenerate = async () => {
     if (status === "loading") return;
@@ -815,7 +817,7 @@ export function FloorPlanSvg({
   const fontFamily = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
   // Уникальный id для точечной сетки на фоне
-  const gridId = `dot-grid-${Math.random().toString(36).slice(2, 8)}`;
+  const gridId = `dot-grid-${useId().replaceAll(":", "")}`;
 
   // ── Viewport: zoom + pan через CSS transform на SVG ─────────────────
   const [vp, setVp] = useState<Viewport>(VP_RESET);
@@ -870,11 +872,6 @@ export function FloorPlanSvg({
     // Клик по фону снимает выделение
     if (editMode) onSelectRoom?.(null);
   };
-
-  // При смене layout — сбрасываем viewport
-  useEffect(() => {
-    setVp(VP_RESET);
-  }, [layout]);
 
   const onWheel = useCallback((e: React.WheelEvent) => {
     if (!containerRef.current) return;

@@ -473,6 +473,7 @@ export function PdfVizTab({
               </div>
               <input
                 ref={fileInputRef}
+                data-testid="pdf-upload-input"
                 type="file"
                 accept="application/pdf"
                 className="hidden"

@@ -18,12 +18,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from shapely import Polygon as ShPolygon
 
 from .bridge import marketing_to_project
-from .model import Apartment, Core, Floor, Room
+from .model import Apartment, ApartmentType, Core, CoreKind, Floor, Room, RoomKind
 
 if TYPE_CHECKING:  # избегаем циклического импорта (cad/visualizer тянут domain)
     from ..cad.layout_schema import LayoutFloor
@@ -100,19 +100,19 @@ def layout_to_project(layout: "LayoutFloor", inputs: "MarketingInputs") -> "Proj
             )
         for core in sect.cores:
             cores.append(Core(
-                kind=_CORE_KIND_MAP.get(core.kind, "lift"),
+                kind=cast(CoreKind, _CORE_KIND_MAP.get(core.kind, "lift")),
                 polygon=_rect(core.x, core.y, core.w, core.d),
             ))
         for apt in sect.apartments:
             rooms: list[Room] = []
             for room in apt.rooms:
                 rooms.append(Room(
-                    kind=ROOM_KIND_MAP.get((room.kind or "").lower(), "other"),
+                    kind=cast(RoomKind, ROOM_KIND_MAP.get((room.kind or "").lower(), "other")),
                     polygon=_rect(apt.x + room.x, apt.y + room.y, room.w, room.d),
                     name=room.name_ru,
                 ))
             apartments.append(Apartment(
-                type_code=APT_TYPE_MAP.get(apt.type_code, "studio"),
+                type_code=cast(ApartmentType, APT_TYPE_MAP.get(apt.type_code, "studio")),
                 rooms=rooms,
                 label=f"Кв. {apt.number}",
             ))

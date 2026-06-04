@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 
 Side = Literal["S", "N", "W", "E"]
+ApartmentTypeCode = Literal["studio", "1k", "2k", "3k", "4k"]
 """Сторона комнаты/квартиры:
    S — южная (low Y)   N — северная (high Y)
    W — западная (low X)   E — восточная (high X)
@@ -91,7 +92,7 @@ class LayoutRoom(BaseModel):
 
 
 class LayoutApartment(BaseModel):
-    type_code: Literal["studio", "1k", "2k", "3k", "4k"]
+    type_code: ApartmentTypeCode
     number: int
     x: float
     """Абсолютная координата в здании (м)"""

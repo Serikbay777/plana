@@ -1,0 +1,28 @@
+# Ralph Progress Log
+
+## Codebase Patterns
+
+- Read `docs/planning/` and root `AGENTS.md` before implementation.
+- `LayoutProject` is the intended canonical editable project model.
+- Do not treat demo UI, research notes, or target architecture as implemented behavior.
+- Do not show unchecked validation requirements as successful.
+- Export and analytics must use the current saved layout.
+
+---
+
+## 2026-06-04 - Wave 0 Bootstrap Baseline
+
+- Restored FastAPI application import and project DELETE 204 response handling.
+- Restricted pytest discovery to `engine/tests`.
+- Made backend Ruff and mypy checks pass.
+- Removed frontend lint errors while preserving the current build.
+- Updated Next.js and eslint-config-next to 16.2.7.
+- Added safe npm overrides for vulnerable transitive dependencies.
+- Verified 68 backend tests and zero npm audit vulnerabilities.
+- **Learnings for future iterations:**
+  - Keep the Windows ezdxf platform probe before ezdxf imports; use local E402 annotations.
+  - OpenAI JSON Schema calls need local mypy annotations because SDK types do not fully model dynamic schemas.
+  - Frontend lint still has non-blocking warnings from demo code and raw image rendering.
+---
+
+Ralph execution is allowed after human review of the Wave 0 changes.

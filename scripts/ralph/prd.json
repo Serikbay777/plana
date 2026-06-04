@@ -1,0 +1,379 @@
+{
+  "project": "Plana",
+  "branchName": "ralph/stable-honest-mvp",
+  "description": "Stabilize the Plana MVP so saved layouts, analytics, validation, and exports use one honest canonical project model.",
+  "userStories": [
+    {
+      "id": "US-004A",
+      "title": "Unify web session contract",
+      "description": "As a user, I want protected web routes and authenticated API calls to use the same session mechanism.",
+      "acceptanceCriteria": [
+        "/app route protection uses the same session mechanism as authenticated API calls",
+        "Expired or missing authentication redirects or rejects consistently",
+        "Auth integration tests cover missing and expired sessions",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004B",
+      "title": "Enforce project ownership",
+      "description": "As a user, I need project endpoints to reject access to projects owned by another user.",
+      "acceptanceCriteria": [
+        "Project read, update, delete, asset and run endpoints enforce ownership",
+        "Cross-user access returns a consistent error",
+        "Integration tests cover unauthorized and cross-user access",
+        "Security review is completed",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Harden secrets and CORS",
+      "description": "As an operator, I need production configuration to fail safely so that weak defaults are not deployed.",
+      "acceptanceCriteria": [
+        "Production startup requires an explicit JWT secret",
+        "CORS origins are configurable and do not default to wildcard in production",
+        "Secrets are not logged",
+        "Configuration behavior is documented",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014A",
+      "title": "Preserve editor state across sections",
+      "description": "As a user, I want generation progress, results and entered data to remain available when I switch editor sections.",
+      "acceptanceCriteria": [
+        "Switching editor sections does not reset an active generation operation",
+        "Returning to a section shows the latest generation progress, result or error",
+        "Selected variants, entered form data and local edits are not reset without an explicit user action",
+        "Browser regression tests cover switching sections during and after generation",
+        "Verify in browser using the browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014B",
+      "title": "Make main workflow actions reliable",
+      "description": "As a user, I need every visible enabled button in the main workflow to perform a clear action.",
+      "acceptanceCriteria": [
+        "A browser audit records visible buttons in the main workflow and their expected actions",
+        "Every visible enabled button performs a clear action",
+        "Unsupported or unavailable actions are hidden or disabled with an explanation",
+        "Loading actions prevent accidental duplicate submissions where required",
+        "Verify in browser using the browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Open saved results from history",
+      "description": "As a user, I want every saved supported result to open from history in the correct workspace.",
+      "acceptanceCriteria": [
+        "History category buttons change the visible list",
+        "Saved AI plans, visualizations, site placement, PDF results and architectural drawing results open in the correct workspace",
+        "History load failures are visible and retryable",
+        "Opening a result does not silently destroy unsaved work",
+        "Browser regression tests cover each supported result type",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Implemented and verified by tests/e2e/reliability-hotfix.spec.ts: category switching, all supported result restores, retryable history errors, and non-destructive result opening."
+    },
+    {
+      "id": "US-016",
+      "title": "Persist PDF visualization workspace",
+      "description": "As a user, I want my PDF visualization workflow to survive section changes and later project reopening.",
+      "acceptanceCriteria": [
+        "Switching sections does not reset the uploaded PDF, page state or results",
+        "Source PDF, page metadata and generated assets can be restored for the project owner",
+        "Each page shows an honest status and supports retry after failure",
+        "File limits, ownership and retention behavior are documented",
+        "Browser test covers upload, generation, section switch, return and reopen",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Derive investment cost from the current building model",
+      "description": "As a user, I want preliminary investment cost to represent the current building variant rather than site dimensions.",
+      "acceptanceCriteria": [
+        "Building GFA and footprint are derived from the current layout or building model",
+        "Changing site dimensions alone does not change building construction cost",
+        "Result shows rate source, region, price level, accuracy range and exclusions",
+        "Site works and other non-building categories are separate from building cost",
+        "UI does not call the result a certified or exact smeta",
+        "Tests cover model-derived GFA and variant comparison",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006A",
+      "title": "Add versioned layout storage",
+      "description": "As a developer, I need project storage to support a versioned LayoutProject payload.",
+      "acceptanceCriteria": [
+        "Project storage supports a versioned LayoutProject payload",
+        "Existing projects without a layout remain readable",
+        "Schema and migration behavior are documented",
+        "Storage tests cover old and new project records",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006B",
+      "title": "Add layout persistence API",
+      "description": "As a user, I need an authenticated API to save and retrieve my current project layout.",
+      "acceptanceCriteria": [
+        "API can save and return the current layout for its owner",
+        "API rejects invalid layout payloads",
+        "API rejects cross-user layout access",
+        "Backend tests cover save, read, validation and ownership",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007A",
+      "title": "Load and save layout in the editor",
+      "description": "As a user, I want the editor to reopen and save my project layout.",
+      "acceptanceCriteria": [
+        "Editor loads the saved layout when opening a project",
+        "User can save edited layout",
+        "Reloading the page preserves the saved geometry",
+        "Verify in browser using the browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007B",
+      "title": "Show editor save state",
+      "description": "As a user, I want to know whether my layout changes are saved.",
+      "acceptanceCriteria": [
+        "UI shows saving, saved, unsaved and error states",
+        "Failed saves do not appear successful",
+        "Unsaved changes remain visible until saved or discarded",
+        "Verify in browser using the browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Export DXF from the current layout",
+      "description": "As a user, I want DXF export to match my visible edited layout so that I can continue work in CAD.",
+      "acceptanceCriteria": [
+        "DXF export accepts or resolves the current saved layout",
+        "Export no longer rebuilds geometry only from original marketing inputs",
+        "A test modifies a room and verifies the exported geometry changes",
+        "Export communicates its conceptual detail level",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009A",
+      "title": "Derive floor metrics from the current layout",
+      "description": "As a user, I want floor metrics to match my visible layout.",
+      "acceptanceCriteria": [
+        "Floor metrics use the current layout",
+        "Changing layout geometry updates affected floor metrics",
+        "Tests cover a geometry change and expected metric change",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009B",
+      "title": "Derive analytics panels from the current layout",
+      "description": "As a user, I want kvartirografiya and aggregate cost to match the current project model.",
+      "acceptanceCriteria": [
+        "Kvartirografiya uses the current layout where required data exists",
+        "Aggregate cost uses model-derived area",
+        "Aggregate cost shows its accuracy disclaimer",
+        "Verify in browser using the browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010A",
+      "title": "Add honest validation status contract",
+      "description": "As a user, I need validation results to distinguish checked and unchecked requirements.",
+      "acceptanceCriteria": [
+        "Validation result contract supports pass, warning, fail and not_checked",
+        "Insufficient data produces not_checked where appropriate",
+        "Tests cover insufficient-data behavior",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010B",
+      "title": "Show honest validation states in UI",
+      "description": "As a user, I want the UI to avoid presenting unchecked requirements as compliant.",
+      "acceptanceCriteria": [
+        "UI does not show a green success state for checks that did not run",
+        "Preliminary checks are visibly labelled",
+        "Not checked requirements are visible to the user",
+        "Verify in browser using the browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011A",
+      "title": "Forward correlation IDs",
+      "description": "As an operator, I need requests traceable across the web proxy and engine.",
+      "acceptanceCriteria": [
+        "Requests receive a correlation ID",
+        "Correlation ID is forwarded between Next.js and FastAPI",
+        "Responses expose the correlation ID for support diagnostics",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011B",
+      "title": "Add structured backend logs",
+      "description": "As an operator, I need backend request logs that support incident diagnosis.",
+      "acceptanceCriteria": [
+        "Backend logs include request ID, project ID where available, duration and status",
+        "Logs do not include secrets or tokens",
+        "Log fields are documented",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012A",
+      "title": "Add backend Sentry reporting",
+      "description": "As an operator, I need backend failures visible during pilot usage.",
+      "acceptanceCriteria": [
+        "Backend Sentry configuration is environment-controlled",
+        "Releases and environments are attached to backend events",
+        "Secrets and uploaded file contents are not sent",
+        "A backend test error can be traced with its correlation ID",
+        "Setup and verification steps are documented",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012B",
+      "title": "Add frontend Sentry reporting",
+      "description": "As an operator, I need frontend failures visible during pilot usage.",
+      "acceptanceCriteria": [
+        "Frontend Sentry configuration is environment-controlled",
+        "Releases and environments are attached to frontend events",
+        "Auth tokens and sensitive project data are not sent",
+        "A frontend test error can be traced with its correlation ID",
+        "Setup and verification steps are documented",
+        "Verify in browser using the browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013A",
+      "title": "Add required GitHub CI checks",
+      "description": "As a team, we need automated static and test checks so that regressions are blocked before merge.",
+      "acceptanceCriteria": [
+        "GitHub CI runs frontend build and lint",
+        "GitHub CI runs backend tests, Ruff and mypy",
+        "CI usage and required checks are documented",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013B",
+      "title": "Add main workflow browser smoke test",
+      "description": "As a team, we need automated browser coverage for the main saved-layout workflow.",
+      "acceptanceCriteria": [
+        "Browser smoke test opens a project",
+        "Browser smoke test edits and saves a layout",
+        "Browser smoke test reloads and verifies the saved layout",
+        "Browser smoke test triggers an export",
+        "Verify in browser using the browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

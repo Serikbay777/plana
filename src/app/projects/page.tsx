@@ -42,6 +42,7 @@ function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: s
 
   return (
     <motion.div
+      data-testid={`project-card-${project.id}`}
       layout
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
@@ -112,6 +113,7 @@ function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: s
 
       {/* Delete */}
       <button
+        data-testid={`project-delete-${project.id}`}
         onClick={(e) => { e.preventDefault(); onDelete(project.id); }}
         className="absolute top-3 right-3 size-7 rounded-full bg-black/70 border border-white/10 grid place-items-center text-white/40 hover:text-red-400 opacity-0 group-hover:opacity-100 transition"
         title="Удалить проект"
@@ -129,6 +131,7 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("updated");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -137,17 +140,26 @@ export default function ProjectsPage() {
     const s = getSession();
     if (!s) { router.replace("/login"); return; }
     listProjects()
-      .then(setProjects)
-      .catch(() => {})
+      .then((nextProjects) => {
+        setProjects(nextProjects);
+        setError(null);
+      })
+      .catch((e: unknown) => setError((e as Error).message || "Не удалось загрузить проекты"))
       .finally(() => setLoading(false));
   }, [router]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("Удалить проект и все его изображения?")) return;
     setDeletingId(id);
-    await deleteProject(id).catch(() => {});
-    setProjects((prev) => prev.filter((p) => p.id !== id));
-    setDeletingId(null);
+    setError(null);
+    try {
+      await deleteProject(id);
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+    } catch (e) {
+      setError((e as Error).message || "Не удалось удалить проект");
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const filtered = projects
@@ -204,6 +216,12 @@ export default function ProjectsPage() {
             <Plus size={13} /> Создать
           </Link>
         </div>
+
+        {error && (
+          <div className="mb-5 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3 text-[12px] text-red-200/80">
+            {error}
+          </div>
+        )}
 
         {/* Toolbar */}
         {!loading && projects.length > 0 && (

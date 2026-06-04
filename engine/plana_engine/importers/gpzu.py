@@ -211,7 +211,7 @@ def extract_gpzu(pdf_bytes: bytes, *, model: str = "gpt-4.1") -> GpzuExtraction:
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
+        resp = client.chat.completions.create(  # type: ignore[call-overload]
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},

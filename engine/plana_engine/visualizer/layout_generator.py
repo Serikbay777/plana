@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from ..cad.layout_schema import (
+    ApartmentTypeCode,
+    FurnitureKind,
     LayoutApartment,
     LayoutCore,
     LayoutDoor,
@@ -17,6 +20,7 @@ from ..cad.layout_schema import (
     LayoutRoom,
     LayoutSection,
     LayoutWindow,
+    Side,
 )
 from .marketing_prompt import MarketingInputs
 
@@ -549,7 +553,7 @@ def _generate_single_family_floor(
         _add_furniture(room, exterior_side="S")
 
     apartment = LayoutApartment(
-        type_code=apt_type,
+        type_code=cast(ApartmentTypeCode, apt_type),
         number=1,
         x=0.0, y=0.0,
         w=round(inner_w, 3),
@@ -704,7 +708,7 @@ def _generate_t_shape_floor(
             _add_furniture(room, exterior_side="N")
 
         apartments.append(LayoutApartment(
-            type_code=apt_type, number=apt_num,
+            type_code=cast(ApartmentTypeCode, apt_type), number=apt_num,
             x=round(apt_x, 3), y=round(top_y_start, 3),
             w=round(top_apt_w, 3), d=round(top_apt_d, 3),
             rooms=rooms,
@@ -727,7 +731,7 @@ def _generate_t_shape_floor(
             _add_furniture(room, exterior_side="S")
 
         apartments.append(LayoutApartment(
-            type_code=apt_type, number=apt_num,
+            type_code=cast(ApartmentTypeCode, apt_type), number=apt_num,
             x=round(ax, 3), y=round(bear_t, 3),
             w=round(bottom_apt_w, 3), d=round(bottom_apt_d, 3),
             rooms=rooms,
@@ -941,7 +945,7 @@ def _generate_asymmetric_depth_floor(
                     _mirror_rooms_x(rooms, aw)
 
                 apartments.append(LayoutApartment(
-                    type_code=apt_type,
+                    type_code=cast(ApartmentTypeCode, apt_type),
                     number=apt_num,
                     x=ax, y=side_y,
                     w=aw, d=round(apt_d, 3),
@@ -1116,7 +1120,7 @@ def _generate_double_core_floor(
                 _mirror_rooms_x(rooms, aw)
 
             apartments.append(LayoutApartment(
-                type_code=apt_type,
+                type_code=cast(ApartmentTypeCode, apt_type),
                 number=apt_num,
                 x=ax, y=side_y,
                 w=aw, d=round(apt_d, 3),
@@ -1266,7 +1270,7 @@ def _generate_tower_floor(
             _add_furniture(room, ext_main)
 
         apartments.append(LayoutApartment(
-            type_code=apt_type,
+            type_code=cast(ApartmentTypeCode, apt_type),
             number=i + 1,
             x=round(apt_x, 3),
             y=round(y_origin, 3),
@@ -2243,7 +2247,8 @@ def _generate_commercial_ground_floor(
 
     # 1. ЛОББИ подъезда (запад)
     lobby = LayoutApartment(
-        type_code="1k",  # type: ignore[arg-type] — schema doesn't have "lobby"
+        # The current schema has no dedicated lobby type.
+        type_code="1k",
         number=apt_num,
         x=round(apt_x0, 3), y=round(_BEAR_T, 3),
         w=round(lobby_w, 3), d=round(commerce_d, 3),
@@ -2260,7 +2265,8 @@ def _generate_commercial_ground_floor(
     for i in range(n_comm_units):
         unit_name = ["Магазин", "Кафе", "Аптека"][i % 3]
         unit = LayoutApartment(
-            type_code="3k",  # type: ignore[arg-type] — placeholder for commercial
+            # The current schema has no dedicated commercial type.
+            type_code="3k",
             number=apt_num,
             x=round(comm_x_cursor, 3), y=round(_BEAR_T, 3),
             w=round(comm_unit_w, 3), d=round(commerce_d, 3),
@@ -2583,7 +2589,7 @@ def generate_floor_layout(inputs: MarketingInputs) -> LayoutFloor:
                     _mirror_rooms_x(rooms, aw)
 
                 apartments.append(LayoutApartment(
-                    type_code=apt_type,
+                    type_code=cast(ApartmentTypeCode, apt_type),
                     number=apt_num,
                     x=ax, y=side_y,
                     w=aw, d=round(apt_d, 3),
@@ -2839,7 +2845,11 @@ def _make_window_on_facade(
     # Ширина окна — пропорционально стене, но не больше 2 м, не меньше 0.9 м
     width = min(2.0, max(0.9, stretch * 0.55))
     offset = (stretch - width) / 2
-    return LayoutWindow(side=side, offset=round(offset, 3), width=round(width, 3))
+    return LayoutWindow(
+        side=cast(Side, side),
+        offset=round(offset, 3),
+        width=round(width, 3),
+    )
 
 
 def _make_entrance_door(
@@ -3057,7 +3067,7 @@ def _add_furniture(room: LayoutRoom, exterior_side: str) -> None:
             if x + kw > counter_x + counter_w - 0.001:
                 break
             items.append(LayoutFurniture(
-                kind=kind, x=round(x, 3), y=round(counter_y, 3),
+                kind=cast(FurnitureKind, kind), x=round(x, 3), y=round(counter_y, 3),
                 w=kw, d=counter_d, rotation=0,
             ))
             x += kw

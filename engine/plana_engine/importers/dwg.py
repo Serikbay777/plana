@@ -70,9 +70,9 @@ def _find_converter() -> _Converter | None:
         if found:
             return _Converter("oda", found)
 
-    for candidate in _common_oda_paths():
-        if candidate.exists():
-            return _Converter("oda", str(candidate))
+    for candidate_path in _common_oda_paths():
+        if candidate_path.exists():
+            return _Converter("oda", str(candidate_path))
 
     for candidate in ("dwg2dxf", "dwg2dxf.exe"):
         found = shutil.which(candidate)

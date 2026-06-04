@@ -146,9 +146,11 @@ def get_project(project_id: str, user_id: str) -> dict | None:
 def update_project(project_id: str, user_id: str, name: str | None, params: str | None) -> bool:
     fields, values = [], []
     if name is not None:
-        fields.append("name = ?"); values.append(name)
+        fields.append("name = ?")
+        values.append(name)
     if params is not None:
-        fields.append("params = ?"); values.append(params)
+        fields.append("params = ?")
+        values.append(params)
     if not fields:
         return False
     fields.append("updated_at = CURRENT_TIMESTAMP")

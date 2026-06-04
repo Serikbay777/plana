@@ -52,8 +52,8 @@ def _call_openai(prompt: str, model: str) -> bytes:
         response = client.images.generate(
             model=model,
             prompt=prompt,
-            size="1536x1024",
-            quality="medium",
+            size="1536x1024",  # type: ignore[arg-type]
+            quality="medium",  # type: ignore[arg-type]
             n=1,
         )
     except Exception as e:
