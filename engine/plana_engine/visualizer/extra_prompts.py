@@ -157,8 +157,9 @@ EXTERIOR_VIEWS: dict[str, dict[str, str]] = {
     },
 }
 
-# Порядок ракурсов по умолчанию для галереи (как присланы референсы).
-DEFAULT_EXTERIOR_VIEWS: list[str] = ["hero", "aerial", "landscape", "yard"]
+# Порядок ракурсов по умолчанию для галереи. «hero» (Общий вид) убран по
+# просьбе — остаётся как fallback в build_exterior_prompt, но в галерею не идёт.
+DEFAULT_EXTERIOR_VIEWS: list[str] = ["aerial", "landscape", "yard"]
 
 
 def build_exterior_prompt(inputs: MarketingInputs, view: str = "hero") -> str:

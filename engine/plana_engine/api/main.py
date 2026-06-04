@@ -67,6 +67,13 @@ from ..visualizer.grok_client import (
     has_api_key as has_grok_key,
 )
 
+# Регистрируем HEIF/HEIC-декодер, чтобы PIL открывал фото с айфона (.heic).
+try:
+    from pillow_heif import register_heif_opener as _register_heif_opener
+    _register_heif_opener()
+except Exception:  # noqa: BLE001
+    pass
+
 
 def has_api_key() -> bool:
     """True если есть ХОТЯ БЫ один image-провайдер (OpenAI или xAI)."""
@@ -517,6 +524,9 @@ async def visualize_site_placement(
             except Exception:
                 pass  # если не получилось — используем только участок
 
+    # Нормализуем в PNG (gpt-image edit капризен к формату/режиму входа).
+    image_bytes = _ensure_png(image_bytes)
+
     inputs = MarketingInputs(
         site_width_m=site_width_m,
         site_depth_m=site_depth_m,
@@ -600,6 +610,29 @@ _PLACEMENT_VARIANTS = [
         ),
     },
 ]
+
+
+def _ensure_png(image_bytes: bytes) -> bytes:
+    """Нормализуем любое изображение в RGB PNG для gpt-image edit.
+
+    gpt-image отклоняет неподдерживаемые форматы/режимы (HEIC, CMYK, битые файлы)
+    с invalid_image_file. Прогоняем через PIL → PNG. Если не открывается —
+    отдаём понятную 400, а не 502 от OpenAI.
+    """
+    from PIL import Image
+    import io as _io
+    try:
+        img = Image.open(_io.BytesIO(image_bytes)).convert("RGB")
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Не удалось прочитать изображение. Загрузите корректный файл (JPG, PNG или HEIC).",
+        )
 
 
 def _composite_images(site_bytes: bytes, building_bytes: bytes) -> bytes:

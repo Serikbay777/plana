@@ -1,0 +1,338 @@
+STRICT AutoCAD architectural floor plan, technical engineering drawing on white paper.
+NOT a marketing brochure. NOT a Pinterest illustration. NOT watercolor.
+Pure CAD-grade vector line work — IDENTICAL in style to drawings from leading Kazakh architectural design institutes. Sheet format A3 landscape, scale 1:100. Top-down orthographic view ONLY.
+
+⚠️ STYLE REFERENCE (very specific Kazakh CAD aesthetic):
+• Pure white paper background — NO color tints in rooms, NO pastel fills
+• Walls drawn with TWO line weights: thin black outline + RED-ORANGE DIAGONAL HATCHING inside the wall thickness (ANSI31 pattern, color #c14d3d-ish, 30-45° angle, dense 4-5 mm spacing)
+• Window openings rendered with PALE BLUE (#a8c5d4) parallel lines and light blue tinted glass area
+• Bathroom/WC fixtures with subtle PALE BLUE (#cee0e8) accent on tubs, toilets, sinks
+• All text in CAD-style Cyrillic font (ISOCPEUR / GOST / Arial Narrow), uppercase or capitalized, narrow letterforms
+• Narrow black arrows for cut-section markers «1-1», «2-2» pointing inward from sides
+
+⚠️ CRITICAL — DRAWING ASPECT RATIO: The plan MUST be drawn at the EXACT building footprint ratio specified below. If footprint is 60×40, the drawing rectangle must be 1.5:1 (wide). DO NOT draw a narrow vertical strip when a wide rectangle is requested. Use the FULL sheet area. Match the requested floor dimensions precisely.
+
+═══════════════════════════════════════════════════════════════════
+⚠️⚠️ ОПРЕДЕЛЕНИЕ КОМНАТНОСТИ КВАРТИР (КАЗАХСТАНСКИЙ / ПОСТСОВЕТСКИЙ СТАНДАРТ)
+ЭТО САМОЕ ВАЖНОЕ ПРАВИЛО ПЛАНИРОВКИ — НАРУШАТЬ НЕЛЬЗЯ
+═══════════════════════════════════════════════════════════════════
+В Казахстане «N-комнатная квартира» = N ЖИЛЫХ комнат.
+
+ЖИЛЫЕ комнаты (считаются в N):
+  • Гостиная
+  • Спальни
+  • Детская
+  • Кабинет (если используется как жилая комната)
+  • «Жилая комната» (для 1-комнатных)
+
+НЕ ЯВЛЯЮТСЯ КОМНАТАМИ и НЕ ВХОДЯТ в счёт N (никогда):
+  • Кухня (kitchen) — это НЕ комната
+  • Санузел / ванная / туалет / С/у — это НЕ комната
+  • Прихожая (entry hall)
+  • Коридор
+  • Холл
+  • Гардеробная
+  • Кладовая / пантри
+  • Лоджия / балкон
+  • Тамбур
+
+ПОЭТОМУ обязательный состав по типам (каждая жилая комната — ОТДЕЛЬНОЕ
+помещение со своей подписью и своей площадью; ничего не «подразумевать»):
+  → 1-комнатная = 1 ЖИЛАЯ КОМНАТА
+                  + кухня + с/у + прихожая (+ лоджия)
+  → 2-комнатная = ГОСТИНАЯ + СПАЛЬНЯ (РОВНО 2 жилые комнаты)
+                  + кухня + с/у + прихожая (+ лоджия)
+  → 3-комнатная = ГОСТИНАЯ + СПАЛЬНЯ-1 + СПАЛЬНЯ-2 (РОВНО 3 жилые комнаты —
+                  ОБЕ спальни нарисованы и подписаны ОТДЕЛЬНО:
+                  «Спальня 1» И «Спальня 2», не только одна!)
+                  + кухня + с/у (или 2 с/у) + прихожая (+ лоджия)
+  → 4-комнатная = ГОСТИНАЯ + СПАЛЬНЯ-1 + СПАЛЬНЯ-2 + СПАЛЬНЯ-3 (РОВНО 4 жилые,
+                  все три спальни подписаны отдельно)
+                  + кухня + 2 с/у + прихожая (+ лоджия)
+
+❌ КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО считать кухню жилой комнатой.
+   Квартира с составом «гостиная + кухня» (без спальни) — это 1-КОМНАТНАЯ,
+   а НЕ 2-комнатная. Это самая частая ошибка — НЕ допускать её.
+   Если квартира подписана «2-комнатная», в ней ОБЯЗАНЫ присутствовать
+   ДВЕ отдельные жилые комнаты (например ГОСТИНАЯ + СПАЛЬНЯ), ПЛЮС кухня
+   отдельным помещением. Аналогично «3-комнатная» = ТРИ жилые комнаты + кухня.
+
+❌ ЧАСТАЯ ОШИБКА №2 — НЕДОСЧЁТ СПАЛЕН В ТРЁШКАХ/ЧЕТВЁРКАХ:
+   Если на чертеже у «3-комнатной» нарисованы только ГОСТИНАЯ + одна СПАЛЬНЯ —
+   это ОШИБКА (по факту получилась 2-комнатная). У 3-комнатной ОБЯЗАНЫ быть
+   ДВЕ отдельные спальни. Подпись «Спальня 1» БЕЗ парной «Спальня 2» —
+   запрещена: если есть «Спальня 1», то ОБЯЗАТЕЛЬНО рисуется и «Спальня 2».
+   КОНТРОЛЬ ПЛОЩАДЕЙ: S жил. квартиры ДОЛЖНА равняться сумме площадей ВСЕХ
+   жилых комнат. Для 3-комнатной: S жил. = гостиная + спальня-1 + спальня-2.
+   Если сумма видимых комнат меньше S жил. — значит комната пропущена, ДОРИСОВАТЬ.
+
+(US convention where kitchen/living counts toward "bedroom count" is WRONG here.
+ Use the post-Soviet / Kazakh convention defined above without exception.)
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+LINE WEIGHTS (CRITICAL — like real Kazakh CAD)
+═══════════════════════════════════════════════════════════════════
+• EXTERIOR BEARING WALLS: thin black outline 0.5 mm, wall thickness ~400 mm, FILLED with red-orange diagonal hatching (ANSI31, 45°, dense). The hatching is the signature of bearing walls in Kazakh CAD-style drawings.
+• INTERIOR LOAD-BEARING PARTITIONS: same hatching but thinner wall (200 mm)
+• NON-LOAD-BEARING PARTITIONS: 0.25 mm twin parallel lines, no hatching, 120 mm thickness
+• DOORS: 0.18 mm thin lines — door leaf as 45° solid line + quarter-arc swing
+• WINDOWS: pale-blue triple parallel lines on facade (frame–glass–frame), 1200-1800 mm typical, glass area filled with very light blue #d8e7ef
+• FURNITURE & FIXTURES: 0.15 mm SIMPLE TOP-DOWN BLOCK ICONS like in real DWG — no photorealism, no shading
+• AXIS GRID LINES: dashed thin grey, ends in 600-mm circles with letter (А-Б-В) or number (1-2-3)
+• DIMENSION LINES: thin black 0.13 mm with arrowheads, numbers in mm (no decimals)
+
+═══════════════════════════════════════════════════════════════════
+TAIMAS-STANDARD CHECKLIST — обязательные элементы (real Kazakh DD-album)
+═══════════════════════════════════════════════════════════════════
+This drawing MUST include ALL of the following GOST/SPDS elements,
+exactly like in real Almaty/Astana design-institute albums:
+
+1. ✓ AXIS GRID — letter circles (А, Б, В, Г, Д, Е, Ж) on TOP edge and
+   number circles (1, 2, 3, 4, 5...) on LEFT edge, Ø ~600mm, connected
+   to the building outline by thin dashed grey lines extending past
+   the walls. EVERY column-line and wall-axis gets a letter/number.
+
+2. ✓ TRIPLE DIMENSION CHAINS along TOP and LEFT building edges
+   (ОБЯЗАТЕЛЬНО — без них чертёж не читается):
+   • inner chain  — wall-to-wall (between rooms)
+   • middle chain — axis-to-axis (between letter/number axes)
+   • outer chain  — total building dimension end-to-end
+   All numbers in MILLIMETRES without unit suffix:
+   «3450», «6000», «28800» — small narrow CAD font directly above
+   the chain line, with arrow ticks (not arrowheads, ticks at 45°).
+
+3. ✓ ROOM NUMBERS in small circles (Ø 500mm) inside each room,
+   placed above the room name: «1», «2», «3»... These reference
+   the EXPLICATION TABLE.
+
+4. ✓ EXPLICATION TABLE (Экспликация помещений) — simple
+   rectangular grid drawn BELOW or to the RIGHT of the plan,
+   3 columns: «№ | Наименование | Площадь, м²»
+   with one row per room. Header row in bold; uppercase column titles.
+
+5. ✓ DOOR/WINDOW SPECIFICATIONS — small italic markers near each
+   opening: «Д-1», «Д-2»... for doors, «В-1», «В-2»... for windows,
+   referencing a separate spec sheet (на других листах).
+
+6. ✓ SECTION CUT ARROWS «1—1», «2—2» — thick black arrows on plan
+   edges (NOT in the middle of rooms), with the section label in a
+   round badge. Indicate WHERE vertical sections are taken.
+
+7. ✓ NORTH ARROW — small compass-rose with letter «С» (север),
+   drawn OUTSIDE the building outline in the TOP-RIGHT margin area.
+
+8. ✓ SCALE INDICATOR «М 1:100» under the sheet title or in title
+   block — narrow CAD font.
+
+9. ✓ SHEET TITLE at top: «ПЛАН ТИПОВОГО ЭТАЖА» (or similar,
+   depending on level) — bold uppercase, large narrow CAD font.
+
+CRITICAL — без этих элементов чертёж выглядит «AI-нарисованным»,
+а не профессиональным. Treat this as a strict checklist; each item
+must be visually present and findable on the final drawing.
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+SUBJECT — RESIDENTIAL FLOOR (типовой этаж жилого здания)
+═══════════════════════════════════════════════════════════════════
+Standard Kazakh CAD title block in BOTTOM-RIGHT corner (small rectangular frame with subdivisions, ALL NAME/COMPANY CELLS EMPTY OR DASHED «—»):
+  Top row fields (header labels only, body empty): «Изм. | Кол.уч. | Лист | N.док. | Подпись | Дата»
+  Middle row: «Разработал | — | — | —»  (empty cells, NO real names)
+  Right side: «Стадия: ЭП | Лист: — | Листов: —»
+  Bottom rows: «Строительство [—]», «г.Астана», «План типового этажа», «[—]», «Лицензия [—]»
+  IMPORTANT: leave personal-name and company-name cells BLANK or with dash «—» placeholders — do NOT invent firm names, do NOT insert «ТОО ...», do NOT add signatures or specific person names. The block is for layout demonstration only.
+
+Building footprint EXACTLY 29 × 15 м — DRAW THE PLAN AT THIS EXACT ASPECT RATIO with the entire plan filling the sheet.
+One typical floor of a 4-storey residential building.
+⚠️ APARTMENT COUNT — STRICT: EXACTLY 4 apartments per floor (EXACTLY 16 total for 4 floors). DO NOT draw more or fewer apartments than this number. Single-section point tower with 4 apartments per floor.
+
+POINT-TOWER LAYOUT (1 section): central reinforced-concrete core with 2 passenger + 1 freight elevator + Л-1 staircase. All 4 apartments arranged AROUND the central core.
+
+⚠️ APARTMENT MIX — STRICT (комнатность считается по казахстанскому стандарту, см. блок «ОПРЕДЕЛЕНИЕ КОМНАТНОСТИ» выше; кухня и санузел НЕ являются комнатами):
+Состав 4 квартир на этаж — точная программа помещений (НЕ менять, НЕ добавлять типы):
+
+  • Кв. №1 — 2-КОМНАТНАЯ (55–70 м²):
+      ОБЯЗАТЕЛЬНО 2 жилые комнаты → ГОСТИНАЯ (≥16 м²) + СПАЛЬНЯ (≥10 м²)
+      + Кухня (≥9 м²) + С/у + Прихожая (+ Лоджия)
+  • Кв. №2 — 1-КОМНАТНАЯ (40–50 м²):
+      1 жилая комната → ЖИЛАЯ КОМНАТА (≥15 м²)
+      + Кухня (≥9 м²) + С/у + Прихожая (+ Лоджия)
+  • Кв. №3 — 3-КОМНАТНАЯ (80–95 м²):
+      ОБЯЗАТЕЛЬНО 3 ОТДЕЛЬНЫЕ жилые комнаты, каждая подписана:
+        - ГОСТИНАЯ (≥16 м²)
+        - СПАЛЬНЯ 1 (≥12 м²)   ← подписать именно «Спальня 1»
+        - СПАЛЬНЯ 2 (≥10 м²)   ← ОБЯЗАТЕЛЬНО нарисовать и подписать «Спальня 2»
+      + Кухня (≥9 м²) + С/у (можно 2) + Прихожая (+ Лоджия)
+      КОНТРОЛЬ: S жил. = гостиная + спальня-1 + спальня-2. Если на чертеже
+      видна только «Спальня 1» — это ОШИБКА, дорисовать «Спальня 2».
+  • Кв. №4 — 2-КОМНАТНАЯ (55–70 м²):
+      ОБЯЗАТЕЛЬНО 2 жилые комнаты → ГОСТИНАЯ (≥16 м²) + СПАЛЬНЯ (≥10 м²)
+      + Кухня (≥9 м²) + С/у + Прихожая (+ Лоджия)
+
+Соответствует пользовательской квартирографии: 1-комн. ~28%, 2-комн. ~26%, 3-комн. ~27%
+(на 4 квартиры: одна 1-комн., две 2-комн., одна 3-комн.).
+These room programs are FIXED. Do NOT add apartment types not listed above.
+ПРОВЕРКА перед отрисовкой: в каждой 2-комнатной видны ДВЕ жилые комнаты (гостиная + спальня),
+в 3-комнатной — ТРИ жилые комнаты. Кухня нигде НЕ засчитывается как комната.
+
+⚠️ MINIMUM ROOM SIZES (СНиП РК 3.02-43-2007 — STRICT):
+  • Living room (гостиная): ≥ 16 м² for 2-3-room apts, ≥ 15 м² for 1-room
+  • Master bedroom (спальня на 2 человека): ≥ 10 м²
+  • Single bedroom: ≥ 8 м²
+  • Kitchen: ≥ 9 м² for 2+ room apts (≥ 6 м² only for studios as kitchen-niche)
+  • Bathroom (ванная): width ≥ 1.5 м
+  • Combined WC (с/у совмещённый): ≥ 1.7 м wide
+  • Hallway (прихожая): width ≥ 1.4 м
+  • Internal corridor: ≥ 1.0 м
+
+FURNITURE inside each apartment (simple top-down block icons, NOT photoreal):
+  • Bedrooms: rectangle bed with «X» for pillow, bedside table, wardrobe long thin rectangle
+  • Living rooms: L-shape sofa, round table, armchair circle, TV thin rectangle on wall
+  • Kitchens: counter L along wall with sink + stove (square with 4 burner circles), fridge rectangle
+  • Bathrooms: oval tub OR shower square, oval toilet, vanity rectangle
+  • Hallways: built-in wardrobe rectangle, shoe storage
+  • Loggias: small rectangles outside facade wall, labeled «Лоджия», 3-6 м²
+
+ANNOTATIONS inside the plan:
+  • Apartment numbers (per section if sectional, else sequential)
+  • «S общ. = 45.20 м²», «S жил. = 32.10 м²» — areas under each apartment number
+    (S жил. = сумма площадей ТОЛЬКО жилых комнат, БЕЗ кухни/с-у/прихожей/лоджии)
+  • Room labels above each room: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Лоджия»
+  • Room areas inside each room: «18.4 м²», «12.6 м²», «7.2 м²» — REALISTIC values, not too small
+  • Section labels «СЕКЦИЯ 1», «СЕКЦИЯ 2»… in BOLD if multi-section
+
+═══════════════════════════════════════════════════════════════════
+UNIVERSAL ANNOTATIONS (Kazakh CAD style)
+═══════════════════════════════════════════════════════════════════
+• AXIS GRID:
+  - Dashed thin grey lines extending beyond the plan
+  - Each axis ends in a CIRCLE (~600 mm dia, drawn as 12-15 mm on sheet) with letter or number inside
+  - Vertical axes (left/right of plan): «А», «Б», «В», «Г», «Д», «Е», «Ж», «И» (avoid «З» — looks like 3)
+  - Horizontal axes (top/bottom): «1», «2», «3»… up to «10»
+
+• DIMENSION CHAINS (very specific Kazakh format):
+  - Outer chain along ENTIRE bottom and left facades
+  - Numbers in mm WITHOUT unit symbol: «1500», «2100», «2700», «4500», «7200»
+  - Total building dimension in larger text below: «25 200» or «60 000»
+  - Inner chains along walls for individual room dimensions
+  - All dimension text in narrow CAD font (ISOCPEUR/GOST), horizontal regardless of line orientation
+
+• CUT-SECTION MARKERS «1—1» and «2—2»:
+  - Small thick black arrow (12 mm) pointing INWARD to the plan from outside
+  - Adjacent to arrow: small numbered tag «1» or «2»
+  - Place 2 sets at strategic locations (across long axis and short axis)
+
+• ELEVATION MARKS: triangle markers «±0.000» at main floor level, «-0.150» at entrance steps
+
+• COMPASS «С» (north arrow) in top-right corner — small thin black arrow pointing up with «С» label, NOT decorative
+
+• ROOM LABELS (inside each room):
+  - Room name first line: «Гостиная», «Спальня», «Кухня», «С/у», «Прихожая», «Тамбур», «Холл», «Гардеробная», «Терраса»
+  - Area below: «80,1 м²», «32,7 м²» (Russian comma decimal, м² with superscript)
+  - Stack vertically, centered in room
+  - Use narrow Cyrillic CAD font (ISOCPEUR/Arial Narrow), all-caps optional
+
+• TITLE BLOCK (bottom-right corner — Kazakh standard format):
+  Tabular box subdivided into cells. RENDER FIELD LABELS but LEAVE NAME/COMPANY CELLS EMPTY (placeholder «—» or blank):
+  Top row (header labels): «Изм.» | «Кол.уч.» | «Лист» | «N.док.» | «Подпись» | «Дата»
+  Below: «Разработал» | «—» | «—» | «—»  ← DO NOT invent personal names
+  Right column: «Стадия | Лист | Листов»
+  Body: «Строительство [—]», «г.Астана район [—]», «План типового этажа»
+  Bottom-right small: «[—]», «Лицензия [—]»  ← DO NOT invent firm names or license numbers
+  IMPORTANT: never insert real-looking names like «Анферов», «Иванов», never insert real firm acronyms like «ТОО ASTETIKA» or «КазГОР» — keep the block as a TEMPLATE with empty fields.
+
+• AREA SUMMARY (right side or bottom):
+  «Общая площадь — XXX м²»
+  «Площадь застройки — XXX м²»
+  «Жилая площадь — XXX м²» (right-aligned, narrow font)
+
+═══════════════════════════════════════════════════════════════════
+ENGINEERING & SAFETY (visible on the plan)
+═══════════════════════════════════════════════════════════════════
+LIFT GROUP: 2 passenger elevators + 1 freight elevator (rectangles with diagonal cross «×», labeled «ЛИФТ») + U-shaped staircase (parallel tread lines 300 mm apart, upward arrow «↑», labeled «Л-1»). Concentrated in central reinforced-concrete core(s).
+
+FIRE SAFETY: maximum evacuation distance from any apartment door to staircase ≤ 25 м (evacuation distance counted PER SECTION when sectional). 2 evacuation exits per section. Dead-end corridor segments ≤ 12 м. Show evacuation arrows from each unit toward the staircase.
+
+INSOLATION: large units (suites, 2-3 bedroom apartments) face south or south-west, smaller units face north.
+
+PARKING: 1 underground level(s), approximately 16 parking spaces total (1.0 per apartment). Parking layout NOT shown on this floor (typical level), but the engineering shaft from the underground garage rises through the central core.
+
+GPZU CONSTRAINTS: maximum site coverage 0%, height regulation up to 13 м. Setbacks shown as red dashed lines: 0.0 м front, 0.0 м rear, 0.0 м on each side.
+
+TECH ZONES (mark on plan): «ВЕНТ» (vent shaft, 0.6×0.6 м, near core), «ЭЩ» (electrical, ~1.5×1.5 м, near core), «СС» (weak-current), «МСП» (trash chute, 0.4×0.4 м, near core, residential only), «ВКР» (water riser, 0.3×0.3 м, near each wet zone).
+
+═══════════════════════════════════════════════════════════════════
+COLOR PALETTE (Kazakh CAD style — strict, NOT marketing)
+═══════════════════════════════════════════════════════════════════
+• Background: pure white #ffffff (paper)
+• All structural lines: pure black #000000
+• Wall diagonal hatching: red-orange #c14d3d / terracotta — this is the signature Kazakh CAD style for bearing walls
+• Window glass: very pale blue #d8e7ef (wash effect, ~30% opacity)
+• Window frames: pale steel blue #6b95b3 thin lines
+• Bathroom fixtures (tub, toilet, sink): pale blue accent #b8d4e0 outlines
+• Bathroom floors: very subtle pale blue tile pattern hatching
+• Floor textures (kitchen, hallway): light grey #e8e8e8 simple square tile pattern (sparingly)
+• ROOM INTERIORS: pure white background — NO pastel fills, NO color rotation between rooms
+• NO wood grain, NO parquet, NO marble, NO photorealistic textures, NO gradients, NO shadows
+
+TYPOGRAPHY (critical — must look like authentic Kazakh CAD):
+• ALL labels in narrow CAD-style Cyrillic font: ISOCPEUR, GOST type A, or Arial Narrow as fallback
+• Room names: bold-ish, e.g. «Гостиная», «Кухня», «Спальня», «С/у», «Тамбур», «Холл»
+• Areas underneath room name: «32,7 м²», «80,1 м²» (comma as decimal separator, м² with superscript ²)
+• Apartment numbers: «Кв. №14», «S общ. = 65,10 м²», «S жил. = 30,70 м²»
+• Section labels: «СЕКЦИЯ 1», «СЕКЦИЯ 2» — bold, larger height
+• Cut markers: small black thick arrow + circle with «1» or «2», double label like «1-1», «2-2»
+
+═══════════════════════════════════════════════════════════════════
+ABSOLUTE NEGATIVES (must NOT appear)
+═══════════════════════════════════════════════════════════════════
+× NO counting the kitchen (кухня) as a жилая комната — kitchen is NEVER a room
+× NO counting bathroom/WC/санузел, hallway/прихожая, corridor, loggia/лоджия as rooms
+× NO «2-комнатная» that actually contains only гостиная + кухня (that is a 1-комнатная — WRONG)
+× NO «3-комнатная» with fewer than THREE distinct жилые комнаты
+× NO label «Спальня 1» without a paired «Спальня 2» (and «Спальня 3» for 4-room) — каждая трёшка обязана иметь ДВЕ нарисованные спальни
+× NO watercolor, painted illustration, Pinterest interior overlay
+× NO photorealistic furniture (everything is line-drawing block diagrams)
+× NO wood grain, parquet, marble textures, ceramic tile patterns
+× NO 3D, isometric, perspective — strict 2D top-down only
+× NO shadows, gradients, soft lighting effects, glow effects
+× NO Latin/English labels — все надписи на русском кириллицей
+× NO marketing brochure aesthetic, NO Pinterest pastel colors
+× NO narrow vertical strip layout when wide footprint is requested
+× NO single-corridor layout when multi-section is required
+× NO unrealistically small rooms (kitchen 5 m², bedroom 4 m² — these violate СНиП РК)
+× NO missing elevator/staircase core in the center of the section
+× NO COLORED ROOM FILLS (pale yellow/green/pink/etc — these look amateur, real Kazakh CAD has white rooms)
+× NO sans-serif modern fonts like Roboto, Inter — only narrow CAD fonts (ISOCPEUR/GOST/Arial Narrow)
+
+═══════════════════════════════════════════════════════════════════
+REFERENCE — exact visual style to match
+═══════════════════════════════════════════════════════════════════
+Reference: real architectural floor plans from Kazakh design institutes (Almaty/Astana firms). Key visual cues:
+
+• White A3 sheet, landscape orientation
+• Axis numbering circles (600 mm dia) at perimeter: «1»…«10» horizontal bottom, «А»-«Б»-«В»-«Г»-«Д»-«Е»-«Ж»-«И» vertical left
+• External dimension chains (mm without units): «1500», «2100», «2700», «4500», «7200» — printed directly above the line
+• Bearing walls with red-orange diagonal hatching (signature feature)
+• Pale blue tinted glass in window openings
+• Pale blue accent in bathroom fixtures
+• Inside each room: room name + area beneath, e.g. «Гостиная / 80,1 м²», «Кухня / 32,7 м²»
+• Cut-section markers «1—1» and «2—2» as small thick arrows pointing inward
+• Standard Cyrillic title block bottom-right with EMPTY/BLANK fields (no real firm or person names): «Изм. / Кол.уч. / Лист / N.док. / Подпись / Дата | Стадия / Лист / Листов | Разработал / [пусто] / [пусто] / [пусто]» and «Строительство [пусто] / г.Астана / План [N]-го этажа / [пусто] / Лицензия [пусто]» — render the cells visually but leave content empty or with placeholder dashes «—»
+• Overall feeling: official, technical, ready to be stamped «УТВЕРЖДАЮ»
+
+The drawing should look indistinguishable from a real Kazakh DWG printout printed at A3.
+Ratio 16:10, ultra-high resolution, every line crisp, every dimension legible. Pure engineering aesthetic.
+
+═══ ТИП ЭТАЖА: ТИПОВОЙ ЖИЛОЙ ЭТАЖ ═══
+Стандартный жилой этаж здания. Все квартиры рабочие согласно квартирографии и составу помещений выше. Комнатность считается ТОЛЬКО по жилым комнатам (кухня и санузел — не комнаты). Двусторонний коридор с лифтами и лестницей в ядре. Стандартная высота потолков 2.8–3.0 м.
+
+═══ ПЛАНИРОВОЧНАЯ СТРАТЕГИЯ: КЛАССИЧЕСКАЯ СЕКЦИЯ ═══
+IMPORTANT: Keep EXACTLY the apartment count, mix AND room programs specified above — do NOT change them.
+Layout strategy: traditional Kazakh/Soviet section layout. Central staircase-lift core, short dead-end corridors (≤12 m). Apartments on both sides of the core. Standard СНиП room proportions.
+КОНТРОЛЬ ПЕРЕД ВЫВОДОМ: пересчитай жилые комнаты в каждой квартире и сверь с подписью
+(«1-комнатная» = 1 жилая, «2-комнатная» = 2 жилые, «3-комнатная» = 3 жилые). Кухня не в счёт.
+ДОПОЛНИТЕЛЬНО: если где-то есть подпись «Спальня 1» — ОБЯЗАНА присутствовать и «Спальня 2»
+(а в 4-комнатных — и «Спальня 3»). Сверь сумму площадей жилых комнат с указанной S жил.:
+они должны совпадать. Расхождение = пропущенная комната, дорисовать её.

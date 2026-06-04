@@ -115,6 +115,26 @@ function extViewFromVariantKey(key: string): string {
   return key.replace(/^exterior_?/, "") || "hero";
 }
 
+// Ассеты экстерьера → элементы галереи с дедупом по ракурсу (оставляем
+// последний = самый свежий). Проект копит ассеты от разных генераций — без
+// дедупа в табах появляются дубли (8 = 2×4).
+function extItemsFromAssets(
+  assets: { variant_key: string; url: string; model_used: string | null }[],
+): ExtGalleryItemUI[] {
+  const byView = new Map<string, ExtGalleryItemUI>();
+  for (const a of assets) {
+    const view = extViewFromVariantKey(a.variant_key);
+    if (view === "hero") continue;   // «Общий вид» убран из галереи
+    byView.set(view, {
+      view,
+      label: EXTERIOR_VIEW_LABEL[view] ?? "Экстерьер",
+      imageUrl: a.url,
+      modelUsed: a.model_used,
+    });
+  }
+  return Array.from(byView.values());
+}
+
 // Единый контекст визуализации: захватывается при клике «Визуализация» в AI
 // Чертежах и связывает чертёж + параметры + промпт одним id, чтобы «С мебелью»
 // строилась ровно из того плана, что юзер видит, а не из заново сгенерированного.
@@ -351,10 +371,7 @@ export default function AppPage() {
         if (extAssets.length > 0) {
           setVizExtGallery({
             state: "ready",
-            items: extAssets.map((a) => {
-              const view = extViewFromVariantKey(a.variant_key);
-              return { view, label: EXTERIOR_VIEW_LABEL[view] ?? "Экстерьер", imageUrl: a.url, modelUsed: a.model_used };
-            }),
+            items: extItemsFromAssets(extAssets),
             elapsedMs: null,
             errorMessage: null,
           });
@@ -871,10 +888,7 @@ export default function AppPage() {
     } else if (run.tab === "viz_exterior" && run.assets.length > 0) {
       setVizExtGallery({
         state: "ready",
-        items: run.assets.map((a) => {
-          const view = extViewFromVariantKey(a.variant_key);
-          return { view, label: EXTERIOR_VIEW_LABEL[view] ?? "Экстерьер", imageUrl: a.url, modelUsed: a.model_used };
-        }),
+        items: extItemsFromAssets(run.assets),
         elapsedMs: null,
         errorMessage: null,
       });
@@ -1331,7 +1345,7 @@ function TabStrip({
     { key: "pdf_viz",        label: "PDF Визуализация",      icon: <FileText size={13} /> },
     { key: "arch_drawings",  label: "Архитектурные чертежи", icon: <Ruler size={13} /> },
   ];
-  const items = allItems.filter((it) => it.key === "ai_plans" || it.key === "arch_drawings" || it.key === "viz" || it.key === "site");
+  const items = allItems.filter((it) => it.key === "ai_plans" || it.key === "arch_drawings" || it.key === "viz" || it.key === "site" || it.key === "pdf_viz");
   return (
     <div className="px-6 pt-3 pb-1 border-b border-white/[0.04] flex items-center justify-between gap-3 flex-wrap">
       <div className="inline-flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.05]">

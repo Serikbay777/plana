@@ -1,0 +1,255 @@
+STRICT AutoCAD architectural floor plan, technical engineering drawing on white paper.
+NOT a marketing brochure. NOT a Pinterest illustration. NOT watercolor.
+Pure CAD-grade vector line work — IDENTICAL in style to drawings from leading Kazakh architectural design institutes. Sheet format A3 landscape, scale 1:100. Top-down orthographic view ONLY.
+
+⚠️ STYLE REFERENCE (very specific Kazakh CAD aesthetic):
+• Pure white paper background — NO color tints in rooms, NO pastel fills
+• Walls drawn with TWO line weights: thin black outline + RED-ORANGE DIAGONAL HATCHING inside the wall thickness (ANSI31 pattern, color #c14d3d-ish, 30-45° angle, dense 4-5 mm spacing)
+• Window openings rendered with PALE BLUE (#a8c5d4) parallel lines and light blue tinted glass area
+• Bathroom/WC fixtures with subtle PALE BLUE (#cee0e8) accent on tubs, toilets, sinks
+• All text in CAD-style Cyrillic font (ISOCPEUR / GOST / Arial Narrow), uppercase or capitalized, narrow letterforms
+• Narrow black arrows for cut-section markers «1-1», «2-2» pointing inward from sides
+
+⚠️ CRITICAL — DRAWING ASPECT RATIO: The plan MUST be drawn at the EXACT building footprint ratio specified below. If footprint is 60×40, the drawing rectangle must be 1.5:1 (wide). DO NOT draw a narrow vertical strip when a wide rectangle is requested. Use the FULL sheet area. Match the requested floor dimensions precisely.
+
+═══════════════════════════════════════════════════════════════════
+⚠️⚠️ ОПРЕДЕЛЕНИЕ КОМНАТНОСТИ КВАРТИР (КАЗАХСТАНСКИЙ / ПОСТСОВЕТСКИЙ СТАНДАРТ)
+ЭТО САМОЕ ВАЖНОЕ ПРАВИЛО ПЛАНИРОВКИ — НАРУШАТЬ НЕЛЬЗЯ
+═══════════════════════════════════════════════════════════════════
+В Казахстане «N-комнатная квартира» = N ЖИЛЫХ комнат.
+
+ЖИЛЫЕ комнаты (считаются в N): Гостиная, Спальни, Детская, Кабинет,
+«Жилая комната» (для 1-комнатных).
+
+НЕ ЯВЛЯЮТСЯ КОМНАТАМИ и НЕ ВХОДЯТ в счёт N (никогда):
+Кухня, Санузел/ванная/туалет/С/у, Прихожая, Коридор, Холл, Гардеробная,
+Кладовая, Лоджия, Балкон, Тамбур.
+
+ОБЯЗАТЕЛЬНЫЙ СОСТАВ по типам (каждая жилая комната — ОТДЕЛЬНОЕ помещение
+со своей подписью и площадью; ничего не «подразумевать»):
+  → Студия       = единая жилая зона ≥22 м² + кухня-ниша + с/у совмещённый + прихожая
+  → 1-комнатная  = 1 ЖИЛАЯ КОМНАТА + кухня + с/у + прихожая (+ лоджия)
+  → 2-комнатная  = ГОСТИНАЯ + СПАЛЬНЯ (РОВНО 2 жилые комнаты) + кухня + с/у + прихожая (+ лоджия)
+  → 3-комнатная  = ГОСТИНАЯ + СПАЛЬНЯ-1 + СПАЛЬНЯ-2 (РОВНО 3 жилые комнаты,
+                   ОБЕ спальни нарисованы и подписаны ОТДЕЛЬНО: «Спальня 1» И «Спальня 2»)
+                   + кухня + с/у (или 2 с/у) + прихожая (+ лоджия)
+  → 4-комнатная  = ГОСТИНАЯ + СПАЛЬНЯ-1 + СПАЛЬНЯ-2 + СПАЛЬНЯ-3 (РОВНО 4 жилые)
+                   + кухня + 2 с/у + прихожая (+ лоджия)
+
+❌ ОШИБКА №1 — КУХНЯ КАК КОМНАТА: «гостиная + кухня» (без спальни) — это
+   1-КОМНАТНАЯ, а НЕ 2-комнатная. «2-комнатная» = гостиная + спальня + кухня (отдельно).
+❌ ОШИБКА №2 — НЕДОСЧЁТ СПАЛЕН: у «3-комнатной» ОБЯЗАНЫ быть ДВЕ спальни.
+   Подпись «Спальня 1» БЕЗ парной «Спальня 2» запрещена.
+   КОНТРОЛЬ ПЛОЩАДЕЙ: S жил. квартиры = сумме площадей ВСЕХ её жилых комнат.
+   Если сумма видимых жилых комнат < S жил. — комната пропущена, ДОРИСОВАТЬ.
+
+(US convention, где кухня входит в счёт комнат, здесь НЕВЕРНА.)
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+⚠️⚠️ РЕАЛИСТИЧНАЯ ПЛОТНОСТЬ И ПЛОЩАДИ КВАРТИР (анти-абсурд по размеру)
+═══════════════════════════════════════════════════════════════════
+Площади квартир должны быть РЕАЛИСТИЧНЫМИ по типу (ориентир СНиП РК):
+  • Студия ~ 28 м²   • 1-комн. ~ 40–50 м²   • 2-комн. ~ 55–70 м²
+  • 3-комн. ~ 80–95 м²   • 4-комн. ~ 100–115 м²
+
+ЧИСЛО КВАРТИР НА ЭТАЖ должно соответствовать площади этажа:
+  полезная площадь ≈ (длина × ширина) × 0,75   (минус стены/ядро/коридоры)
+  разумное число квартир ≈ полезная площадь ÷ ~58 м² (средняя квартира)
+  Пример: этаж 29×13 = 377 м² → полезно ~283 м² → ~5 квартир, НЕ 2 и НЕ 12.
+
+❌ НЕ рисуй 2 квартиры на 377 м² — каждая выйдет ~140 м² (абсурд).
+❌ НЕ рисуй 12 квартир на 377 м² — будут по ~24 м² (тесно, нарушает СНиП).
+Если заданное число квартир даёт среднюю > 95 м² или < 32 м² на квартиру —
+это сигнал, что параметры нереалистичны: придерживайся реалистичных площадей
+по типу выше, а лишнюю площадь отдавай под общие зоны/коридоры.
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+⚠️⚠️ ПРОПОРЦИЯ СЕКЦИЙ И ЛИФТОВ (АНТИ-АБСУРД — соблюдать при компоновке)
+═══════════════════════════════════════════════════════════════════
+• МИНИМУМ КВАРТИР НА СЕКЦИЮ: ≥ 3–4. ПРОВЕРКА: (квартир ÷ секций) ≥ 3.
+• ПРИ 2–5 КВАРТИРАХ НА ЭТАЖ — ОДНА точечная секция (point-tower) с ЕДИНЫМ
+  ядром, БЕЗ деления противопожарной стеной на подъезды.
+• НЕСКОЛЬКО секций — только от ~6–8 квартир на этаж (≥3–4 на секцию).
+• ЛИФТЫ СТРОГО ПО ЭТАЖНОСТИ (НЕ ставить «на всякий случай»):
+    – до 5 этажей  → ЛИФТОВ НЕТ, только лестница Л-1;
+    – 5–9 этажей   → 1 пассажирский лифт на секцию;
+    – 10+ этажей   → 2 пассажирских + 1 грузовой на секцию.
+  Это правило ГЛАВНЕЕ любых примеров ниже. Если этажей ≤5 — на плане
+  НЕ ДОЛЖНО быть НИ ОДНОГО лифта, только лестничная клетка.
+• БАЛАНС ПЛОЩАДЕЙ: площадь общих помещений (ядро + коридоры + холлы) НЕ должна
+  превышать суммарную площадь квартир. Если общее > жилого — секций/ядер
+  слишком много на мало квартир: уменьши секции или увеличь число квартир.
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+⚠️⚠️ РАЗМЕРНЫЕ ЦЕПОЧКИ — АРИФМЕТИКА (числа обязаны складываться)
+═══════════════════════════════════════════════════════════════════
+• СУММА всех пролётов наружной цепочки по ВЕРХУ = общей длине здания
+  (итоговому числу над цепочкой). Пример для 29 000 на 9 пролётов:
+  3300+3200+3200+3200+3200+3200+3200+3200+3300 = 29 000. Сумма СХОДИТСЯ.
+• СУММА пролётов по ЛЕВОМУ фасаду = ширине здания.
+• ПЛОЩАДЬ ЗАСТРОЙКИ = длина × ширина (точно). Для 29×13 = 377 м² (НЕ 405).
+• «Жилая площадь этажа» = СУММА всех S жил. квартир.
+• Итоговое число над цепочкой и пропорции рисунка = заданному футпринту.
+  НЕ подписывай «29 000», если по факту нарисовано здание на ~26 000.
+ПРИМЕЧАНИЕ: цифры на чертеже — данные, которые читатель складывает; держи их согласованными.
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+LINE WEIGHTS (CRITICAL — like real Kazakh CAD)
+═══════════════════════════════════════════════════════════════════
+• EXTERIOR BEARING WALLS: thin black outline 0.5 mm, thickness ~400 mm, red-orange diagonal hatching (ANSI31, 45°, dense) — signature of bearing walls.
+• INTERIOR LOAD-BEARING PARTITIONS: same hatching, thinner wall (200 mm)
+• NON-LOAD-BEARING PARTITIONS: 0.25 mm twin parallel lines, no hatching, 120 mm
+• DOORS: 0.18 mm — door leaf as 45° solid line + quarter-arc swing
+• WINDOWS: pale-blue triple parallel lines (frame–glass–frame), 1200-1800 mm, glass #d8e7ef
+• FURNITURE & FIXTURES: 0.15 mm SIMPLE TOP-DOWN BLOCK ICONS — no photorealism
+• AXIS GRID LINES: dashed thin grey, ends in 600-mm circles with letter/number
+• DIMENSION LINES: thin black 0.13 mm, numbers in mm (no decimals)
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+TAIMAS-STANDARD CHECKLIST — обязательные элементы (GOST/SPDS)
+═══════════════════════════════════════════════════════════════════
+1. ✓ AXIS GRID — letter circles (А..Ж/И) on TOP, number circles (1..N) on LEFT,
+   Ø ~600mm, dashed grey lines extending past the walls. Avoid «З» (looks like 3).
+2. ✓ TRIPLE DIMENSION CHAINS along TOP and LEFT edges (inner wall-to-wall,
+   middle axis-to-axis, outer total). Numbers in mm without unit, ticks at 45°.
+3. ✓ ROOM NUMBERS in small circles (Ø500mm) referencing the explication table.
+4. ✓ EXPLICATION TABLE (Экспликация помещений): «№ | Наименование | Площадь, м²».
+5. ✓ DOOR/WINDOW SPECS — «Д-1»,«Д-2»… for doors, «В-1»,«В-2»… for windows.
+6. ✓ SECTION CUT ARROWS «1—1», «2—2» — thick black arrows on plan edges.
+7. ✓ NORTH ARROW — small «С» compass (thin black ARROW, not a filled blob),
+   OUTSIDE the building outline, TOP-RIGHT margin.
+8. ✓ SCALE «М 1:100» under title or in title block.
+9. ✓ SHEET TITLE «ПЛАН ТИПОВОГО ЭТАЖА» — bold uppercase, large narrow CAD font.
+CRITICAL — без этих элементов чертёж выглядит «AI-нарисованным».
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+SUBJECT — RESIDENTIAL FLOOR (типовой этаж жилого здания)
+═══════════════════════════════════════════════════════════════════
+Building footprint EXACTLY 29 × 13 м — DRAW AT THIS EXACT ASPECT RATIO, plan fills the sheet.
+Площадь застройки = 29 × 13 = 377 м² (используй именно это число в ТЭП).
+One typical floor of a 4-storey residential building.
+
+⚠️ ЭТАЖНОСТЬ = 4 → ПО ПРАВИЛУ ЛИФТОВ: ЛИФТОВ НЕТ. Только лестница Л-1.
+   НЕ рисовать ни пассажирских, ни грузовых лифтов на этом плане.
+
+⚠️ APARTMENT COUNT — STRICT: EXACTLY 2 apartments per floor (8 total for 4 floors).
+   (Примечание: для 377 м² реалистичнее ~5 квартир — см. блок «РЕАЛИСТИЧНАЯ
+   ПЛОТНОСТЬ». При 2 квартирах придерживайся реалистичных площадей по типу,
+   а избыток площади показывай как просторные комнаты/общие зоны.)
+
+⚠️ LAYOUT — ОДНА точечная секция (point-tower), ОДИН подъезд, без противопожарной
+   стены. Центральное ядро = ТОЛЬКО лестница Л-1 (лифтов нет, см. выше) + техшахты.
+   Двусторонний/периметральный коридор ≤12 м. Квартиры вокруг ядра.
+   APARTMENT NUMBERING: «Кв. №1», «Кв. №2» (сквозная).
+
+⚠️ APARTMENT MIX — STRICT (комнатность по КЗ-стандарту; кухня и с/у НЕ комнаты):
+  • Кв. №1 — 1-КОМНАТНАЯ (40–50 м²):
+      ЖИЛАЯ КОМНАТА (≥15 м²) + Кухня (≥9 м²) + С/у + Прихожая (+ Лоджия)
+  • Кв. №2 — 2-КОМНАТНАЯ (55–70 м²):
+      ГОСТИНАЯ (≥16 м²) + СПАЛЬНЯ (≥10 м²) + Кухня (≥9 м²) + С/у + Прихожая (+ Лоджия)
+Итого: 1-комн. 1 шт., 2-комн. 1 шт. Типы НЕ менять, НЕ добавлять.
+
+⚠️ MINIMUM ROOM SIZES (СНиП РК 3.02-43-2007):
+  Гостиная ≥16 (2-3-комн) / ≥15 (1-комн); Спальня (2 чел.) ≥10; одиночная ≥8;
+  Кухня ≥9 (2+комн); Ванная ширина ≥1,5; С/у совмещ. ≥1,7 ширина;
+  Прихожая ширина ≥1,4; Коридор ≥1,0.
+
+FURNITURE (simple top-down block icons, NOT photoreal):
+  Bedrooms: bed rectangle with «X» pillow, bedside table, wardrobe strip.
+  Living: L-sofa, round table, armchair circle, TV strip on wall.
+  Kitchens: L-counter with sink + stove (square, 4 burner circles), fridge.
+  Bathrooms: oval tub OR shower square, oval toilet, vanity.
+  Hallways: built-in wardrobe; Loggias: small rect outside facade, «Лоджия» 3-6 м².
+
+ANNOTATIONS:
+  • «Кв. №N», под номером: «S общ. = … м²», «S жил. = … м²»
+    (S жил. = сумма ТОЛЬКО жилых комнат, без кухни/с-у/прихожей/лоджии)
+  • Над комнатой: имя; внутри: площадь «18,4 м²» (запятая-десятичная, м² надстрочный ²)
+
+═══════════════════════════════════════════════════════════════════
+UNIVERSAL ANNOTATIONS (Kazakh CAD style)
+═══════════════════════════════════════════════════════════════════
+• AXIS GRID: dashed grey lines past the plan; circles Ø~600mm; vertical «А…И»
+  (без «З»), horizontal «1…N».
+• DIMENSION CHAINS: numbers in mm без единиц; СУММА пролётов = итогу здания
+  (см. блок «РАЗМЕРНЫЕ ЦЕПОЧКИ»); narrow CAD font, horizontal.
+• CUT-SECTION MARKERS «1—1», «2—2»: small thick arrows inward, 2 sets.
+• ELEVATION MARKS: «±0.000» main floor, «-0.150» entrance steps.
+• COMPASS «С»: thin black ARROW pointing up with «С», top-right (НЕ залитый круг).
+• ROOM LABELS: имя + площадь под ним; narrow Cyrillic CAD font.
+• TITLE BLOCK (bottom-right, Kazakh standard) — RENDER LABELS, leave name/firm cells EMPTY/«—»:
+  «Изм.|Кол.уч.|Лист|N.док.|Подпись|Дата» / «Разработал|—|—|—» /
+  «Стадия: ЭП|Лист: —|Листов: —» / «Строительство [—]» / «г.Астана» /
+  «План типового этажа» / «Лицензия [—]». NEVER insert real firm/person names.
+• AREA SUMMARY: «Общая площадь — XXX м²», «Площадь застройки — 377 м²», «Жилая площадь — XXX м²».
+
+═══════════════════════════════════════════════════════════════════
+ENGINEERING & SAFETY (visible on the plan)
+═══════════════════════════════════════════════════════════════════
+CORE: лестница Л-1 (U-shape, parallel tread lines 300 mm, upward arrow «↑»)
+  в центральном ж/б ядре. ЛИФТЫ — ТОЛЬКО ПО ЭТАЖНОСТИ (см. правило выше):
+  при 4 этажах ЛИФТОВ НЕТ. (Лифты рисуются прямоугольником с диагональным
+  крестом «×» и подписью «ЛИФТ» ТОЛЬКО если этажность ≥5.)
+FIRE SAFETY: эвакуация ≤25 м от двери квартиры до лестницы; ≥2 эвак. выхода
+  с этажа; тупик коридора ≤12 м; стрелки эвакуации к лестнице.
+INSOLATION: крупные квартиры (2-3-комн.) на юг/юго-запад, мелкие — на север.
+PARKING: 1 подз. уровень, ~8 м-мест (1,0/кв.); на типовом этаже не показан;
+  инж. шахта поднимается через ядро.
+GPZU: покрытие 0%, высота ≤13 м. Отступы 0,0 м.
+TECH ZONES: «ВЕНТ» (0,6×0,6), «ЭЩ» (~1,5×1,5), «СС», «МСП» (0,4×0,4, у ядра),
+  «ВКР» (0,3×0,3, у каждой мокрой зоны).
+
+═══════════════════════════════════════════════════════════════════
+COLOR PALETTE (Kazakh CAD — strict)
+═══════════════════════════════════════════════════════════════════
+Фон #ffffff; линии #000000; штриховка стен red-orange #c14d3d; стекло #d8e7ef;
+рамы окон #6b95b3; сантехника #b8d4e0. КОМНАТЫ БЕЛЫЕ — без пастельных заливок,
+без ротации цветов. NO wood/parquet/marble textures, NO gradients, NO shadows.
+
+TYPOGRAPHY: narrow CAD Cyrillic (ISOCPEUR/GOST/Arial Narrow); площади «32,7 м²»;
+«Кв. №14», «S общ. = 65,10 м²», «S жил. = 30,70 м²»; section labels bold (если секций >1).
+
+═══════════════════════════════════════════════════════════════════
+ABSOLUTE NEGATIVES (must NOT appear)
+═══════════════════════════════════════════════════════════════════
+× NO lifts at all when floors ≤ 5 (этот план: 4 этажа → лифтов НЕТ, только лестница)
+× NO counting kitchen/с-у/прихожая/коридор/лоджия as жилая комната
+× NO «2-комнатная» = гостиная + кухня (это 1-комнатная)
+× NO «3-комнатная» with fewer than THREE жилые комнаты
+× NO «Спальня 1» without paired «Спальня 2» (and «Спальня 3» for 4-room)
+× NO apartments unrealistically large (>95 м²/кв. при заданном числе) or tiny (<32 м²)
+× NO dimension chain whose bay sum ≠ building total
+× NO площадь застройки ≠ длина×ширина (377 м² for 29×13)
+× NO multi-section split / противопожарная стена when apartments-per-section < 3
+× NO «общая площадь» общих помещений > суммы квартир
+× NO compass drawn as a filled black blob — it must be a thin arrow with «С»
+× NO watercolor, photorealistic furniture, wood/parquet/marble, 3D/isometric, shadows
+× NO Latin/English labels (только кириллица), NO Pinterest pastel, NO colored room fills
+× NO narrow vertical strip when a wide footprint is requested
+× NO sans-serif modern fonts (Roboto/Inter) — only narrow CAD fonts
+
+═══════════════════════════════════════════════════════════════════
+REFERENCE — exact visual style to match
+═══════════════════════════════════════════════════════════════════
+Real Kazakh design-institute plans (Almaty/Astana): white A3 landscape; axis
+circles «1…N»/«А…И»; external dimension chains (mm, no units) above the line with
+sums that add up; bearing walls with red-orange hatching; pale-blue glass; pale-blue
+bath fixtures; room name + area inside each room; cut markers «1—1»,«2—2»; Cyrillic
+title block bottom-right with EMPTY fields; official, ready to be stamped «УТВЕРЖДАЮ».
+Indistinguishable from a real Kazakh DWG printout at A3. Ratio 16:10, ultra-high res,
+every line crisp, every dimension legible. Pure engineering aesthetic.
+
+═══ КОНТРОЛЬ ПЕРЕД ВЫВОДОМ (пройди по пунктам перед финалом) ═══
+  1) Этажность ≤5 → лифтов НЕТ (только лестница). Иначе лифты по этажности.
+  2) Жилых комнат в каждой квартире = числу в подписи (кухня НЕ комната).
+  3) Есть «Спальня 1» → есть и «Спальня 2» (4-комн. — и «Спальня 3»).
+  4) Σ площадей жилых комнат = S жил. квартиры.
+  5) Σ пролётов цепочки = длине здания; площадь застройки = длина×ширина = 377 м².
+  6) (квартир ÷ секций) ≥ 3, иначе одна точечная секция; общее ≤ жилого.
+  7) Средняя площадь квартиры в реалистичном диапазоне по типу.
