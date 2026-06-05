@@ -25,6 +25,10 @@ AI-платформа для архитектурного и планирово�
 В одном терминале — движок:
 
 ```bash
+OPENAI_API_KEY=sk-...      # server-side only; never expose this in frontend code
+OPENAI_MODEL=gpt-5.5       # default ChatGPT/OpenAI text+vision model; override per env
+OPENAI_REASONING_EFFORT=none
+
 cd engine
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e .

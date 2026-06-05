@@ -86,7 +86,7 @@ _USER_PROMPT_TPL = """\
 """
 
 
-def enhance_brief(brief: str, *, model: str = "gpt-4.1") -> str:
+def enhance_brief(brief: str, *, model: str | None = None) -> str:
     """Прогнать ТЗ через GPT-архитектора и вернуть улучшенный текст.
 
     Никаких JSON, никаких parse — просто текст в, текст из.
@@ -100,16 +100,16 @@ def enhance_brief(brief: str, *, model: str = "gpt-4.1") -> str:
         raise BriefEnhanceError("OPENAI_API_KEY не задан в окружении")
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
+        from ..ai.openai_runtime import chat_completion
+        resp = chat_completion(
+            operation="brief.enhance",
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user",   "content": _USER_PROMPT_TPL.format(brief=brief.strip())},
             ],
             temperature=0.3,
-            max_tokens=600,
+            max_output_tokens=600,
         )
     except Exception as e:
         raise BriefEnhanceError(f"OpenAI API failed: {e}") from e

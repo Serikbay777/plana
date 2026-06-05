@@ -213,7 +213,7 @@ def analyze_contour(
     image_bytes: bytes,
     *,
     mime: str | None = None,
-    model: str = "gpt-4.1",
+    model: str | None = None,
 ) -> ContourAnalysis:
     """Прогнать изображение участка/контура через gpt-4.1-vision.
 
@@ -242,9 +242,9 @@ def analyze_contour(
         })
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(  # type: ignore[call-overload]
+        from ..ai.openai_runtime import chat_completion
+        resp = chat_completion(
+            operation="contour.analyze",
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},

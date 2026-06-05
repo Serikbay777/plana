@@ -74,30 +74,60 @@ export type Project = {
   assets?: ProjectAsset[];
 };
 
+type RawProject = Omit<Project, "params"> & {
+  params: Record<string, unknown> | string | null;
+};
+
+function parseProjectParams(params: RawProject["params"]): Record<string, unknown> {
+  if (!params) return {};
+  if (typeof params === "string") {
+    try {
+      const parsed = JSON.parse(params);
+      return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+  return params;
+}
+
+function normalizeProject(project: RawProject): Project {
+  return {
+    ...project,
+    params: parseProjectParams(project.params),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Projects API
 // ---------------------------------------------------------------------------
 
-export async function createProject(name: string, params: PromptFormState): Promise<Project> {
-  return req("/projects", {
+export type ProjectParams = Record<string, unknown>;
+
+export async function createProject(name: string, params: ProjectParams): Promise<Project> {
+  const project = await req<RawProject>("/projects", {
     method: "POST",
     body: JSON.stringify({ name, params }),
   });
+  return normalizeProject(project);
 }
 
 export async function listProjects(): Promise<Project[]> {
-  return req("/projects");
+  const projects = await req<RawProject[]>("/projects");
+  return projects.map(normalizeProject);
 }
 
 export async function getProject(id: string): Promise<Project> {
-  return req(`/projects/${id}`);
+  const project = await req<RawProject>(`/projects/${id}`);
+  return normalizeProject(project);
 }
 
-export async function updateProject(id: string, data: { name?: string; params?: PromptFormState }): Promise<Project> {
-  return req(`/projects/${id}`, {
+export async function updateProject(id: string, data: { name?: string; params?: ProjectParams }): Promise<Project> {
+  const project = await req<RawProject>(`/projects/${id}`, {
     method: "PUT",
     body: JSON.stringify(data),
   });
+  return normalizeProject(project);
 }
 
 export async function deleteProject(id: string): Promise<void> {

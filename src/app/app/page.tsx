@@ -7,7 +7,7 @@ import {
   Map as MapIcon, Image as ImageIcon, Upload, Building2, Sofa, Eye, X,
   CheckCircle2, ArrowRight, Wand2, Loader2, ScanSearch, Compass, Ruler,
   Trees, Flame, DoorOpen, Network, Save, FolderOpen, Check,
-  LayoutGrid, List, History, ChevronDown, Plus, FileText,
+  LayoutGrid, List, History, ChevronDown, Plus, FileText, Calculator,
 } from "lucide-react";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import { ValidationPanel } from "@/components/ValidationPanel";
@@ -52,6 +52,7 @@ import HistoryPanel from "@/components/HistoryPanel";
 import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
 import { ArchitecturalDrawingsTab, FloorPlanSvg } from "@/components/ArchitecturalDrawingsTab";
 import { AlbumImagesViewer } from "@/components/AlbumImagesViewer";
+import { CostPlacementTab, DEFAULT_COST_PLACEMENT_DRAFT, type CostPlacementDraft } from "@/components/CostPlacementTab";
 import { svgToPngBlob } from "@/lib/export/toPng";
 
 // ---------------------------------------------------------------------------
@@ -60,12 +61,12 @@ import { svgToPngBlob } from "@/lib/export/toPng";
 
 type GenState = "idle" | "loading" | "ready" | "error";
 type CadExportKind = "dxf" | "ifc";
-type TopTab = "site" | "viz" | "ai_plans" | "placement" | "pdf_viz" | "arch_drawings";
+type TopTab = "site" | "viz" | "ai_plans" | "placement" | "cost_placement" | "pdf_viz" | "arch_drawings";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
 
 function topTabForRun(tab: string): TopTab {
   if (tab.startsWith("viz_")) return "viz";
-  if (tab === "site" || tab === "ai_plans" || tab === "placement" || tab === "pdf_viz" || tab === "arch_drawings") return tab;
+  if (tab === "site" || tab === "ai_plans" || tab === "placement" || tab === "cost_placement" || tab === "pdf_viz" || tab === "arch_drawings") return tab;
   return "ai_plans";
 }
 
@@ -256,6 +257,59 @@ function roundMetric(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+const COST_PLACEMENT_PARAM_KEY = "__plana_cost_placement";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function projectParamsWithCostPlacement(
+  form: PromptFormState,
+  costPlacementDraft: CostPlacementDraft,
+): Record<string, unknown> {
+  return {
+    ...form,
+    [COST_PLACEMENT_PARAM_KEY]: costPlacementDraft,
+  };
+}
+
+function promptFormFromProjectParams(params: Record<string, unknown>): PromptFormState {
+  const formParams = { ...params };
+  delete formParams[COST_PLACEMENT_PARAM_KEY];
+  return { ...DEFAULT_PROMPT_FORM, ...(formParams as Partial<PromptFormState>) };
+}
+
+function costPlacementFromProjectParams(params: Record<string, unknown>): CostPlacementDraft {
+  const raw = params[COST_PLACEMENT_PARAM_KEY];
+  if (!isRecord(raw)) return DEFAULT_COST_PLACEMENT_DRAFT;
+
+  const rawCostAssumptions = raw.costAssumptions;
+  const rawCostParams = raw.costParams;
+  const costParams = isRecord(rawCostParams) ? rawCostParams : {};
+  const regionCoefficients = isRecord(costParams.region_coefficients) ? costParams.region_coefficients : {};
+  const qualityCoefficients = isRecord(costParams.quality_coefficients) ? costParams.quality_coefficients : {};
+  return {
+    ...DEFAULT_COST_PLACEMENT_DRAFT,
+    ...(raw as Partial<CostPlacementDraft>),
+    costParams: {
+      ...DEFAULT_COST_PLACEMENT_DRAFT.costParams,
+      ...costParams,
+      region_coefficients: {
+        ...DEFAULT_COST_PLACEMENT_DRAFT.costParams.region_coefficients,
+        ...regionCoefficients,
+      },
+      quality_coefficients: {
+        ...DEFAULT_COST_PLACEMENT_DRAFT.costParams.quality_coefficients,
+        ...qualityCoefficients,
+      },
+    },
+    costAssumptions: {
+      ...DEFAULT_COST_PLACEMENT_DRAFT.costAssumptions,
+      ...(isRecord(rawCostAssumptions) ? rawCostAssumptions : {}),
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -320,6 +374,7 @@ export default function AppPage() {
   const [placementSitePreview,  setPlacementSitePreview]  = useState<string | null>(null);
   const [placementBldFile,      setPlacementBldFile]      = useState<File | null>(null);
   const [placementBldPreview,   setPlacementBldPreview]   = useState<string | null>(null);
+  const [costPlacementDraft, setCostPlacementDraft] = useState<CostPlacementDraft>(DEFAULT_COST_PLACEMENT_DRAFT);
 
   // Site upload (Tab 2)
   const [siteFile, setSiteFile] = useState<File | null>(null);
@@ -333,8 +388,12 @@ export default function AppPage() {
   // Сериализация авто-сохранений: очередь вместо «дропнуть если занято».
   // projectIdRef держит актуальный id даже до того, как setProjectId долетит.
   const projectIdRef = useRef<string | null>(null);
+  const projectNameRef = useRef(projectName);
+  const formRef = useRef(form);
   const saveChainRef = useRef<Promise<unknown>>(Promise.resolve());
   useEffect(() => { projectIdRef.current = projectId; }, [projectId]);
+  useEffect(() => { projectNameRef.current = projectName; }, [projectName]);
+  useEffect(() => { formRef.current = form; }, [form]);
 
   // ---- auth gate
   useEffect(() => {
@@ -361,7 +420,8 @@ export default function AppPage() {
       restoringRef.current = true;
       setProjectId(p.id);
       setProjectName(p.name);
-      setForm({ ...DEFAULT_PROMPT_FORM, ...(p.params as PromptFormState) });
+      setForm(promptFormFromProjectParams(p.params));
+      setCostPlacementDraft(costPlacementFromProjectParams(p.params));
       // восстанавливаем изображения из ассетов
       if (p.assets) {
         // AI-чертежи группируем по этажу
@@ -407,13 +467,14 @@ export default function AppPage() {
     try {
       let pid = projectId;
       if (!pid) {
-        const p = await createProject(projectName, form);
+        const p = await createProject(projectName, projectParamsWithCostPlacement(form, costPlacementDraft));
         pid = p.id;
+        projectIdRef.current = pid;
         setProjectId(pid);
         window.history.replaceState(null, "", `?project=${pid}`);
         setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
       } else {
-        const p = await updateProject(pid, { name: projectName, params: form });
+        const p = await updateProject(pid, { name: projectName, params: projectParamsWithCostPlacement(form, costPlacementDraft) });
         setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
       }
       // сохраняем сгенерированные изображения
@@ -441,7 +502,7 @@ export default function AppPage() {
     } finally {
       setSaving(false);
     }
-  }, [saving, projectId, projectName, form, floorBags, vizExtGallery, vizFloorBag, siteBag]);
+  }, [saving, projectId, projectName, form, costPlacementDraft, floorBags, vizExtGallery, vizFloorBag, siteBag]);
 
   // ---- авто-сохранение после генерации
   const autoSaveGeneration = useCallback((
@@ -463,14 +524,14 @@ export default function AppPage() {
           const auto = `${currentForm.purpose === "residential" ? "ЖК" : "Проект"} ${currentForm.floors}эт ${currentForm.building_width_m}×${currentForm.building_depth_m}`;
           pname = auto;
           setProjectName(auto);
-          const p = await createProject(auto, currentForm);
+          const p = await createProject(auto, projectParamsWithCostPlacement(currentForm, costPlacementDraft));
           pid = p.id;
           projectIdRef.current = pid;
           setProjectId(pid);
           window.history.replaceState(null, "", `?project=${pid}`);
           setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
         } else {
-          await updateProject(pid, { params: currentForm });
+          await updateProject(pid, { params: projectParamsWithCostPlacement(currentForm, costPlacementDraft) });
         }
         const run = await createRun(pid, tab, floor, currentForm);
         await Promise.all(
@@ -489,7 +550,34 @@ export default function AppPage() {
     // Очередь: сохранения сериализуются, ничего не дропается.
     saveChainRef.current = saveChainRef.current.then(task, task);
     return saveChainRef.current;
-  }, [projectName]);
+  }, [projectName, costPlacementDraft]);
+
+  useEffect(() => {
+    if (!projectId || restoringRef.current) return;
+    const timer = window.setTimeout(() => {
+      const pid = projectIdRef.current;
+      if (!pid || restoringRef.current) return;
+      const task = async () => {
+        setAutoSaving(true);
+        setSaveError(null);
+        try {
+          const p = await updateProject(pid, {
+            name: projectNameRef.current,
+            params: projectParamsWithCostPlacement(formRef.current, costPlacementDraft),
+          });
+          setRecentProjects((prev) => [p, ...prev.filter((x) => x.id !== p.id)].slice(0, 10));
+          setAutoSaveLabel(projectNameRef.current || "project");
+          setTimeout(() => setAutoSaveLabel(null), 2500);
+        } catch (e) {
+          setSaveError((e as Error).message || "Could not auto-save cost placement");
+        } finally {
+          setAutoSaving(false);
+        }
+      };
+      saveChainRef.current = saveChainRef.current.then(task, task);
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [projectId, costPlacementDraft]);
 
   // сбрасываем результаты при изменении формы
   useEffect(() => {
@@ -940,6 +1028,7 @@ export default function AppPage() {
     setVizExtGallery(EMPTY_EXT_GALLERY);
     setVizFloorBag(EMPTY_IMAGE_BAG);
     setSiteBag(EMPTY_IMAGE_BAG);
+    setCostPlacementDraft(DEFAULT_COST_PLACEMENT_DRAFT);
     setCurrentFloor(1);
     window.history.replaceState(null, "", "/app");
   };
@@ -990,6 +1079,7 @@ export default function AppPage() {
     tab === "site"      ? generateSite
     : tab === "ai_plans"  ? generateAiPlans
     : tab === "placement" ? generatePlacement
+    : tab === "cost_placement" ? (() => {})
     : generateViz;
 
   // active state для индикатора loading в кнопке
@@ -999,6 +1089,7 @@ export default function AppPage() {
     tab === "site"        ? siteBag.state === "loading"
     : tab === "ai_plans"  ? currentFloorBag.state === "loading"
     : tab === "placement" ? placementBag.state === "loading"
+    : tab === "cost_placement" ? false
     : vizAnyLoading;
 
   if (!authChecked) {
@@ -1041,10 +1132,10 @@ export default function AppPage() {
 
       <main
         className="flex-1 px-6 pb-6 pt-4 grid gap-4"
-        style={{ gridTemplateColumns: (tab === "placement" || tab === "site" || tab === "pdf_viz" || tab === "arch_drawings") ? "1fr" : "300px minmax(0, 1fr)" }}
+        style={{ gridTemplateColumns: (tab === "placement" || tab === "cost_placement" || tab === "site" || tab === "pdf_viz" || tab === "arch_drawings") ? "1fr" : "300px minmax(0, 1fr)" }}
       >
         {/* LEFT — форма + панель валидации (скрыто на фото-табах) */}
-        {tab !== "placement" && tab !== "site" && tab !== "pdf_viz" && tab !== "arch_drawings" && (
+        {tab !== "placement" && tab !== "cost_placement" && tab !== "site" && tab !== "pdf_viz" && tab !== "arch_drawings" && (
           <div className="flex flex-col gap-3 min-h-0">
             <PromptForm
               value={form}
@@ -1155,6 +1246,12 @@ export default function AppPage() {
               onGenerate={generatePlacement}
             />
           )}
+          {tab === "cost_placement" && (
+            <CostPlacementTab
+              value={costPlacementDraft}
+              onChange={setCostPlacementDraft}
+            />
+          )}
           <div className={tab === "pdf_viz" ? "flex flex-col flex-1 min-h-0" : "hidden"}>
             <PdfVizTab
               onAutoSave={(pageIndex, asset) => {
@@ -1175,7 +1272,7 @@ export default function AppPage() {
         {historyOpen && (
           <HistoryPanel
             projectId={projectId}
-            currentTab={tab}
+            currentTab={tab === "cost_placement" ? undefined : tab}
             onRestoreImages={handleRestoreRun}
             onRestoreParams={handleRestoreParams}
             onClose={() => setHistoryOpen(false)}
@@ -1445,6 +1542,19 @@ function TabStrip({
             {it.label}
           </button>
         ))}
+        <button
+          data-testid="top-tab-cost_placement"
+          onClick={() => onChange("cost_placement")}
+          className={[
+            "h-8 px-3.5 rounded-lg text-[12.5px] flex items-center gap-1.5 transition",
+            tab === "cost_placement"
+              ? "bg-white text-black font-medium"
+              : "text-white/65 hover:text-white/90 hover:bg-white/[0.04]",
+          ].join(" ")}
+        >
+          <Calculator size={13} />
+          Стоимость
+        </button>
       </div>
       {/* Экспорт CAD/BIM скрыт по просьбе пользователя.
           handleExportDxf / handleExportIfc + cadExportLoading state остаются —

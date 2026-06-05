@@ -81,7 +81,7 @@ def edit_layout_with_chat(
     layout: LayoutFloor,
     user_message: str,
     *,
-    model: str = "gpt-4.1",
+    model: str | None = None,
 ) -> LayoutFloor:
     """Применить пользовательскую правку к layout через GPT-4."""
     if not user_message or not user_message.strip():
@@ -100,9 +100,9 @@ def edit_layout_with_chat(
     )
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(  # type: ignore[call-overload]
+        from ..ai.openai_runtime import chat_completion
+        resp = chat_completion(
+            operation="layout.chat_edit",
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},

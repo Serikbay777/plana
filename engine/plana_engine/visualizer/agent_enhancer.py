@@ -39,10 +39,11 @@ from .kz_norms import (
     NormSection, build_norms_context, select_relevant_norms,
 )
 from .marketing_prompt import MarketingInputs
+from ..ai.openai_runtime import chat_completion, has_openai_api_key, resolve_openai_model
 
 
-_DEFAULT_BASE_URL = "https://llm.alem.ai/v1"
-_DEFAULT_MODEL = "qwen3"
+_DEFAULT_BASE_URL = ""
+_DEFAULT_MODEL = "gpt-5.5"
 
 
 def _robust_json_parse(raw: str) -> dict | None:
@@ -102,18 +103,8 @@ def _alem_credentials() -> tuple[str | None, str, str]:
     Поддерживает legacy LLM_* для обратной совместимости.
     Возвращает (api_key, base_url, model). api_key = None → ключа нет.
     """
-    api_key = os.environ.get("ALEM_API_KEY") or os.environ.get("LLM_API_KEY")
-    base_url = (
-        os.environ.get("ALEM_BASE_URL")
-        or os.environ.get("LLM_BASE_URL")
-        or _DEFAULT_BASE_URL
-    )
-    model = (
-        os.environ.get("ALEM_MODEL")
-        or os.environ.get("LLM_MODEL")
-        or _DEFAULT_MODEL
-    )
-    return api_key, base_url, model
+    api_key = os.environ.get("OPENAI_API_KEY") if has_openai_api_key() else None
+    return api_key, _DEFAULT_BASE_URL, resolve_openai_model()
 
 
 # ── структуры данных ────────────────────────────────────────────────────────
@@ -281,22 +272,17 @@ def _critic_call(
     api_key: str, base_url: str, model: str,
 ) -> Critique:
     """Stage 1: дёргаем LLM с нормами и параметрами, получаем Critique."""
-    try:
-        from openai import OpenAI
-    except ImportError:
-        return Critique()
-
     user_payload = (
         f"{_format_inputs_for_critic(inputs)}\n"
         f"───────────────────────────────────\n"
         f"ВЫПИСКА ИЗ НОРМ РК:\n\n{norms_context}"
     )
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
     try:
         # Сначала пробуем с json_schema (если модель поддерживает)
         try:
-            resp = client.chat.completions.create(  # type: ignore[call-overload]
+            resp = chat_completion(
+                operation="agent.critic",
                 model=model,
                 messages=[
                     {"role": "system", "content": _CRITIC_SYSTEM},
@@ -304,11 +290,12 @@ def _critic_call(
                 ],
                 response_format={"type": "json_schema", "json_schema": _CRITIQUE_SCHEMA},
                 temperature=0.2,
-                max_tokens=2500,
+                max_output_tokens=2500,
             )
         except Exception:
             # Фолбэк на json_object для моделей попроще (Gemma на alem.ai)
-            resp = client.chat.completions.create(
+            resp = chat_completion(
+                operation="agent.critic_json_object",
                 model=model,
                 messages=[
                     {"role": "system", "content": _CRITIC_SYSTEM},
@@ -316,7 +303,7 @@ def _critic_call(
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.2,
-                max_tokens=2500,
+                max_output_tokens=2500,
             )
     except Exception as e:
         logging.warning(f"Architect Critic failed: {e}")
@@ -416,27 +403,22 @@ def _composer_call(
     temperature: float = 0.6,
 ) -> str:
     """Stage 2: дёргаем LLM с базовым промптом и критикой, получаем enhanced."""
-    try:
-        from openai import OpenAI
-    except ImportError:
-        return base_prompt
-
     user_payload = (
         f"БАЗОВЫЙ ПРОМПТ:\n\n{base_prompt}\n\n"
         f"───────────────────────────────────\n"
         f"АРХИТЕКТУРНАЯ КРИТИКА:\n\n{_format_critique_for_composer(critique)}\n"
     )
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
     try:
-        resp = client.chat.completions.create(
+        resp = chat_completion(
+            operation="agent.composer",
             model=model,
             messages=[
                 {"role": "system", "content": _COMPOSER_SYSTEM},
                 {"role": "user", "content": user_payload},
             ],
             temperature=temperature,
-            max_tokens=4500,
+            max_output_tokens=4500,
         )
     except Exception as e:
         logging.warning(f"Prompt Composer failed: {e}")

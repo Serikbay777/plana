@@ -182,7 +182,7 @@ def _sanitize_extraction(ext: GpzuExtraction) -> GpzuExtraction:
     )
 
 
-def extract_gpzu(pdf_bytes: bytes, *, model: str = "gpt-4.1") -> GpzuExtraction:
+def extract_gpzu(pdf_bytes: bytes, *, model: str | None = None) -> GpzuExtraction:
     """Извлечь поля из PDF-ГПЗУ через OpenAI Vision."""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -209,9 +209,9 @@ def extract_gpzu(pdf_bytes: bytes, *, model: str = "gpt-4.1") -> GpzuExtraction:
         })
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(  # type: ignore[call-overload]
+        from ..ai.openai_runtime import chat_completion
+        resp = chat_completion(
+            operation="gpzu.extract",
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
