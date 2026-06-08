@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 type AuthSession = {
   token: string;
@@ -260,6 +261,33 @@ test("cost placement tab compares variants and survives section switches", async
   await expect(page.getByTestId("cost-analyst-explanation")).toContainText("Screening estimate is driven");
   await expect(page.getByTestId("cost-analyst-explanation")).toContainText("Key drivers");
   await expect(page.getByTestId("cost-analyst-explanation")).toContainText("Topographic survey");
+  const totalBeforeCalibration = await page.getByTestId("cost-placement-total").textContent();
+  await page.getByTestId("cost-calibration-upload").setInputFiles({
+    name: "historical-costs.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from([
+      "project_id,project_name,region,object_type,building_class,gfa_above_ground_m2,gfa_underground_m2,floors_above,floors_below,parking_mode,parking_spots,complex_soil,complex_slope,actual_total_cost_kzt,actual_cost_year,source_name,verification_status,notes",
+      "KZ-ALM-001,Almaty benchmark,Almaty,multifamily residential,comfort,18000,3200,12,1,mixed,320,false,true,4300000000,2026,Verified closeout,draft,Future calibration row",
+    ].join("\n")),
+  });
+  await expect(page.getByTestId("cost-calibration-status")).toContainText("1 historical row");
+  await expect(page.getByTestId("cost-calibration-status")).toContainText("No predictive ML model is trained");
+  await expect(page.getByTestId("cost-calibration-assumptions")).toContainText("Required fields");
+  await expect(page.getByTestId("cost-source-registry")).toContainText("Historical outcome dataset");
+  await expect(page.getByTestId("cost-placement-total")).toHaveText(totalBeforeCalibration ?? "");
+  const reportDownloadPromise = page.waitForEvent("download");
+  await page.getByTestId("cost-report-export-csv").click();
+  const reportDownload = await reportDownloadPromise;
+  expect(reportDownload.suggestedFilename()).toContain("plana-cost-report");
+  const reportPath = await reportDownload.path();
+  expect(reportPath).toBeTruthy();
+  const reportContent = await readFile(reportPath!, "utf8");
+  expect(reportContent).toContain("Screening estimate, not official Kazakhstan estimate documentation");
+  expect(reportContent).toContain("Class 5 Range");
+  expect(reportContent).toContain("Source Registry");
+  expect(reportContent).toContain("AI Extraction");
+  expect(reportContent).toContain("Calibration Dataset");
+  expect(reportContent).toContain("No predictive ML model is trained");
 
   await page.getByTestId("top-tab-site").click();
   await page.getByTestId("top-tab-cost_placement").click();
@@ -295,10 +323,13 @@ test("cost placement tab compares variants and survives section switches", async
   await expect(restored.getByTestId("cost-assumptions-panel")).toContainText("Geo confidence");
   await expect(restored.getByTestId("cost-assumptions-panel")).toContainText("Vision analysis");
   await expect(restored.getByTestId("cost-analyst-explanation")).toContainText("Screening estimate is driven");
+  await expect(restored.getByTestId("cost-calibration-status")).toContainText("1 historical row");
+  await expect(restored.getByTestId("cost-calibration-assumptions")).toContainText("Almaty benchmark");
   await expect(restored.getByTestId("cost-assumptions-panel")).toContainText("G) Source Registry");
   await expect(restored.getByTestId("cost-source-registry")).toContainText("client_uploaded");
   await expect(restored.getByTestId("cost-source-registry")).toContainText("ai_extracted");
   await expect(restored.getByTestId("cost-source-registry")).toContainText("vision_extracted");
+  await expect(restored.getByTestId("cost-source-registry")).toContainText("market_calibrated");
   await expect(restored.getByTestId("cost-placement-revenue-check")).toContainText(/700\s*000/);
   await expect(restored.getByTestId("cost-placement-feasibility-score")).toContainText(/GO|CAUTION|NO-GO/);
   await restored.close();

@@ -43,6 +43,29 @@ type CostSourceRegistryEntry = {
   note: string;
 };
 
+type CalibrationVerificationStatus = "draft" | "verified" | "rejected";
+
+type CalibrationDatasetRow = {
+  projectId: string;
+  projectName: string;
+  region: string;
+  objectType: string;
+  buildingClass: string;
+  gfaAboveGroundM2: number;
+  gfaUndergroundM2: number;
+  floorsAbove: number;
+  floorsBelow: number;
+  parkingMode: string;
+  parkingSpots: number | null;
+  complexSoil: boolean | null;
+  complexSlope: boolean | null;
+  actualTotalCostKzt: number;
+  actualCostYear: string;
+  sourceName: string;
+  verificationStatus: CalibrationVerificationStatus;
+  notes: string;
+};
+
 export type CostAssumptions = {
   priceLevelYear: string;
   region: Region;
@@ -83,6 +106,9 @@ export type CostAssumptions = {
   analystExplainedAt: string | null;
   analystModelUsed: string | null;
   analystExplanation: CostAnalystExplanation | null;
+  calibrationRows: CalibrationDatasetRow[];
+  calibrationImportedAt: string | null;
+  calibrationImportWarnings: string[];
   includedItems: string[];
   excludedItems: string[];
   missingDataWarnings: string[];
@@ -177,6 +203,9 @@ const DEFAULT_COST_ASSUMPTIONS: CostAssumptions = {
   analystExplainedAt: null,
   analystModelUsed: null,
   analystExplanation: null,
+  calibrationRows: [],
+  calibrationImportedAt: null,
+  calibrationImportWarnings: [],
   includedItems: INCLUDED_ITEMS,
   excludedItems: EXCLUDED_ITEMS,
   missingDataWarnings: [
@@ -438,6 +467,259 @@ function parseClientRatesCsv(text: string): RateImportResult {
   return result;
 }
 
+const CALIBRATION_TEMPLATE_HEADERS = [
+  "project_id",
+  "project_name",
+  "region",
+  "object_type",
+  "building_class",
+  "gfa_above_ground_m2",
+  "gfa_underground_m2",
+  "floors_above",
+  "floors_below",
+  "parking_mode",
+  "parking_spots",
+  "complex_soil",
+  "complex_slope",
+  "actual_total_cost_kzt",
+  "actual_cost_year",
+  "source_name",
+  "verification_status",
+  "notes",
+];
+
+type CalibrationImportResult = {
+  rows: CalibrationDatasetRow[];
+  warnings: string[];
+};
+
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let insideQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === "\"" && insideQuotes && next === "\"") {
+      current += "\"";
+      index += 1;
+      continue;
+    }
+    if (char === "\"") {
+      insideQuotes = !insideQuotes;
+      continue;
+    }
+    if (char === "," && !insideQuotes) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseOptionalBoolean(rawValue: string): boolean | null {
+  const normalized = rawValue.trim().toLowerCase();
+  if (!normalized) return null;
+  if (["true", "yes", "1", "y"].includes(normalized)) return true;
+  if (["false", "no", "0", "n"].includes(normalized)) return false;
+  return null;
+}
+
+function normalizeVerificationStatus(rawValue: string): CalibrationVerificationStatus {
+  const normalized = normalizeRateImportKey(rawValue);
+  if (normalized === "verified") return "verified";
+  if (normalized === "rejected") return "rejected";
+  return "draft";
+}
+
+function parseCalibrationDatasetCsv(text: string): CalibrationImportResult {
+  const warnings: string[] = [];
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+
+  if (lines.length < 2) {
+    return { rows: [], warnings: ["CSV must include a header row and at least one historical project row."] };
+  }
+
+  const headers = parseCsvLine(lines[0]).map(normalizeRateImportKey);
+  const headerIndex = new Map(headers.map((header, index) => [header, index]));
+  const requiredHeaders = [
+    "project_id",
+    "project_name",
+    "region",
+    "building_class",
+    "gfa_above_ground_m2",
+    "actual_total_cost_kzt",
+    "actual_cost_year",
+    "source_name",
+    "verification_status",
+  ];
+
+  for (const header of requiredHeaders) {
+    if (!headerIndex.has(header)) warnings.push(`Missing required column: ${header}`);
+  }
+  if (warnings.some((warning) => warning.startsWith("Missing required column"))) {
+    return { rows: [], warnings };
+  }
+
+  const getCell = (cells: string[], key: string) => cells[headerIndex.get(key) ?? -1] ?? "";
+  const rows: CalibrationDatasetRow[] = [];
+
+  for (const [lineIndex, line] of lines.slice(1, 201).entries()) {
+    const cells = parseCsvLine(line);
+    const rowNumber = lineIndex + 2;
+    const projectId = getCell(cells, "project_id");
+    const projectName = getCell(cells, "project_name");
+    const gfaAboveGroundM2 = parseRateNumber(getCell(cells, "gfa_above_ground_m2"));
+    const actualTotalCostKzt = parseRateNumber(getCell(cells, "actual_total_cost_kzt"));
+
+    if (!projectId || !projectName) {
+      warnings.push(`Row ${rowNumber}: project_id and project_name are required.`);
+      continue;
+    }
+    if (gfaAboveGroundM2 === null || gfaAboveGroundM2 <= 0) {
+      warnings.push(`Row ${rowNumber}: gfa_above_ground_m2 must be a positive number.`);
+      continue;
+    }
+    if (actualTotalCostKzt === null || actualTotalCostKzt <= 0) {
+      warnings.push(`Row ${rowNumber}: actual_total_cost_kzt must be a positive number.`);
+      continue;
+    }
+
+    const gfaUndergroundM2 = parseRateNumber(getCell(cells, "gfa_underground_m2")) ?? 0;
+    const floorsAbove = parseRateNumber(getCell(cells, "floors_above")) ?? 0;
+    const floorsBelow = parseRateNumber(getCell(cells, "floors_below")) ?? 0;
+    const parkingSpots = parseRateNumber(getCell(cells, "parking_spots"));
+    rows.push({
+      projectId,
+      projectName,
+      region: getCell(cells, "region") || "unknown",
+      objectType: getCell(cells, "object_type") || "unknown",
+      buildingClass: getCell(cells, "building_class") || "unknown",
+      gfaAboveGroundM2,
+      gfaUndergroundM2,
+      floorsAbove,
+      floorsBelow,
+      parkingMode: getCell(cells, "parking_mode") || "unknown",
+      parkingSpots,
+      complexSoil: parseOptionalBoolean(getCell(cells, "complex_soil")),
+      complexSlope: parseOptionalBoolean(getCell(cells, "complex_slope")),
+      actualTotalCostKzt,
+      actualCostYear: getCell(cells, "actual_cost_year"),
+      sourceName: getCell(cells, "source_name"),
+      verificationStatus: normalizeVerificationStatus(getCell(cells, "verification_status")),
+      notes: getCell(cells, "notes"),
+    });
+  }
+
+  if (lines.length > 201) warnings.push("Only the first 200 historical rows were imported in the MVP frontend placeholder.");
+  if (rows.length === 0 && warnings.length === 0) warnings.push("No valid historical project rows were found.");
+
+  return { rows, warnings };
+}
+
+function csvEscape(value: unknown): string {
+  const raw = value === null || value === undefined ? "" : String(value);
+  if (/[",\n\r]/.test(raw)) return `"${raw.replace(/"/g, "\"\"")}"`;
+  return raw;
+}
+
+function downloadCsv(filename: string, rows: unknown[][]): void {
+  const body = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([body], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildCostReportRows(input: {
+  selected: CostPlacementRow;
+  cheapest: CostPlacementRow;
+  assumptions: CostAssumptions;
+  building: Building;
+  draft: CostPlacementDraft;
+}): unknown[][] {
+  const { selected, cheapest, assumptions, building, draft } = input;
+  const rows: unknown[][] = [
+    ["section", "item", "value", "notes"],
+    ["Report", "Title", "Plana Class 5 Cost Placement Screening Report", ""],
+    ["Report", "Disclaimer", "Screening estimate, not official Kazakhstan estimate documentation", "Do not use as official estimate documentation."],
+    ["Cost Basis", "Selected variant", variantLabel(selected.placement.variant_key), ""],
+    ["Cost Basis", "Cheapest baseline", variantLabel(cheapest.placement.variant_key), selected.deltaToCheapest === 0 ? "Selected is baseline" : `Selected delta: ${selected.deltaToCheapest} KZT`],
+    ["Cost Basis", "Price level year", assumptions.priceLevelYear, ""],
+    ["Cost Basis", "Region", regionLabel(assumptions.region), ""],
+    ["Cost Basis", "Object type", assumptions.objectType, ""],
+    ["Cost Basis", "Building class", qualityLabel(assumptions.buildingClass), ""],
+    ["Cost Basis", "Estimate class", "AACE Class 5", "Early screening only"],
+    ["Class 5 Range", "Low", selected.cost.range_low, "KZT"],
+    ["Class 5 Range", "Expected", selected.cost.total_estimate, "KZT"],
+    ["Class 5 Range", "High", selected.cost.range_high, "KZT"],
+    ["Developer KPIs", "GFA above ground", building.gfa_above_ground_m2, "m2"],
+    ["Developer KPIs", "GFA underground", building.gfa_underground_m2, "m2"],
+    ["Developer KPIs", "Sellable area", selected.sellableAreaM2, "m2"],
+    ["Developer KPIs", "FAR / KIT", selected.far.toFixed(2), ""],
+    ["Developer KPIs", "Coverage", selected.coveragePct.toFixed(1), "%"],
+    ["Developer KPIs", "Cost per GFA", selected.costPerGfaM2, "KZT/m2"],
+    ["Developer KPIs", "Cost per sellable", selected.costPerSellableM2, "KZT/m2"],
+    ["Revenue", "Market price", draft.market_price_per_sellable_m2, "KZT/m2 sellable"],
+    ["Revenue", "Potential revenue", selected.revenueEstimate, "KZT"],
+    ["Revenue", "Gross margin before land", selected.grossMarginBeforeLand, "KZT"],
+    ["Revenue", "Gross margin pct", selected.grossMarginPct.toFixed(1), "%"],
+    ["Feasibility", "Signal", selected.feasibility.label, `Score ${selected.feasibility.score}/100`],
+    ["Rate Assumptions", "Base above-ground rate", assumptions.baseRateAboveGround, "KZT/m2"],
+    ["Rate Assumptions", "Region coefficient", assumptions.regionCoefficient, ""],
+    ["Rate Assumptions", "Class/quality coefficient", assumptions.classCoefficient, ""],
+    ["Rate Assumptions", "Underground factor", assumptions.undergroundFactor, ""],
+    ["Rate Assumptions", "Site works method", assumptions.siteWorksMethod, ""],
+    ["Rate Assumptions", "Contingency", assumptions.contingencyPct, "%"],
+    ["Rate Assumptions", "VAT status", assumptions.vatIncluded ? "included" : "excluded by default", ""],
+  ];
+
+  for (const bucket of selected.costBuckets) {
+    rows.push(["Cost Buckets", bucket.label, bucket.amount ?? "Excluded", bucket.sharePct === null ? bucket.note : `${bucket.sharePct.toFixed(1)}% - ${bucket.note}`]);
+  }
+  for (const line of selected.cost.method_meta.lines) {
+    rows.push(["Cost Lines", line.label, line.amount, "KZT"]);
+  }
+  for (const item of assumptions.includedItems) rows.push(["Included Items", item, "included", ""]);
+  for (const item of assumptions.excludedItems) rows.push(["Excluded Items", item, "excluded", ""]);
+  for (const warning of assumptions.missingDataWarnings) rows.push(["Missing Data Warnings", warning, "warning", ""]);
+  for (const entry of assumptions.sourceRegistry) {
+    rows.push(["Source Registry", entry.label, entry.sourceType, `${entry.sourceName}; year=${entry.sourceYear}; confidence=${entry.confidenceLevel}; applies=${entry.appliesTo.join(" | ")}`]);
+  }
+  if (assumptions.aiModelUsed) {
+    rows.push(["AI Extraction", "Model", assumptions.aiModelUsed, `Confidence=${assumptions.aiConfidenceLevel ?? "not recorded"}`]);
+    rows.push(["AI Extraction", "Applied fields", assumptions.aiAppliedFields.map(sourceFieldLabel).join(" | "), "User-confirmed fields"]);
+    rows.push(["AI Extraction", "Rejected fields", assumptions.aiRejectedFields.map(sourceFieldLabel).join(" | "), "Not applied"]);
+  }
+  if (assumptions.visionModelUsed) {
+    rows.push(["Vision Analysis", "Model", assumptions.visionModelUsed, `Confidence=${assumptions.visionConfidenceLevel ?? "not recorded"}`]);
+    rows.push(["Vision Analysis", "Applied flags", assumptions.visionAppliedFlags.map((key) => VISION_RISK_LABELS[key] ?? key).join(" | "), "User-confirmed flags"]);
+  }
+  if (assumptions.analystExplanation) {
+    rows.push(["AI Analyst", "Summary", assumptions.analystExplanation.summary, assumptions.analystModelUsed ?? ""]);
+    for (const item of assumptions.analystExplanation.key_drivers) rows.push(["AI Analyst", "Key driver", item, ""]);
+    for (const item of assumptions.analystExplanation.risk_notes) rows.push(["AI Analyst", "Risk note", item, ""]);
+    for (const item of assumptions.analystExplanation.next_documents) rows.push(["AI Analyst", "Next document", item, ""]);
+  }
+  rows.push(["Calibration Dataset", "Imported rows", assumptions.calibrationRows.length, "Not used in current deterministic totals."]);
+  rows.push(["Calibration Dataset", "ML status", "No predictive ML model is trained until enough verified data exists", ""]);
+
+  return rows;
+}
+
 function mergeCostParamsWithImport(current: CostParams, imported: RateImportPatch): CostParams {
   return {
     ...current,
@@ -597,6 +879,20 @@ function buildSourceRegistry(input: {
       confidenceLevel: "medium",
       appliesTo: otherFieldSources.map(({ key, sourceType }) => `${sourceFieldLabel(key)}: ${sourceType}`),
       note: "Compatibility source map for fields edited before the registry was introduced.",
+    });
+  }
+
+  if ((state.calibrationRows ?? []).length > 0) {
+    entries.push({
+      id: "calibration.historical_outcomes",
+      label: "Historical outcome dataset",
+      sourceType: "market_calibrated",
+      sourceName: "User imported historical project cost rows",
+      sourceYear: state.calibrationImportedAt ?? state.lastUpdated,
+      lastUpdated: state.calibrationImportedAt ?? state.lastUpdated,
+      confidenceLevel: "low",
+      appliesTo: ["Future ML calibration dataset path"],
+      note: `${state.calibrationRows.length} row(s) imported for future calibration only. Not used in current deterministic Class 5 totals.`,
     });
   }
 
@@ -918,6 +1214,7 @@ function buildCostBuckets(cost: CostSnapshot): CostBucket[] {
 
 export function CostPlacementTab({ value, onChange }: Props) {
   const [rateImportError, setRateImportError] = useState<string | null>(null);
+  const [calibrationImportError, setCalibrationImportError] = useState<string | null>(null);
   const [aiBrief, setAiBrief] = useState("");
   const [aiExtraction, setAiExtraction] = useState<CostInputExtractionResponse | null>(null);
   const [aiSelectedFields, setAiSelectedFields] = useState<string[]>([]);
@@ -981,6 +1278,72 @@ export function CostPlacementTab({ value, onChange }: Props) {
         fieldSources: nextFieldSources,
       },
     });
+  };
+
+  const handleCalibrationUpload = async (file: File) => {
+    setCalibrationImportError(null);
+    const text = await file.text();
+    const parsed = parseCalibrationDatasetCsv(text);
+    if (parsed.rows.length === 0) {
+      setCalibrationImportError(parsed.warnings[0] ?? "No valid historical project rows were found.");
+      onChange({
+        ...value,
+        costAssumptions: {
+          ...value.costAssumptions,
+          calibrationRows: [],
+          calibrationImportedAt: new Date().toISOString().slice(0, 10),
+          calibrationImportWarnings: parsed.warnings,
+        },
+      });
+      return;
+    }
+
+    onChange({
+      ...value,
+      costAssumptions: {
+        ...value.costAssumptions,
+        calibrationRows: parsed.rows,
+        calibrationImportedAt: new Date().toISOString().slice(0, 10),
+        calibrationImportWarnings: parsed.warnings,
+      },
+    });
+  };
+
+  const exportCalibrationTemplate = () => {
+    downloadCsv("plana-calibration-template.csv", [
+      CALIBRATION_TEMPLATE_HEADERS,
+      [
+        "KZ-ALM-001",
+        "Almaty comfort residential benchmark",
+        "Almaty",
+        "multifamily residential",
+        "comfort",
+        18000,
+        3200,
+        12,
+        1,
+        "mixed",
+        320,
+        "false",
+        "false",
+        4200000000,
+        "2026",
+        "Verified internal project cost closeout",
+        "draft",
+        "Example row. Replace with actual verified outcome data.",
+      ],
+    ]);
+  };
+
+  const exportCostReport = () => {
+    const rows = buildCostReportRows({
+      selected,
+      cheapest,
+      assumptions: model.assumptions,
+      building: model.building,
+      draft: value,
+    });
+    downloadCsv(`plana-cost-report-${selected.placement.variant_key}.csv`, rows);
   };
 
   const analyzeCostBrief = async () => {
@@ -1513,6 +1876,66 @@ export function CostPlacementTab({ value, onChange }: Props) {
               </div>
               <NumberField testId="cost-rate-landscape" label="Landscape, KZT/m2" value={value.costParams.landscape_rate_kzt_m2} step={1000} onChange={(v) => updateCostParam("landscape_rate_kzt_m2", v)} />
             </Panel>
+
+            <Panel title="Calibration dataset path" icon={<BarChart3 size={13} className="text-blue-300" />}>
+              <div className="rounded-xl border border-blue-300/10 bg-blue-300/[0.045] px-3 py-2 text-[10.5px] leading-relaxed text-blue-100/65">
+                Collect verified historical project outcomes for future ML calibration. This import does not change current Class 5 totals.
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11.5px] font-medium text-white/75">Historical costs CSV</div>
+                    <div className="mt-0.5 text-[10.5px] leading-relaxed text-white/35">
+                      Required: project_id, region, GFA, actual cost, source, verification status.
+                    </div>
+                  </div>
+                  <label className="shrink-0 cursor-pointer rounded-lg border border-blue-300/20 bg-blue-300/10 px-2.5 py-1.5 text-[10.5px] text-blue-100/80 hover:bg-blue-300/15">
+                    Import
+                    <input
+                      data-testid="cost-calibration-upload"
+                      type="file"
+                      accept=".csv,text/csv,text/plain"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0];
+                        if (file) void handleCalibrationUpload(file);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+                <div data-testid="cost-calibration-status" className="mt-2 space-y-1 text-[10.5px] leading-relaxed text-white/42">
+                  <div>
+                    {value.costAssumptions.calibrationRows.length > 0
+                      ? `${value.costAssumptions.calibrationRows.length} historical row(s) imported on ${value.costAssumptions.calibrationImportedAt ?? "unknown date"}`
+                      : "No historical outcome dataset imported yet."}
+                  </div>
+                  <div className="text-amber-100/70">No predictive ML model is trained until enough verified data exists.</div>
+                </div>
+                {calibrationImportError && (
+                  <div data-testid="cost-calibration-error" className="mt-2 rounded-lg border border-rose-300/20 bg-rose-300/10 px-2 py-1.5 text-[10.5px] text-rose-100/75">
+                    {calibrationImportError}
+                  </div>
+                )}
+                {value.costAssumptions.calibrationImportWarnings.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {value.costAssumptions.calibrationImportWarnings.slice(0, 3).map((warning) => (
+                      <div key={warning} className="rounded-lg border border-amber-300/15 bg-amber-300/[0.07] px-2 py-1 text-[10px] text-amber-100/70">
+                        {warning}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                data-testid="cost-calibration-template"
+                onClick={exportCalibrationTemplate}
+                className="w-full rounded-lg border border-white/[0.08] bg-white/[0.035] px-3 py-2 text-[11px] font-medium text-white/65 hover:bg-white/[0.055]"
+              >
+                Download calibration CSV template
+              </button>
+            </Panel>
           </aside>
 
           <section className="space-y-4 min-w-0">
@@ -1579,6 +2002,28 @@ export function CostPlacementTab({ value, onChange }: Props) {
                       <RangeStat label="Low" value={`${fmt(selected.cost.range_low)} ₸`} />
                       <RangeStat label="Expected" value={`${fmt(selected.cost.total_estimate)} ₸`} active />
                       <RangeStat label="High" value={`${fmt(selected.cost.range_high)} ₸`} />
+                    </div>
+                  </div>
+
+                  <div data-testid="cost-report-export" className="mb-4 rounded-xl border border-emerald-300/10 bg-emerald-300/[0.035] p-3.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[12.5px] font-medium text-white/85">Shareable cost report</div>
+                        <div className="mt-0.5 text-[10.5px] leading-relaxed text-white/42">
+                          CSV includes Class 5 range, buckets, included/excluded items, source registry, warnings, and AI confirmation metadata.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        data-testid="cost-report-export-csv"
+                        onClick={exportCostReport}
+                        className="shrink-0 rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-3 py-1.5 text-[10.5px] font-medium text-emerald-100/80 hover:bg-emerald-300/15"
+                      >
+                        Export CSV
+                      </button>
+                    </div>
+                    <div className="mt-2 rounded-lg border border-amber-300/15 bg-amber-300/[0.06] px-2 py-1.5 text-[10.5px] text-amber-100/70">
+                      Screening estimate, not official Kazakhstan estimate documentation.
                     </div>
                   </div>
 
@@ -1968,6 +2413,9 @@ function buildCostAssumptions(value: CostPlacementDraft): CostAssumptions {
     analystExplainedAt: state.analystExplainedAt ?? null,
     analystModelUsed: state.analystModelUsed ?? null,
     analystExplanation: state.analystExplanation ?? null,
+    calibrationRows: state.calibrationRows ?? [],
+    calibrationImportedAt: state.calibrationImportedAt ?? null,
+    calibrationImportWarnings: state.calibrationImportWarnings ?? [],
     includedItems: INCLUDED_ITEMS,
     excludedItems: EXCLUDED_ITEMS,
     missingDataWarnings,
@@ -2131,6 +2579,35 @@ function CostAssumptionsPanel({
                 Applies to: <span className="text-white/62">{entry.appliesTo.join(", ")}</span>
               </div>
               <div className="text-[10px] leading-relaxed text-white/35">{entry.note}</div>
+            </div>
+          ))}
+        </div>
+      </AssumptionSection>
+
+      <AssumptionSection title="H) Calibration Dataset Path">
+        <div data-testid="cost-calibration-assumptions" className="space-y-2">
+          <AssumptionRow label="Imported rows" value={String(assumptions.calibrationRows.length)} warn={assumptions.calibrationRows.length === 0} />
+          <AssumptionRow label="Imported at" value={assumptions.calibrationImportedAt ?? "not imported"} muted={!assumptions.calibrationImportedAt} />
+          <AssumptionRow
+            label="ML status"
+            value="No predictive ML model is trained until enough verified data exists"
+            warn
+            help="Historical rows are stored for future calibration only and do not modify current deterministic totals."
+          />
+          <AssumptionRow
+            label="Required fields"
+            value="project_id, region, building_class, GFA, actual cost, cost year, source, verification status"
+            muted
+          />
+          {assumptions.calibrationRows.slice(0, 2).map((row) => (
+            <div key={row.projectId} className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5 text-[10.5px] text-white/52">
+              {row.projectName}: {fmt(row.actualTotalCostKzt)} KZT, {fmt(row.gfaAboveGroundM2)} m2, {row.verificationStatus}
+            </div>
+          ))}
+          {assumptions.calibrationImportWarnings.map((warning) => (
+            <div key={warning} className="flex items-start gap-1.5 rounded-lg border border-amber-300/15 bg-amber-300/[0.07] px-2 py-1.5 text-[10.5px] text-amber-100/75">
+              <AlertCircle size={10} className="mt-0.5 shrink-0" />
+              <span>{warning}</span>
             </div>
           ))}
         </div>
