@@ -353,8 +353,8 @@
         "Tests pass"
       ],
       "priority": 21,
-      "passes": false,
-      "notes": "Client-facing output after AI/geo/photo inputs are explainable."
+      "passes": true,
+      "notes": "Implemented frontend CSV report export with Class 5 range, buckets, included/excluded items, warnings, source registry, AI metadata, calibration status, and screening-only disclaimer."
     },
     {
       "id": "US-022",
@@ -368,8 +368,8 @@
         "Tests pass"
       ],
       "priority": 22,
-      "passes": false,
-      "notes": "Preparation for CatBoost/XGBoost/LightGBM calibration later; not part of immediate MVP calculation."
+      "passes": true,
+      "notes": "Implemented minimal historical cost schema, CSV template/import placeholder, persistence, UI warnings, and explicit no-predictive-ML status. Imported rows do not affect current totals."
     }
   ]
 }
