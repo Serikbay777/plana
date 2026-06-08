@@ -99,7 +99,7 @@ function RunCard({ run, onRestoreImages, onRestoreParams }: RunCardProps) {
   const subLabel = VIZ_TAB_LABEL[run.tab];
 
   return (
-    <div className="group rounded-xl border border-white/[0.07] bg-white/[0.025] hover:bg-white/[0.04] transition overflow-hidden">
+    <div data-testid={`history-run-${run.id}`} className="group rounded-xl border border-white/[0.07] bg-white/[0.025] hover:bg-white/[0.04] transition overflow-hidden">
       {/* Thumbnail */}
       {hasImages && (
         <button
@@ -143,6 +143,7 @@ function RunCard({ run, onRestoreImages, onRestoreParams }: RunCardProps) {
         <div className="flex gap-1.5">
           {hasImages && (
             <button
+              data-testid={`history-open-${run.id}`}
               onClick={() => onRestoreImages(run)}
               className="h-6 px-2 rounded-md bg-white/[0.05] border border-white/[0.08] text-[10.5px] text-white/65 hover:text-white hover:bg-white/[0.1] transition flex items-center gap-1"
             >
@@ -181,20 +182,19 @@ export default function HistoryPanel({
   onClose,
 }: HistoryPanelProps) {
   const [runs, setRuns] = useState<GenerationRun[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<HistoryTab>(currentTab ?? "ai_plans");
-
-  // Следуем за активным разделом приложения: открыл Посадку — видишь её историю
-  useEffect(() => {
-    if (currentTab) setActiveTab(currentTab);
-  }, [currentTab]);
+  const [loading, setLoading] = useState(Boolean(projectId));
+  const [error, setError] = useState<string | null>(null);
+  const [selectedTab, setSelectedTab] = useState<HistoryTab>(currentTab ?? "ai_plans");
+  const activeTab = selectedTab;
 
   const load = useCallback(() => {
-    if (!projectId) { setRuns([]); return; }
-    setLoading(true);
-    listRuns(projectId)
-      .then(setRuns)
-      .catch(() => {})
+    const request = projectId ? listRuns(projectId) : Promise.resolve([]);
+    return request
+      .then((nextRuns) => {
+        setRuns(nextRuns);
+        setError(null);
+      })
+      .catch((e: unknown) => setError((e as Error).message || "Не удалось загрузить историю"))
       .finally(() => setLoading(false));
   }, [projectId]);
 
@@ -220,7 +220,10 @@ export default function HistoryPanel({
         </div>
         <div className="flex items-center gap-1">
           <button
-            onClick={load}
+            onClick={() => {
+              setLoading(true);
+              void load();
+            }}
             className="size-6 rounded grid place-items-center text-white/30 hover:text-white/70 transition"
             title="Обновить"
           >
@@ -242,7 +245,8 @@ export default function HistoryPanel({
           return (
             <button
               key={t.key}
-              onClick={() => setActiveTab(t.key)}
+              data-testid={`history-tab-${t.key}`}
+              onClick={() => setSelectedTab(t.key)}
               className={[
                 "flex items-center gap-1.5 px-2 py-1.5 mb-2 rounded-lg text-[10.5px] transition whitespace-nowrap",
                 activeTab === t.key
@@ -271,6 +275,19 @@ export default function HistoryPanel({
         ) : loading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 size={18} className="text-white/30 animate-spin" />
+          </div>
+        ) : error ? (
+          <div className="text-center py-10 text-[12px] text-red-300/70 leading-relaxed">
+            <div className="mb-3">{error}</div>
+            <button
+              onClick={() => {
+                setLoading(true);
+                void load();
+              }}
+              className="h-7 px-3 rounded-full bg-white/[0.06] border border-white/[0.08] text-white/65 hover:text-white transition"
+            >
+              Повторить
+            </button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-10 text-[12px] text-white/30 leading-relaxed">

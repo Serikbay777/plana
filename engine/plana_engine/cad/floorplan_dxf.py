@@ -23,12 +23,12 @@ from .._platform import avoid_windows_wmi_platform_probe
 
 avoid_windows_wmi_platform_probe()
 
-import ezdxf
-from ezdxf.document import Drawing
-from ezdxf.layouts import Modelspace
-from ezdxf.enums import TextEntityAlignment
+import ezdxf  # noqa: E402
+from ezdxf.document import Drawing  # noqa: E402
+from ezdxf.enums import TextEntityAlignment  # noqa: E402
+from ezdxf.layouts import Modelspace  # noqa: E402
 
-from ..visualizer.marketing_prompt import MarketingInputs
+from ..visualizer.marketing_prompt import MarketingInputs  # noqa: E402
 
 
 # ── константы — толщины стен, габариты ядер по СНиП РК ──────────────────────
@@ -552,7 +552,7 @@ class FloorPlanDxfBuilder:
             f"(СНиП РК 3.02-43-2007)",
             f"  • Тупиковый коридор ≤ {self.inputs.fire_dead_end_corridor_max_m:.0f} м",
             f"  • Ширина коридора ≥ {CORRIDOR_W_M} м (СНиП РК п. 5.5.11)",
-            f"  • Противопожарные стены REI 60 между секциями",
+            "  • Противопожарные стены REI 60 между секциями",
         ]
         for i, line in enumerate(lines):
             self._add_text(

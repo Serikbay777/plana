@@ -108,7 +108,7 @@ _TYPE_HINTS = {
 }
 
 
-def classify_sheet(jpeg_bytes: bytes, *, model: str = "gpt-4.1") -> SheetClassification:
+def classify_sheet(jpeg_bytes: bytes, *, model: str | None = None) -> SheetClassification:
     """Vision-классификация одной страницы PDF.
 
     Returns SheetClassification(sheet_type, confidence). Никогда не падает на
@@ -121,9 +121,10 @@ def classify_sheet(jpeg_bytes: bytes, *, model: str = "gpt-4.1") -> SheetClassif
     hints = "\n".join(f"  - {k}: {v}" for k, v in _TYPE_HINTS.items())
     user_text = _CLASSIFY_USER_TPL.format(hints=hints)
 
-    client = _client()
     try:
-        resp = client.chat.completions.create(
+        from ..ai.openai_runtime import chat_completion
+        resp = chat_completion(
+            operation="sheet.classify",
             model=model,
             messages=[
                 {"role": "system", "content": _CLASSIFY_SYSTEM},
@@ -184,7 +185,7 @@ do not write "not visible".
 """
 
 
-def extract_sheet_context(jpeg_bytes: bytes, *, model: str = "gpt-4.1") -> str:
+def extract_sheet_context(jpeg_bytes: bytes, *, model: str | None = None) -> str:
     """Vision-extract: вернуть 3–5 предложений-описание страницы.
 
     Возвращает пустую строку, если страница пустая или vision не справился.
@@ -194,8 +195,9 @@ def extract_sheet_context(jpeg_bytes: bytes, *, model: str = "gpt-4.1") -> str:
         return ""
 
     try:
-        client = _client()
-        resp = client.chat.completions.create(
+        from ..ai.openai_runtime import chat_completion
+        resp = chat_completion(
+            operation="sheet.extract_context",
             model=model,
             messages=[
                 {"role": "system", "content": _EXTRACT_SYSTEM},
@@ -205,7 +207,7 @@ def extract_sheet_context(jpeg_bytes: bytes, *, model: str = "gpt-4.1") -> str:
                 ]},
             ],
             temperature=0.2,
-            max_tokens=350,
+            max_output_tokens=350,
         )
     except SheetVisionError:
         return ""

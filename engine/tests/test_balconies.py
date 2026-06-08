@@ -81,7 +81,7 @@ def test_balcony_inside_apartment_footprint():
     for sect in layout.sections:
         for apt in sect.apartments:
             for b in _balconies_of(apt):
-                assert b.x >= 0 and b.y >= 0, f"Лоджия с отрицательными координатами"
+                assert b.x >= 0 and b.y >= 0, "Лоджия с отрицательными координатами"
                 assert b.x + b.w <= apt.w + 0.01
                 assert b.y + b.d <= apt.d + 0.01
 

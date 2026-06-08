@@ -20,12 +20,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
+import hashlib
+
+from ..ai.openai_runtime import chat_completion, has_openai_api_key, resolve_openai_model
 
 
 _DEFAULT_BASE_URL = "https://llm.alem.ai/v1"
-_DEFAULT_MODEL = "qwen3"
+_DEFAULT_MODEL = "gpt-5.5"
 
 
 _SYSTEM_PROMPT = """Ты — prompt enhancer для image generation модели gpt-image-2.
@@ -55,7 +57,7 @@ _SYSTEM_PROMPT = """Ты — prompt enhancer для image generation модел�
 
 
 def has_llm_key() -> bool:
-    return bool(os.environ.get("ALEM_API_KEY") or os.environ.get("LLM_API_KEY"))
+    return has_openai_api_key()
 
 
 def _cache_key(prompt: str, model: str) -> str:
@@ -80,40 +82,25 @@ def enhance_prompt(
     `source` = "gemma4" если реально вызвали API, "fallback" если ключа нет
     или вызов упал, "cache" если из кэша.
     """
-    api_key = os.environ.get("ALEM_API_KEY") or os.environ.get("LLM_API_KEY")
-    if not api_key:
+    if not has_openai_api_key():
         return base_prompt, "fallback"
 
-    base_url = (
-        os.environ.get("ALEM_BASE_URL")
-        or os.environ.get("LLM_BASE_URL")
-        or _DEFAULT_BASE_URL
-    )
-    model = (
-        os.environ.get("ALEM_MODEL")
-        or os.environ.get("LLM_MODEL")
-        or _DEFAULT_MODEL
-    )
+    model = resolve_openai_model()
 
     key = _cache_key(base_prompt, model)
     if use_cache and key in _ENHANCED_CACHE:
         return _ENHANCED_CACHE[key], "cache"
 
     try:
-        from openai import OpenAI
-    except ImportError:
-        return base_prompt, "fallback"
-
-    client = OpenAI(api_key=api_key, base_url=base_url)
-    try:
-        response = client.chat.completions.create(
+        response = chat_completion(
+            operation="prompt.enhance",
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": base_prompt},
             ],
             temperature=temperature,
-            max_tokens=4000,
+            max_output_tokens=4000,
         )
     except Exception as e:
         # graceful degradation: если Gemma недоступна — отдаём как есть

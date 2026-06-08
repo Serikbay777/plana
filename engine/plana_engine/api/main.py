@@ -254,7 +254,7 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         insolation_min_hours=req.insolation_min_hours,
         max_coverage_pct=req.max_coverage_pct,
         max_height_m=req.max_height_m,
-        site_polygon=tuple(tuple(p) for p in req.site_polygon) if req.site_polygon else None,
+        site_polygon=tuple((p[0], p[1]) for p in req.site_polygon) if req.site_polygon else None,
         bedrooms=req.bedrooms,
         bathrooms=req.bathrooms,
         has_garage=req.has_garage,
@@ -651,7 +651,7 @@ def _composite_images(site_bytes: bytes, building_bytes: bytes) -> bytes:
     site_img = Image.open(_io.BytesIO(site_bytes)).convert("RGB")
     scale = TARGET_H / site_img.height
     site_resized = site_img.resize(
-        (max(1, int(site_img.width * scale)), TARGET_H), Image.LANCZOS
+        (max(1, int(site_img.width * scale)), TARGET_H), Image.Resampling.LANCZOS
     )
     if site_resized.width >= SITE_W:
         ox = (site_resized.width - SITE_W) // 2
@@ -663,7 +663,7 @@ def _composite_images(site_bytes: bytes, building_bytes: bytes) -> bytes:
     bld_img = Image.open(_io.BytesIO(building_bytes)).convert("RGB")
     scale_b = BLD_W / bld_img.width
     bld_h = int(bld_img.height * scale_b)
-    bld_resized = bld_img.resize((BLD_W, max(1, bld_h)), Image.LANCZOS)
+    bld_resized = bld_img.resize((BLD_W, max(1, bld_h)), Image.Resampling.LANCZOS)
     bld_panel = Image.new("RGB", (BLD_W, TARGET_H), (15, 15, 20))
     bld_y = (TARGET_H - min(bld_h, TARGET_H)) // 2
     bld_panel.paste(bld_resized.crop((0, 0, BLD_W, min(bld_h, TARGET_H))), (0, bld_y))
@@ -676,7 +676,9 @@ def _composite_images(site_bytes: bytes, building_bytes: bytes) -> bytes:
     composite.paste(bld_panel, (SITE_W, 0))
 
     try:
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 22)
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.truetype(
+            "/System/Library/Fonts/Helvetica.ttc", 22
+        )
     except Exception:
         font = ImageFont.load_default()
     draw.text((16, 16), "УЧАСТОК (аэрофото)", fill=(255, 255, 100), font=font)
@@ -1338,16 +1340,20 @@ def _build_apt_interior_prompt(
         zone_counter[z] = zone_counter.get(z, 0) + 1
 
     zone_parts: list[str] = []
-    if zone_counter.get("living"):     zone_parts.append("living room")
+    if zone_counter.get("living"):
+        zone_parts.append("living room")
     if zone_counter.get("bedroom"):
         n = zone_counter["bedroom"]
         zone_parts.append(f"{n} bedroom{'s' if n > 1 else ''}")
-    if zone_counter.get("kitchen"):    zone_parts.append("kitchen")
+    if zone_counter.get("kitchen"):
+        zone_parts.append("kitchen")
     if zone_counter.get("bathroom"):
         n = zone_counter["bathroom"]
         zone_parts.append(f"{n} bathroom{'s' if n > 1 else ''}")
-    if zone_counter.get("hall"):       zone_parts.append("entrance hall")
-    if zone_counter.get("loggia"):     zone_parts.append("loggia/balcony")
+    if zone_counter.get("hall"):
+        zone_parts.append("entrance hall")
+    if zone_counter.get("loggia"):
+        zone_parts.append("loggia/balcony")
     zones_str = ", ".join(zone_parts) if zone_parts else "living space"
 
     furniture = _APT_FURNITURE.get(apt.apt_type, "modern furniture")
@@ -1756,7 +1762,7 @@ async def visualize_inpaint(
             img_size = img.size  # (width, height)
         with PILImage.open(_io.BytesIO(mask_bytes)) as msk:
             if msk.size != img_size:
-                msk = msk.resize(img_size, PILImage.LANCZOS)
+                msk = msk.resize(img_size, PILImage.Resampling.LANCZOS)
             if msk.mode != "RGBA":
                 msk = msk.convert("RGBA")
             buf = _io.BytesIO()
@@ -2944,7 +2950,7 @@ def cost_ui() -> Response:
 
 # Нормативные площади типов (м²) — ГОСТ 51929-2002 / СНиП РК 3.02-43-2007
 _APT_AREAS: dict[str, tuple[float, float, str]] = {
-    # type: (total_m2, living_m2, label)
+    # Values: (total_m2, living_m2, label)
     "studio": (30.0, 16.0, "Студия"),
     "k1":     (45.0, 18.0, "1-комн."),
     "k2":     (65.0, 36.0, "2-комн."),

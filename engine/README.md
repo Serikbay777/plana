@@ -12,8 +12,9 @@ plana_engine/
 ├── visualizer/
 │   ├── marketing_prompt.py — base prompt builder из MarketingInputs
 │   ├── extra_prompts.py    — exterior / floorplan-furniture / interior / site-placement
-│   ├── enhancer.py         — опциональный enhancer через Gemma 4 (LLM_API_KEY)
-│   ├── grok_client.py      — generate_image (text→image) через xAI Grok
+│   ├── enhancer.py         — optional prompt enhancer through OpenAI ChatGPT API
+│   ├── grok_client.py      — generate_image (text→image) through OpenAI Images API
+│   ├── ai/openai_runtime.py — shared OpenAI chat/text/vision runtime
 │   └── openai_client.py    — generate_image_edit / inpaint (OpenAI gpt-image) + кэш
 ├── importers/
 │   └── gpzu.py         — ГПЗУ-PDF → JSON-параметры через OpenAI Vision
@@ -32,9 +33,9 @@ pip install -e .
 ## ENV
 
 ```
-XAI_API_KEY=xai-...        # text→image листов альбома (grok-imagine-image, $0.02/img)
-OPENAI_API_KEY=sk-...      # image-edit (посадка), inpainting (MaskCanvas), Vision (ГПЗУ)
-LLM_API_KEY=...            # опционально, для Gemma 4 enhancer
+OPENAI_API_KEY=sk-...      # server-side OpenAI key for ChatGPT, Vision, Images edit/generation
+OPENAI_MODEL=gpt-5.5       # default text+vision model; change without code edits
+OPENAI_REASONING_EFFORT=none
 ```
 
 ## API

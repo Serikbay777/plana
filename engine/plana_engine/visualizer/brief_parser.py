@@ -260,7 +260,7 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
-def parse_brief(brief: str, *, model: str = "gpt-4.1") -> BriefDerivedInputs:
+def parse_brief(brief: str, *, model: str | None = None) -> BriefDerivedInputs:
     """Распарсить свободное ТЗ в структурированные параметры этажа."""
     if not brief or not brief.strip():
         raise BriefParseError("ТЗ пустое")
@@ -270,9 +270,9 @@ def parse_brief(brief: str, *, model: str = "gpt-4.1") -> BriefDerivedInputs:
         raise BriefParseError("OPENAI_API_KEY не задан в окружении")
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
+        from ..ai.openai_runtime import chat_completion
+        resp = chat_completion(
+            operation="brief.parse",
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},

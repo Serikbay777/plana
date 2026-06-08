@@ -1,0 +1,249 @@
+{
+  "project": "Plana Cost Placement",
+  "branchName": "ralph/cost-placement-counter",
+  "description": "Add an isolated conceptual cost placement counter for early residential site screening without changing the existing AI site placement flow.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add in-memory cost placement domain model",
+      "description": "As a developer, I want typed Site, Building, BuildingPlacement, and CostSnapshot models with pure calculation functions so that conceptual cost logic is separate from AI images and UI state.",
+      "acceptanceCriteria": [
+        "Define typed Site, BuildableZone, Building, BuildingPlacement, CostSnapshot, and CostParams interfaces",
+        "Implement computeBuildableZone for rectangular MVP sites",
+        "Implement createPlacementVariants for linear_north, central, and l_shape variants",
+        "Implement estimateCost with placeholder KZT rates grouped in one config object",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented in src/lib/cost-placement.ts."
+    },
+    {
+      "id": "US-002",
+      "title": "Add isolated cost placement tab",
+      "description": "As a founder, I want a separate Cost tab so that we can test the new cost-placement workflow without breaking the current Site Placement and AI render screens.",
+      "acceptanceCriteria": [
+        "Add a visible top-tab button for the cost placement counter",
+        "Render the cost placement UI in a separate full-width section",
+        "Keep existing SiteTab and CostEstimatePanel behavior unchanged",
+        "Keep cost placement draft state when switching tabs",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Implemented in src/components/CostPlacementTab.tsx and wired from src/app/app/page.tsx."
+    },
+    {
+      "id": "US-003",
+      "title": "Verify cost placement flow",
+      "description": "As a QA engineer, I want automated browser coverage for the new cost placement section so that tab switching and variant comparison do not regress.",
+      "acceptanceCriteria": [
+        "E2E opens the new cost placement tab",
+        "E2E verifies all three placement variants are visible",
+        "E2E verifies selecting a variant keeps a visible KZT estimate",
+        "E2E verifies edited input survives switching away and back",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Implemented in tests/e2e/cost-placement.spec.ts."
+    },
+    {
+      "id": "US-004",
+      "title": "Add scenario leveling for cost variants",
+      "description": "As a founder, I want to compare cost placement variants against the cheapest baseline so that the tool explains which scheme is financially worse or better, not just shows three isolated totals.",
+      "acceptanceCriteria": [
+        "Show delta to cheapest scenario on each placement variant",
+        "Show a scenario leveling table with variant, total, delta, and risk",
+        "Show unit cost per GFA and site works share for the selected variant",
+        "E2E verifies the leveling table is visible and includes a baseline",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Implemented in src/components/CostPlacementTab.tsx and covered by tests/e2e/cost-placement.spec.ts."
+    },
+    {
+      "id": "US-005",
+      "title": "Add assumptions and source transparency panel",
+      "description": "As a developer or architect, I want to see the estimate basis, rate assumptions, included and excluded items, missing data warnings, and source metadata so that the Class 5 number feels explainable instead of random.",
+      "acceptanceCriteria": [
+        "Add costAssumptions data structure to frontend state",
+        "Replace the plain Method and limitations text block with a structured right-side assumptions panel",
+        "Panel includes Cost Basis, Rate Assumptions, Included Items, Excluded Items, Missing Data Warnings, and Source Metadata sections",
+        "Class 5 range shows expected, low, and high prominently",
+        "Panel clearly marks VAT excluded, placeholder rates, and missing official source warnings",
+        "Do not change core cost formulas or backend integration",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Implemented as US-005 trust layer in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-006",
+      "title": "Add developer KPI panel",
+      "description": "As a real estate developer, I want to see site efficiency and feasibility KPIs for each cost placement variant so that I can judge whether the concept uses the land well, not only whether it is cheap.",
+      "acceptanceCriteria": [
+        "Show a Developer KPIs panel for the selected placement variant",
+        "Panel includes site area, footprint, coverage, FAR/KIT, above-ground GFA, underground GFA, parking count, and cost per m² GFA",
+        "KPI values update when the selected placement variant changes",
+        "Do not change core cost formulas, backend integration, or visual placement generation",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Implemented in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-007",
+      "title": "Add sellable area and cost per sellable square meter",
+      "description": "As a developer, I want to separate above-ground GFA from sellable area so that the feasibility screen reflects how residential projects are actually evaluated commercially.",
+      "acceptanceCriteria": [
+        "Add a sellable efficiency ratio input to the cost placement form",
+        "Derive sellable area from above-ground GFA and efficiency ratio",
+        "Show sellable area and cost per m² sellable in Developer KPIs",
+        "Keep construction cost formulas unchanged",
+        "Keep tab switching state persistence for the new input",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Implemented as frontend-only feasibility metrics in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-008",
+      "title": "Add revenue sanity-check",
+      "description": "As a founder, I want an early revenue cross-check next to construction cost so that we can see whether a concept has a positive spread before land, financing, taxes, and sales costs.",
+      "acceptanceCriteria": [
+        "Add market price per sellable square meter to the cost placement draft state",
+        "Calculate potential revenue from sellable area and market price",
+        "Calculate gross margin before land and financing",
+        "Show gross margin percentage and positive or negative spread status",
+        "Keep construction cost formulas unchanged",
+        "Keep tab switching state persistence for the new input",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Implemented as frontend-only revenue sanity-check in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-009",
+      "title": "Add revenue scenario sensitivity",
+      "description": "As a founder, I want pessimistic, base, and optimistic sale price scenarios plus a break-even price so that early feasibility shows whether the concept has enough commercial headroom.",
+      "acceptanceCriteria": [
+        "Derive pessimistic, base, and optimistic market price scenarios from the current market price input",
+        "Show scenario price, potential revenue, gross margin, and margin percentage",
+        "Show break-even price per sellable square meter",
+        "Show upside to break-even for the selected market price",
+        "Keep construction cost formulas unchanged",
+        "Keep backend integration unchanged",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Implemented as frontend-only market sensitivity in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-010",
+      "title": "Add feasibility signal",
+      "description": "As a founder, I want a go / caution / no-go signal derived from the early cost and revenue model so that I can quickly understand whether a placement variant deserves more design work.",
+      "acceptanceCriteria": [
+        "Calculate a feasibility score for each placement variant",
+        "Base the signal on gross margin, upside to break-even, FAR/KIT, coverage, site works risk, and missing data warnings",
+        "Show GO, CAUTION, or NO-GO with a numeric score",
+        "Show concise reasons explaining the score",
+        "Keep construction cost formulas unchanged",
+        "Keep backend integration unchanged",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Implemented as frontend-only feasibility signal in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-011",
+      "title": "Persist cost placement draft in projects",
+      "description": "As a founder, I want cost placement inputs and feasibility results to survive project save and restore so that the cost workflow can be reviewed later from project history.",
+      "acceptanceCriteria": [
+        "Store the cost placement draft inside project params without changing backend schema",
+        "Restore the cost placement draft when opening a saved project",
+        "Keep the regular prompt form params compatible with existing screens",
+        "Auto-save cost placement changes for existing projects with debounce",
+        "Manual save creates or updates projects with cost placement data included",
+        "Existing visual generation history continues to work",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Implemented by embedding __plana_cost_placement in project params and covered by cost-placement restore e2e."
+    },
+    {
+      "id": "US-012",
+      "title": "Add manual rates editor and cost tab UX polish",
+      "description": "As a founder, I want the cost tab to feel like a serious Plana workflow and allow manual Class 5 rate overrides so that early estimates can be calibrated without backend data integration.",
+      "acceptanceCriteria": [
+        "Add editable frontend cost parameters for base above-ground rate, underground factor, contingency, roads, open parking, and landscaping",
+        "Use the edited rates in the existing cost calculation without changing backend integration",
+        "Show manual source metadata and missing data warnings when edited rates are used",
+        "Persist edited rates with the cost placement draft",
+        "Polish the cost tab visual style to better match the rest of the dark Plana UI",
+        "Keep existing placement variants, revenue scenarios, feasibility score, and restore flow working",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Implemented in src/components/CostPlacementTab.tsx with frontend-only rate overrides and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-013",
+      "title": "Add cost structure buckets",
+      "description": "As a founder, I want the Class 5 estimate grouped into developer-readable buckets so that I can understand what is included, what is contingency, and what is excluded before using the number in a decision.",
+      "acceptanceCriteria": [
+        "Group the estimate into construction hard costs, site works allowances, Class 5 contingency, and excluded soft costs",
+        "Show amount and share of total for included buckets",
+        "Mark excluded soft costs as not in total",
+        "Keep existing line-item detail available",
+        "Keep formulas and backend integration unchanged",
+        "Keep revenue, feasibility, rates editor, save, and restore flows working",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "Implemented as frontend-only cost structure buckets in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-014",
+      "title": "Import client screening rates from CSV",
+      "description": "As a founder or project owner, I want to upload a simple client rate file so that the Class 5 estimate can be calibrated with client-provided assumptions while still showing that it is not an official Kazakhstan estimate.",
+      "acceptanceCriteria": [
+        "Add a frontend-only CSV upload control in the cost placement rates panel",
+        "Support key,value CSV rows for base rate, contingency, site works rates, region coefficients, quality coefficients, and source metadata",
+        "Apply recognized CSV values to the existing cost parameters without changing the core cost formulas",
+        "Show uploaded filename, recognized imported keys, source name, source year, and confidence in the assumptions panel",
+        "Show missing data warnings that distinguish client-uploaded screening rates from placeholder rates",
+        "Persist uploaded rate metadata and imported rates with saved projects",
+        "Keep existing layout variants, revenue, feasibility, manual rates, and restore flow working",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Implemented as frontend-only CSV rate import in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    }
+  ]
+}

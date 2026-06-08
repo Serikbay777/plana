@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal, cast
 
 import numpy as np
 from shapely.geometry import Polygon as ShPolygon
@@ -59,7 +59,9 @@ def build_floorplan_ifc(project: Project, *, schema: str = "IFC4") -> bytes:
     except ImportError as e:
         raise RuntimeError("ifcopenshell не установлен") from e
 
-    model = ifcopenshell.api.project.create_file(version=schema)
+    model = ifcopenshell.api.project.create_file(
+        version=cast(Literal["IFC2X3", "IFC4", "IFC4X3"], schema)
+    )
 
     ifc_project = ifcopenshell.api.root.create_entity(
         model, ifc_class="IfcProject", name="plana-generated",
@@ -115,7 +117,7 @@ def _emit_building(
     W    = bbox[2] - bbox[0]
     D    = bbox[3] - bbox[1]
 
-    exterior = list(footprint.exterior.coords)
+    exterior = [(coord[0], coord[1]) for coord in footprint.exterior.coords]
     if exterior[0] == exterior[-1]:
         exterior = exterior[:-1]
     if len(exterior) < 3:
@@ -497,16 +499,22 @@ def _rect_extrusion(
 
 def _translation(x: float, y: float, z: float) -> np.ndarray:
     m = np.eye(4)
-    m[0, 3] = x; m[1, 3] = y; m[2, 3] = z
+    m[0, 3] = x
+    m[1, 3] = y
+    m[2, 3] = z
     return m
 
 
 def _placement(x: float, y: float, z: float, yaw_rad: float) -> np.ndarray:
     c, s = math.cos(yaw_rad), math.sin(yaw_rad)
     m = np.eye(4)
-    m[0, 0] = c;  m[0, 1] = -s
-    m[1, 0] = s;  m[1, 1] =  c
-    m[0, 3] = x;  m[1, 3] = y; m[2, 3] = z
+    m[0, 0] = c
+    m[0, 1] = -s
+    m[1, 0] = s
+    m[1, 1] = c
+    m[0, 3] = x
+    m[1, 3] = y
+    m[2, 3] = z
     return m
 
 
@@ -828,7 +836,9 @@ def build_ifc_from_layout(
     W = layout.width_m
     D = layout.depth_m
 
-    model = ifcopenshell.api.project.create_file(version=schema)
+    model = ifcopenshell.api.project.create_file(
+        version=cast(Literal["IFC2X3", "IFC4", "IFC4X3"], schema)
+    )
     ifc_project = ifcopenshell.api.root.create_entity(
         model, ifc_class="IfcProject", name="plana-generated",
     )

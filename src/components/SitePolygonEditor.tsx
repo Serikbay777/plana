@@ -66,10 +66,12 @@ export function SitePolygonEditor({ value, onChange }: Props) {
 
   // Sync incoming value
   useEffect(() => {
-    if (value === null) {
+    if (value !== null) return;
+    const timeoutId = window.setTimeout(() => {
       setVertices([]);
       setClosed(false);
-    }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [value]);
 
   // Emit when closed or modified

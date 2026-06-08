@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from ..auth.db import (
@@ -87,13 +87,14 @@ def update(project_id: str, req: UpdateProjectRequest, request: Request) -> dict
     return _project_out(p)  # type: ignore[arg-type]
 
 
-@router.delete("/{project_id}", status_code=204)
-def delete(project_id: str, request: Request) -> None:
+@router.delete("/{project_id}", status_code=204, response_class=Response)
+def delete(project_id: str, request: Request) -> Response:
     user = request.state.user
     ok = delete_project(project_id, user["sub"])
     if not ok:
         raise HTTPException(status_code=404, detail="Проект не найден")
     delete_project_assets(project_id)
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
