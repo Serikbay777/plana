@@ -3,6 +3,14 @@
 import { useMemo, useState } from "react";
 import { AlertCircle, BarChart3, Calculator, CheckCircle2, Coins, Info, Map as MapIcon } from "lucide-react";
 import {
+  analyzeSiteImageRisks,
+  explainCostSnapshot,
+  extractCostInputsFromBrief,
+  type CostAnalystExplanation,
+  type CostInputExtractionResponse,
+  type SiteImageRiskAnalysisResponse,
+} from "@/lib/engine";
+import {
   DEFAULT_COST_PARAMS,
   createPlacementVariants,
   estimateCost,
@@ -20,6 +28,20 @@ import {
 
 type RateSourceType = "placeholder" | "official" | "market_calibrated" | "manual";
 type ConfidenceLevel = "low" | "medium" | "high";
+type AssumptionFieldSource = "manual" | "client_uploaded" | "ai_extracted" | "vision_extracted";
+type CostSourceType = "placeholder" | "manual" | "client_uploaded" | "ai_extracted" | "vision_extracted" | "market_calibrated" | "official";
+
+type CostSourceRegistryEntry = {
+  id: string;
+  label: string;
+  sourceType: CostSourceType;
+  sourceName: string;
+  sourceYear: string;
+  lastUpdated: string;
+  confidenceLevel: ConfidenceLevel;
+  appliesTo: string[];
+  note: string;
+};
 
 export type CostAssumptions = {
   priceLevelYear: string;
@@ -40,6 +62,27 @@ export type CostAssumptions = {
   confidenceLevel: ConfidenceLevel;
   uploadedRateFileName: string | null;
   uploadedRateKeys: string[];
+  aiExtractedAt: string | null;
+  aiModelUsed: string | null;
+  aiConfidenceLevel: ConfidenceLevel | null;
+  aiAppliedFields: string[];
+  aiRejectedFields: string[];
+  aiMissingDataWarnings: string[];
+  fieldSources: Record<string, AssumptionFieldSource>;
+  geoAddress: string | null;
+  geoCoordinates: string | null;
+  geoRegionConfidence: ConfidenceLevel | null;
+  geoWarnings: string[];
+  visionAnalyzedAt: string | null;
+  visionModelUsed: string | null;
+  visionConfidenceLevel: ConfidenceLevel | null;
+  visionAppliedFlags: string[];
+  visionRejectedFlags: string[];
+  visionWarnings: string[];
+  sourceRegistry: CostSourceRegistryEntry[];
+  analystExplainedAt: string | null;
+  analystModelUsed: string | null;
+  analystExplanation: CostAnalystExplanation | null;
   includedItems: string[];
   excludedItems: string[];
   missingDataWarnings: string[];
@@ -52,6 +95,9 @@ export type CostPlacementDraft = {
   setback_front_m: number;
   setback_side_m: number;
   setback_rear_m: number;
+  site_address: string;
+  site_latitude: number | null;
+  site_longitude: number | null;
   quality_class: QualityClass;
   gfa_above_ground_m2: number;
   gfa_underground_m2: number;
@@ -110,6 +156,27 @@ const DEFAULT_COST_ASSUMPTIONS: CostAssumptions = {
   confidenceLevel: "low",
   uploadedRateFileName: null,
   uploadedRateKeys: [],
+  aiExtractedAt: null,
+  aiModelUsed: null,
+  aiConfidenceLevel: null,
+  aiAppliedFields: [],
+  aiRejectedFields: [],
+  aiMissingDataWarnings: [],
+  fieldSources: {},
+  geoAddress: null,
+  geoCoordinates: null,
+  geoRegionConfidence: null,
+  geoWarnings: [],
+  visionAnalyzedAt: null,
+  visionModelUsed: null,
+  visionConfidenceLevel: null,
+  visionAppliedFlags: [],
+  visionRejectedFlags: [],
+  visionWarnings: [],
+  sourceRegistry: [],
+  analystExplainedAt: null,
+  analystModelUsed: null,
+  analystExplanation: null,
   includedItems: INCLUDED_ITEMS,
   excludedItems: EXCLUDED_ITEMS,
   missingDataWarnings: [
@@ -128,6 +195,9 @@ export const DEFAULT_COST_PLACEMENT_DRAFT: CostPlacementDraft = {
   setback_front_m: 8,
   setback_side_m: 6,
   setback_rear_m: 8,
+  site_address: "",
+  site_latitude: null,
+  site_longitude: null,
   quality_class: "comfort",
   gfa_above_ground_m2: 18_000,
   gfa_underground_m2: 3_200,
@@ -384,6 +454,362 @@ function mergeCostParamsWithImport(current: CostParams, imported: RateImportPatc
   };
 }
 
+function sourceFieldLabel(key: string): string {
+  if (key === "geo_region") return "Geo region confirmation";
+  if (key === "complex_slope") return "Complex slope";
+  if (key.startsWith("vision_")) return VISION_RISK_LABELS[key.replace(/^vision_/, "")] ?? key;
+  return COST_AI_FIELD_LABELS[key] ?? COST_RATE_IMPORT_KEY_LABELS[key] ?? key;
+}
+
+function fieldSourceToRegistryType(source: AssumptionFieldSource | undefined): CostSourceType | null {
+  if (!source) return null;
+  if (source === "manual") return "manual";
+  if (source === "client_uploaded") return "client_uploaded";
+  if (source === "ai_extracted") return "ai_extracted";
+  if (source === "vision_extracted") return "vision_extracted";
+  return null;
+}
+
+function buildSourceRegistry(input: {
+  state: CostAssumptions;
+  manualRates: boolean;
+  uploadedRates: boolean;
+  fieldSources: Record<string, AssumptionFieldSource>;
+}): CostSourceRegistryEntry[] {
+  const { state, manualRates, uploadedRates, fieldSources } = input;
+  const entries: CostSourceRegistryEntry[] = [];
+  const rateKeys = [
+    "base_rate_kzt_m2",
+    "underground_factor",
+    "roads_rate_kzt_m2",
+    "open_parking_rate_kzt_m2",
+    "landscape_rate_kzt_m2",
+    "contingency_pct",
+  ];
+  const uploadedRateKeys = (state.uploadedRateKeys ?? []).filter((key) => rateKeys.includes(key));
+  const manualRateKeys = rateKeys.filter((key) => fieldSources[key] === "manual");
+  const placeholderRateKeys = rateKeys.filter((key) => !uploadedRateKeys.includes(key) && !manualRateKeys.includes(key));
+
+  if (uploadedRates && uploadedRateKeys.length > 0) {
+    entries.push({
+      id: "rates.client_uploaded",
+      label: "Client uploaded rate inputs",
+      sourceType: "client_uploaded",
+      sourceName: state.rateSourceName,
+      sourceYear: state.rateSourceYear,
+      lastUpdated: state.lastUpdated,
+      confidenceLevel: state.confidenceLevel,
+      appliesTo: uploadedRateKeys.map(sourceFieldLabel),
+      note: `Loaded from ${state.uploadedRateFileName ?? "uploaded CSV"}. Screening only, not official Kazakhstan estimate documentation.`,
+    });
+  }
+
+  if (manualRates && manualRateKeys.length > 0) {
+    entries.push({
+      id: "rates.manual",
+      label: "Manual frontend rate overrides",
+      sourceType: "manual",
+      sourceName: "Manual frontend Class 5 rate inputs",
+      sourceYear: state.rateSourceYear,
+      lastUpdated: state.lastUpdated,
+      confidenceLevel: "medium",
+      appliesTo: manualRateKeys.map(sourceFieldLabel),
+      note: "User-edited rates in the MVP cost panel.",
+    });
+  }
+
+  if (placeholderRateKeys.length > 0) {
+    entries.push({
+      id: "rates.placeholder",
+      label: "MVP placeholder rate table",
+      sourceType: "placeholder",
+      sourceName: "Internal MVP placeholder rate table",
+      sourceYear: state.rateSourceYear,
+      lastUpdated: state.lastUpdated,
+      confidenceLevel: "low",
+      appliesTo: placeholderRateKeys.map(sourceFieldLabel),
+      note: "Temporary screening assumptions. Replace with official or calibrated Kazakhstan sources before client use.",
+    });
+  }
+
+  const aiFields = state.aiAppliedFields ?? [];
+  if (state.aiModelUsed && aiFields.length > 0) {
+    entries.push({
+      id: "assumptions.ai_extracted",
+      label: "GPT brief extraction",
+      sourceType: "ai_extracted",
+      sourceName: state.aiModelUsed,
+      sourceYear: state.aiExtractedAt ?? "not recorded",
+      lastUpdated: state.aiExtractedAt ?? "not recorded",
+      confidenceLevel: state.aiConfidenceLevel ?? "low",
+      appliesTo: aiFields.map(sourceFieldLabel),
+      note: "AI normalized user brief into inputs. User confirmed selected fields; totals remain deterministic.",
+    });
+  }
+
+  if (state.geoRegionConfidence) {
+    entries.push({
+      id: "assumptions.geo",
+      label: "Geo region confirmation",
+      sourceType: "manual",
+      sourceName: state.geoAddress ?? state.geoCoordinates ?? "User geo input",
+      sourceYear: state.lastUpdated,
+      lastUpdated: state.lastUpdated,
+      confidenceLevel: state.geoRegionConfidence,
+      appliesTo: ["Region coefficient"],
+      note: "MVP keyword/bounding-box geo helper, not official geocoding or cadastre.",
+    });
+  }
+
+  const visionFlags = state.visionAppliedFlags ?? [];
+  if (state.visionModelUsed && visionFlags.length > 0) {
+    entries.push({
+      id: "assumptions.vision",
+      label: "Vision site risk analysis",
+      sourceType: "vision_extracted",
+      sourceName: state.visionModelUsed,
+      sourceYear: state.visionAnalyzedAt ?? "not recorded",
+      lastUpdated: state.visionAnalyzedAt ?? "not recorded",
+      confidenceLevel: state.visionConfidenceLevel ?? "low",
+      appliesTo: visionFlags.map((key) => VISION_RISK_LABELS[key] ?? key),
+      note: "OpenAI Vision risk hints confirmed by user. Not a survey or engineering conclusion.",
+    });
+  }
+
+  const otherFieldSources = Object.entries(fieldSources)
+    .map(([key, source]) => ({ key, sourceType: fieldSourceToRegistryType(source) }))
+    .filter(({ key, sourceType }) =>
+      sourceType !== null
+      && !rateKeys.includes(key)
+      && !aiFields.includes(key)
+      && key !== "geo_region"
+      && !key.startsWith("vision_")
+    );
+
+  if (otherFieldSources.length > 0) {
+    entries.push({
+      id: "assumptions.field_sources",
+      label: "Confirmed field source map",
+      sourceType: "manual",
+      sourceName: "User-confirmed MVP assumptions",
+      sourceYear: state.lastUpdated,
+      lastUpdated: state.lastUpdated,
+      confidenceLevel: "medium",
+      appliesTo: otherFieldSources.map(({ key, sourceType }) => `${sourceFieldLabel(key)}: ${sourceType}`),
+      note: "Compatibility source map for fields edited before the registry was introduced.",
+    });
+  }
+
+  return entries;
+}
+
+const COST_AI_FIELD_LABELS: Record<string, string> = {
+  region: "Region",
+  object_type: "Object type",
+  site_width_m: "Site width",
+  site_depth_m: "Site depth",
+  setback_front_m: "Front setback",
+  setback_side_m: "Side setback",
+  setback_rear_m: "Rear setback",
+  quality_class: "Building class",
+  gfa_above_ground_m2: "GFA above ground",
+  gfa_underground_m2: "GFA underground",
+  efficiency_ratio: "Sellable efficiency",
+  market_price_per_sellable_m2: "Market price",
+  floors_above: "Floors above",
+  floors_below: "Floors below",
+  footprint_width_m: "Footprint width",
+  footprint_depth_m: "Footprint depth",
+  parking_mode: "Parking mode",
+  parking_spots: "Parking spots",
+  complex_soil: "Complex soil",
+  complex_slope: "Complex slope",
+};
+
+type CostAiField = keyof CostPlacementDraft | "object_type";
+
+function extractionToDraftPatch(extraction: CostInputExtractionResponse["extraction"]): Partial<CostPlacementDraft> {
+  const patch: Partial<CostPlacementDraft> = {};
+  if (extraction.region) patch.region = extraction.region;
+  if (extraction.building_class) patch.quality_class = extraction.building_class;
+  if (extraction.site_width_m !== null) patch.site_width_m = extraction.site_width_m;
+  if (extraction.site_depth_m !== null) patch.site_depth_m = extraction.site_depth_m;
+  if (extraction.setback_front_m !== null) patch.setback_front_m = extraction.setback_front_m;
+  if (extraction.setback_side_m !== null) patch.setback_side_m = extraction.setback_side_m;
+  if (extraction.setback_rear_m !== null) patch.setback_rear_m = extraction.setback_rear_m;
+  if (extraction.gfa_above_ground_m2 !== null) patch.gfa_above_ground_m2 = extraction.gfa_above_ground_m2;
+  if (extraction.gfa_underground_m2 !== null) patch.gfa_underground_m2 = extraction.gfa_underground_m2;
+  if (extraction.efficiency_ratio !== null) patch.efficiency_ratio = extraction.efficiency_ratio;
+  if (extraction.market_price_per_sellable_m2 !== null) patch.market_price_per_sellable_m2 = extraction.market_price_per_sellable_m2;
+  if (extraction.floors_above !== null) patch.floors_above = extraction.floors_above;
+  if (extraction.floors_below !== null) patch.floors_below = extraction.floors_below;
+  if (extraction.footprint_width_m !== null) patch.footprint_width_m = extraction.footprint_width_m;
+  if (extraction.footprint_depth_m !== null) patch.footprint_depth_m = extraction.footprint_depth_m;
+  if (extraction.parking_mode) patch.parking_mode = extraction.parking_mode;
+  if (extraction.parking_spots !== null) {
+    patch.parking_spots = extraction.parking_spots;
+    patch.auto_parking = false;
+  }
+  if (extraction.complex_soil !== null) patch.complex_soil = extraction.complex_soil;
+  if (extraction.complex_slope !== null) patch.complex_slope = extraction.complex_slope;
+  return patch;
+}
+
+function formatAiValue(value: unknown): string {
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "number") return Number.isInteger(value) ? fmt(value) : String(Math.round(value * 100) / 100);
+  if (value === null || value === undefined) return "not set";
+  return String(value);
+}
+
+const VISION_RISK_LABELS: Record<string, string> = {
+  apparent_slope: "Apparent slope",
+  limited_road_access: "Limited road access",
+  dense_context: "Dense context",
+  visible_site_constraints: "Visible site constraints",
+  uncertain_image: "Image uncertainty",
+};
+
+type GeoRegionSuggestion = {
+  region: Region | null;
+  confidence: ConfidenceLevel;
+  method: "coordinates" | "address" | "none";
+  reason: string;
+  warnings: string[];
+};
+
+const CITY_BOUNDS: Array<{ region: Region; label: string; lat: [number, number]; lon: [number, number]; keywords: string[] }> = [
+  { region: "Almaty", label: "Almaty", lat: [42.95, 43.45], lon: [76.65, 77.25], keywords: ["almaty", "алматы", "алма-ата"] },
+  { region: "Astana", label: "Astana", lat: [50.95, 51.35], lon: [71.15, 71.75], keywords: ["astana", "астана", "nur-sultan", "nursultan", "нур-султан"] },
+  { region: "Shymkent", label: "Shymkent", lat: [42.15, 42.55], lon: [69.35, 70.05], keywords: ["shymkent", "шымкент", "чимкент"] },
+  { region: "Aktobe", label: "Aktobe", lat: [50.05, 50.45], lon: [56.65, 57.45], keywords: ["aktobe", "актобе", "ақтөбе"] },
+];
+
+function deriveGeoRegion(value: CostPlacementDraft): GeoRegionSuggestion {
+  const warnings: string[] = [];
+  const lat = value.site_latitude;
+  const lon = value.site_longitude;
+  const hasLat = typeof lat === "number" && Number.isFinite(lat);
+  const hasLon = typeof lon === "number" && Number.isFinite(lon);
+
+  if (hasLat || hasLon) {
+    if (!hasLat || !hasLon) {
+      return {
+        region: null,
+        confidence: "low",
+        method: "coordinates",
+        reason: "Both latitude and longitude are required for coordinate matching.",
+        warnings: ["Incomplete coordinate pair"],
+      };
+    }
+
+    if (lat < 40 || lat > 56 || lon < 46 || lon > 88) {
+      warnings.push("Coordinates are outside a coarse Kazakhstan bounding box");
+    }
+
+    const match = CITY_BOUNDS.find((city) => lat >= city.lat[0] && lat <= city.lat[1] && lon >= city.lon[0] && lon <= city.lon[1]);
+    if (match) {
+      return {
+        region: match.region,
+        confidence: "high",
+        method: "coordinates",
+        reason: `Coordinates fall inside the coarse ${match.label} city bounding box.`,
+        warnings,
+      };
+    }
+
+    return {
+      region: "default",
+      confidence: "low",
+      method: "coordinates",
+      reason: "Coordinates do not match the MVP city boxes; using default regional coefficient.",
+      warnings: [...warnings, "No official GIS/cadastre lookup attached"],
+    };
+  }
+
+  const address = value.site_address.trim().toLowerCase();
+  if (address) {
+    const match = CITY_BOUNDS.find((city) => city.keywords.some((keyword) => address.includes(keyword)));
+    if (match) {
+      return {
+        region: match.region,
+        confidence: "medium",
+        method: "address",
+        reason: `Address text contains ${match.label}.`,
+        warnings: ["Address matching is keyword-based, not official geocoding"],
+      };
+    }
+
+    return {
+      region: null,
+      confidence: "low",
+      method: "address",
+      reason: "Address text does not contain a supported MVP city name.",
+      warnings: ["No official geocoding source attached"],
+    };
+  }
+
+  return {
+    region: null,
+    confidence: "low",
+    method: "none",
+    reason: "No address or coordinates provided.",
+    warnings: ["No geo input provided"],
+  };
+}
+
+type AiReviewRow = {
+  key: string;
+  label: string;
+  current: unknown;
+  next: unknown;
+  changed: boolean;
+};
+
+function buildAiReviewRows(value: CostPlacementDraft, extraction: CostInputExtractionResponse["extraction"]): AiReviewRow[] {
+  const patch = extractionToDraftPatch(extraction);
+  const rows: AiReviewRow[] = Object.entries(patch)
+    .filter(([key]) => key !== "auto_parking" && Object.prototype.hasOwnProperty.call(COST_AI_FIELD_LABELS, key))
+    .map(([key, next]) => ({
+      key,
+      label: COST_AI_FIELD_LABELS[key],
+      current: value[key as keyof CostPlacementDraft],
+      next,
+      changed: formatAiValue(value[key as keyof CostPlacementDraft]) !== formatAiValue(next),
+    }));
+
+  if (extraction.object_type) {
+    rows.unshift({
+      key: "object_type",
+      label: COST_AI_FIELD_LABELS.object_type,
+      current: value.costAssumptions.objectType,
+      next: extraction.object_type,
+      changed: formatAiValue(value.costAssumptions.objectType) !== formatAiValue(extraction.object_type),
+    });
+  }
+
+  return rows;
+}
+
+function buildSelectedAiPatch(extraction: CostInputExtractionResponse["extraction"], selectedFields: string[]): Partial<CostPlacementDraft> {
+  const selected = new Set(selectedFields);
+  const patch: Partial<CostPlacementDraft> = {};
+  const extractedPatch = extractionToDraftPatch(extraction);
+
+  for (const [key, next] of Object.entries(extractedPatch)) {
+    if (key === "auto_parking") continue;
+    if (selected.has(key)) {
+      patch[key as keyof CostPlacementDraft] = next as never;
+    }
+  }
+
+  if (selected.has("parking_spots") && extraction.parking_spots !== null) {
+    patch.auto_parking = false;
+  }
+
+  return patch;
+}
+
 function buildFeasibilitySignal(input: {
   grossMarginPct: number;
   upsideToBreakEvenPct: number;
@@ -492,15 +918,37 @@ function buildCostBuckets(cost: CostSnapshot): CostBucket[] {
 
 export function CostPlacementTab({ value, onChange }: Props) {
   const [rateImportError, setRateImportError] = useState<string | null>(null);
+  const [aiBrief, setAiBrief] = useState("");
+  const [aiExtraction, setAiExtraction] = useState<CostInputExtractionResponse | null>(null);
+  const [aiSelectedFields, setAiSelectedFields] = useState<string[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [visionAnalysis, setVisionAnalysis] = useState<SiteImageRiskAnalysisResponse | null>(null);
+  const [visionSelectedFlags, setVisionSelectedFlags] = useState<string[]>([]);
+  const [visionLoading, setVisionLoading] = useState(false);
+  const [visionError, setVisionError] = useState<string | null>(null);
+  const [analystLoading, setAnalystLoading] = useState(false);
+  const [analystError, setAnalystError] = useState<string | null>(null);
   const model = useMemo(() => buildCostPlacementModel(value), [value]);
   const selected = model.rows.find((row) => row.placement.variant_key === value.selected_variant_key) ?? model.rows[0];
   const cheapest = model.rows.find((row) => row.isCheapest) ?? model.rows[0];
+  const geoSuggestion = deriveGeoRegion(value);
 
   const update = <K extends keyof CostPlacementDraft>(key: K, next: CostPlacementDraft[K]) => {
-    onChange({ ...value, [key]: next });
+    const fieldSources = Object.prototype.hasOwnProperty.call(COST_AI_FIELD_LABELS, key)
+      ? { ...(value.costAssumptions.fieldSources ?? {}), [key]: "manual" as AssumptionFieldSource }
+      : (value.costAssumptions.fieldSources ?? {});
+    onChange({ ...value, [key]: next, costAssumptions: { ...value.costAssumptions, fieldSources } });
   };
   const updateCostParam = <K extends keyof CostParams>(key: K, next: CostParams[K]) => {
-    onChange({ ...value, costParams: { ...value.costParams, [key]: next } });
+    onChange({
+      ...value,
+      costParams: { ...value.costParams, [key]: next },
+      costAssumptions: {
+        ...value.costAssumptions,
+        fieldSources: { ...(value.costAssumptions.fieldSources ?? {}), [String(key)]: "manual" },
+      },
+    });
   };
 
   const handleRateUpload = async (file: File) => {
@@ -514,6 +962,10 @@ export function CostPlacementTab({ value, onChange }: Props) {
     }
 
     const nextCostParams = mergeCostParamsWithImport(value.costParams ?? DEFAULT_COST_PARAMS, parsed.paramsPatch);
+    const nextFieldSources = {
+      ...(value.costAssumptions.fieldSources ?? {}),
+      ...Object.fromEntries(parsed.recognizedKeys.map((key) => [key, "client_uploaded" as AssumptionFieldSource])),
+    };
     onChange({
       ...value,
       costParams: nextCostParams,
@@ -526,8 +978,191 @@ export function CostPlacementTab({ value, onChange }: Props) {
         confidenceLevel: parsed.confidenceLevel ?? "medium",
         uploadedRateFileName: file.name,
         uploadedRateKeys: parsed.recognizedKeys,
+        fieldSources: nextFieldSources,
       },
     });
+  };
+
+  const analyzeCostBrief = async () => {
+    if (!aiBrief.trim()) {
+      setAiError("Paste a project brief first.");
+      return;
+    }
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const result = await extractCostInputsFromBrief(aiBrief);
+      setAiExtraction(result);
+      const reviewRows = buildAiReviewRows(value, result.extraction);
+      setAiSelectedFields(reviewRows.filter((row) => row.changed).map((row) => row.key));
+    } catch (error) {
+      setAiError((error as Error).message || "AI extraction failed");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const applyAiExtraction = () => {
+    if (!aiExtraction) return;
+    const selected = new Set(aiSelectedFields);
+    const allReviewFields = buildAiReviewRows(value, aiExtraction.extraction).map((row) => row.key);
+    const patch = buildSelectedAiPatch(aiExtraction.extraction, aiSelectedFields);
+    const appliedFields = aiSelectedFields.filter((key) => Object.prototype.hasOwnProperty.call(COST_AI_FIELD_LABELS, key));
+    const rejectedFields = allReviewFields.filter((key) => !selected.has(key));
+    const nextFieldSources = {
+      ...(value.costAssumptions.fieldSources ?? {}),
+      ...Object.fromEntries(appliedFields.map((field) => [field, "ai_extracted" as AssumptionFieldSource])),
+    };
+
+    onChange({
+      ...value,
+      ...patch,
+      costAssumptions: {
+        ...value.costAssumptions,
+        objectType: selected.has("object_type") && aiExtraction.extraction.object_type
+          ? aiExtraction.extraction.object_type
+          : value.costAssumptions.objectType,
+        aiExtractedAt: new Date().toISOString().slice(0, 10),
+        aiModelUsed: aiExtraction.model_used,
+        aiConfidenceLevel: aiExtraction.extraction.confidence_level,
+        aiAppliedFields: appliedFields,
+        aiRejectedFields: rejectedFields,
+        aiMissingDataWarnings: aiExtraction.extraction.missing_data_warnings,
+        fieldSources: nextFieldSources,
+      },
+    });
+  };
+  const toggleAiField = (field: string) => {
+    setAiSelectedFields((current) =>
+      current.includes(field)
+        ? current.filter((item) => item !== field)
+        : [...current, field],
+    );
+  };
+  const aiReviewRows = aiExtraction ? buildAiReviewRows(value, aiExtraction.extraction) : [];
+  const applyGeoRegion = () => {
+    if (!geoSuggestion.region) return;
+    onChange({
+      ...value,
+      region: geoSuggestion.region,
+      costAssumptions: {
+        ...value.costAssumptions,
+        geoAddress: value.site_address.trim() || null,
+        geoCoordinates: value.site_latitude !== null && value.site_longitude !== null
+          ? `${value.site_latitude}, ${value.site_longitude}`
+          : null,
+        geoRegionConfidence: geoSuggestion.confidence,
+        geoWarnings: geoSuggestion.warnings,
+        fieldSources: {
+          ...(value.costAssumptions.fieldSources ?? {}),
+          region: "manual",
+          geo_region: "manual",
+        },
+      },
+    });
+  };
+  const analyzeSitePhoto = async (file: File) => {
+    setVisionLoading(true);
+    setVisionError(null);
+    try {
+      const result = await analyzeSiteImageRisks(file);
+      setVisionAnalysis(result);
+      setVisionSelectedFlags(result.analysis.risk_flags.filter((flag) => flag.suggested_value).map((flag) => flag.key));
+    } catch (error) {
+      setVisionError((error as Error).message || "Site image analysis failed");
+    } finally {
+      setVisionLoading(false);
+    }
+  };
+  const toggleVisionFlag = (key: string) => {
+    setVisionSelectedFlags((current) =>
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : [...current, key],
+    );
+  };
+  const applyVisionFlags = () => {
+    if (!visionAnalysis) return;
+    const selected = new Set(visionSelectedFlags);
+    const flags = visionAnalysis.analysis.risk_flags;
+    const appliedFlags = flags.filter((flag) => selected.has(flag.key)).map((flag) => flag.key);
+    const rejectedFlags = flags.filter((flag) => !selected.has(flag.key)).map((flag) => flag.key);
+    const applySlope = flags.some((flag) => flag.key === "apparent_slope" && selected.has(flag.key) && flag.suggested_value);
+    const selectedWarnings = flags
+      .filter((flag) => selected.has(flag.key))
+      .map((flag) => `${flag.label}: ${flag.reason}`);
+
+    onChange({
+      ...value,
+      complex_slope: applySlope ? true : value.complex_slope,
+      costAssumptions: {
+        ...value.costAssumptions,
+        visionAnalyzedAt: new Date().toISOString().slice(0, 10),
+        visionModelUsed: visionAnalysis.model_used,
+        visionConfidenceLevel: visionAnalysis.analysis.confidence_level,
+        visionAppliedFlags: appliedFlags,
+        visionRejectedFlags: rejectedFlags,
+        visionWarnings: [
+          ...visionAnalysis.analysis.missing_data_warnings,
+          ...selectedWarnings,
+        ],
+        fieldSources: {
+          ...(value.costAssumptions.fieldSources ?? {}),
+          ...(applySlope ? { complex_slope: "vision_extracted" as AssumptionFieldSource } : {}),
+          ...Object.fromEntries(appliedFlags.map((flag) => [`vision_${flag}`, "vision_extracted" as AssumptionFieldSource])),
+        },
+      },
+    });
+  };
+  const explainSelectedCost = async () => {
+    setAnalystLoading(true);
+    setAnalystError(null);
+    try {
+      const response = await explainCostSnapshot({
+        selected_variant: selected.placement.variant_key,
+        cost_snapshot: {
+          total_estimate: selected.cost.total_estimate,
+          total_low: selected.cost.range_low,
+          total_high: selected.cost.range_high,
+          cost_per_gfa_m2: selected.costPerGfaM2,
+          cost_per_sellable_m2: selected.costPerSellableM2,
+          cost_buckets: selected.costBuckets,
+          revenue_estimate: selected.revenueEstimate,
+          gross_margin_before_land: selected.grossMarginBeforeLand,
+          gross_margin_pct: selected.grossMarginPct,
+          feasibility: selected.feasibility,
+          selected_variant_delta_to_cheapest: selected.deltaToCheapest,
+        },
+        assumptions: {
+          region: model.assumptions.region,
+          building_class: model.assumptions.buildingClass,
+          rate_source_type: model.assumptions.rateSourceType,
+          base_rate_above_ground: model.assumptions.baseRateAboveGround,
+          region_coefficient: model.assumptions.regionCoefficient,
+          class_coefficient: model.assumptions.classCoefficient,
+          contingency_pct: model.assumptions.contingencyPct,
+          vat_included: model.assumptions.vatIncluded,
+          included_items: model.assumptions.includedItems,
+          excluded_items: model.assumptions.excludedItems,
+        },
+        source_registry: model.assumptions.sourceRegistry as unknown as Array<Record<string, unknown>>,
+        missing_data_warnings: model.assumptions.missingDataWarnings,
+      });
+
+      onChange({
+        ...value,
+        costAssumptions: {
+          ...value.costAssumptions,
+          analystExplainedAt: new Date().toISOString().slice(0, 10),
+          analystModelUsed: response.model_used,
+          analystExplanation: response.explanation,
+        },
+      });
+    } catch (error) {
+      setAnalystError((error as Error).message || "AI analyst explanation failed");
+    } finally {
+      setAnalystLoading(false);
+    }
   };
 
   return (
@@ -547,9 +1182,234 @@ export function CostPlacementTab({ value, onChange }: Props) {
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
         <div className="grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-4">
           <aside className="space-y-3">
+            <Panel title="AI brief extraction" icon={<Info size={13} className="text-violet-300" />}>
+              <div className="rounded-xl border border-violet-300/10 bg-violet-300/[0.045] px-3 py-2 text-[10.5px] leading-relaxed text-violet-100/65">
+                GPT extracts assumptions only. It never calculates the Class 5 total.
+              </div>
+              <textarea
+                data-testid="cost-ai-brief"
+                value={aiBrief}
+                onChange={(event) => setAiBrief(event.target.value)}
+                placeholder="Example: ЖК comfort class in Almaty, 12 floors, 80x120 m site, 24,000 m2 above ground, 1 underground level..."
+                className="min-h-24 w-full resize-y rounded-lg bg-black/20 border border-white/[0.08] px-2.5 py-2 text-[11.5px] leading-relaxed text-white/75 outline-none focus:border-violet-300/35 placeholder:text-white/25"
+              />
+              <button
+                type="button"
+                data-testid="cost-ai-analyze"
+                onClick={analyzeCostBrief}
+                disabled={aiLoading}
+                className="w-full rounded-lg border border-violet-300/20 bg-violet-300/10 px-3 py-2 text-[11.5px] font-medium text-violet-100/80 hover:bg-violet-300/15 disabled:opacity-50"
+              >
+                {aiLoading ? "Analyzing with GPT..." : "Analyze brief with GPT"}
+              </button>
+              {aiError && (
+                <div data-testid="cost-ai-error" className="rounded-lg border border-rose-300/20 bg-rose-300/10 px-2 py-1.5 text-[10.5px] text-rose-100/75">
+                  {aiError}
+                </div>
+              )}
+              {aiExtraction && (
+                <div data-testid="cost-ai-preview" className="rounded-xl border border-white/[0.06] bg-black/10 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[11.5px] font-medium text-white/78">Extracted assumptions</div>
+                      <div className="text-[10px] text-white/35">{aiExtraction.model_used} · {aiExtraction.extraction.confidence_level} confidence</div>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="cost-ai-apply"
+                      onClick={applyAiExtraction}
+                      disabled={aiSelectedFields.length === 0}
+                      className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-2.5 py-1.5 text-[10.5px] text-emerald-100/80 hover:bg-emerald-300/15 disabled:opacity-45"
+                    >
+                      Apply selected ({aiSelectedFields.length})
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="cost-ai-select-changed"
+                      onClick={() => setAiSelectedFields(aiReviewRows.filter((row) => row.changed).map((row) => row.key))}
+                      className="rounded-md border border-white/[0.07] bg-white/[0.035] px-2 py-1 text-[10px] text-white/55 hover:text-white/75"
+                    >
+                      Select changed
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="cost-ai-clear-selection"
+                      onClick={() => setAiSelectedFields([])}
+                      className="rounded-md border border-white/[0.07] bg-white/[0.02] px-2 py-1 text-[10px] text-white/45 hover:text-white/65"
+                    >
+                      Clear
+                    </button>
+                    <div className="ml-auto text-[10px] text-white/35">Current → GPT</div>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto space-y-1">
+                    {aiReviewRows.map((row) => (
+                      <label
+                        key={row.key}
+                        data-testid={`cost-ai-field-${row.key}`}
+                        className={[
+                          "grid grid-cols-[18px_0.85fr_0.85fr_0.85fr] items-center gap-2 rounded-lg border px-2 py-1.5 text-[10.5px]",
+                          aiSelectedFields.includes(row.key)
+                            ? "border-violet-300/20 bg-violet-300/[0.06]"
+                            : "border-white/[0.045] bg-white/[0.02]",
+                        ].join(" ")}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={aiSelectedFields.includes(row.key)}
+                          onChange={() => toggleAiField(row.key)}
+                          className="h-3.5 w-3.5 accent-violet-400"
+                        />
+                        <span className="text-white/50">{row.label}</span>
+                        <span className="truncate text-right text-white/35" title={formatAiValue(row.current)}>
+                          {formatAiValue(row.current)}
+                        </span>
+                        <span className={["truncate text-right", row.changed ? "text-violet-100/80" : "text-white/45"].join(" ")} title={formatAiValue(row.next)}>
+                          {formatAiValue(row.next)}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {aiExtraction.extraction.missing_data_warnings.length > 0 && (
+                    <div className="space-y-1">
+                      {aiExtraction.extraction.missing_data_warnings.slice(0, 3).map((warning) => (
+                        <div key={warning} className="rounded-lg border border-amber-300/15 bg-amber-300/[0.07] px-2 py-1 text-[10px] text-amber-100/70">
+                          {warning}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
+            <Panel title="Site photo risk analysis" icon={<Info size={13} className="text-cyan-300" />}>
+              <div className="rounded-xl border border-cyan-300/10 bg-cyan-300/[0.045] px-3 py-2 text-[10.5px] leading-relaxed text-cyan-100/65">
+                GPT Vision suggests visible risk flags only. It does not measure engineering conditions or calculate cost.
+              </div>
+              <label className="block">
+                <span className="block text-[10.5px] text-white/35 mb-1">Upload site photo / aerial image</span>
+                <input
+                  data-testid="cost-vision-upload"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  disabled={visionLoading}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void analyzeSitePhoto(file);
+                    event.currentTarget.value = "";
+                  }}
+                  className="block w-full text-[11px] text-white/55 file:mr-3 file:rounded-lg file:border file:border-cyan-300/20 file:bg-cyan-300/10 file:px-3 file:py-1.5 file:text-[10.5px] file:text-cyan-100/80 hover:file:bg-cyan-300/15"
+                />
+              </label>
+              {visionLoading && (
+                <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.06] px-2 py-1.5 text-[10.5px] text-cyan-100/70">
+                  Analyzing image with GPT Vision...
+                </div>
+              )}
+              {visionError && (
+                <div data-testid="cost-vision-error" className="rounded-lg border border-rose-300/20 bg-rose-300/10 px-2 py-1.5 text-[10.5px] text-rose-100/75">
+                  {visionError}
+                </div>
+              )}
+              {visionAnalysis && (
+                <div data-testid="cost-vision-preview" className="rounded-xl border border-white/[0.06] bg-black/10 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[11.5px] font-medium text-white/78">Visible risk flags</div>
+                      <div className="text-[10px] text-white/35">{visionAnalysis.model_used} · {visionAnalysis.analysis.confidence_level} confidence</div>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="cost-vision-apply"
+                      disabled={visionSelectedFlags.length === 0}
+                      onClick={applyVisionFlags}
+                      className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-2.5 py-1.5 text-[10.5px] text-emerald-100/80 hover:bg-emerald-300/15 disabled:opacity-45"
+                    >
+                      Apply selected ({visionSelectedFlags.length})
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {visionAnalysis.analysis.risk_flags.map((flag) => (
+                      <label
+                        key={flag.key}
+                        data-testid={`cost-vision-flag-${flag.key}`}
+                        className={[
+                          "grid grid-cols-[18px_1fr_auto] items-start gap-2 rounded-lg border px-2 py-1.5 text-[10.5px]",
+                          visionSelectedFlags.includes(flag.key)
+                            ? "border-cyan-300/20 bg-cyan-300/[0.06]"
+                            : "border-white/[0.045] bg-white/[0.02]",
+                        ].join(" ")}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={visionSelectedFlags.includes(flag.key)}
+                          onChange={() => toggleVisionFlag(flag.key)}
+                          className="mt-0.5 h-3.5 w-3.5 accent-cyan-400"
+                        />
+                        <span>
+                          <span className="block text-white/65">{flag.label}</span>
+                          <span className="block text-white/38">{flag.reason}</span>
+                        </span>
+                        <span className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-[9.5px] uppercase text-white/45">
+                          {flag.severity}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {visionAnalysis.analysis.missing_data_warnings.slice(0, 3).map((warning) => (
+                    <div key={warning} className="rounded-lg border border-amber-300/15 bg-amber-300/[0.07] px-2 py-1 text-[10px] text-amber-100/70">
+                      {warning}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
             <Panel title="Участок" icon={<MapIcon size={13} className="text-emerald-300" />}>
               <SelectField label="Регион" value={value.region} onChange={(v) => update("region", v as Region)}
                 options={[["Almaty", "Алматы"], ["Astana", "Астана"], ["Shymkent", "Шымкент"], ["Aktobe", "Актобе"], ["default", "Другой"]]} />
+              <TextField
+                label="Address / geo hint"
+                testId="cost-geo-address"
+                value={value.site_address}
+                placeholder="Алматы, Бостандыкский район..."
+                onChange={(next) => update("site_address", next)}
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <NullableNumberField label="Latitude" testId="cost-geo-latitude" value={value.site_latitude} step={0.000001} onChange={(v) => update("site_latitude", v)} />
+                <NullableNumberField label="Longitude" testId="cost-geo-longitude" value={value.site_longitude} step={0.000001} onChange={(v) => update("site_longitude", v)} />
+              </div>
+              <div data-testid="cost-geo-suggestion" className="rounded-xl border border-emerald-300/10 bg-emerald-300/[0.045] p-3 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-medium text-emerald-100/80">
+                      Geo suggestion: {geoSuggestion.region ? regionLabel(geoSuggestion.region) : "not matched"}
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-white/40">
+                      {geoSuggestion.method} · {geoSuggestion.confidence} confidence
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="cost-geo-apply"
+                    disabled={!geoSuggestion.region}
+                    onClick={applyGeoRegion}
+                    className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-2.5 py-1.5 text-[10.5px] text-emerald-100/80 hover:bg-emerald-300/15 disabled:opacity-40"
+                  >
+                    Apply region
+                  </button>
+                </div>
+                <div className="text-[10.5px] leading-relaxed text-white/50">{geoSuggestion.reason}</div>
+                {geoSuggestion.warnings.length > 0 && (
+                  <div className="space-y-1">
+                    {geoSuggestion.warnings.map((warning) => (
+                      <div key={warning} className="rounded-lg border border-amber-300/15 bg-amber-300/[0.07] px-2 py-1 text-[10px] text-amber-100/70">
+                        {warning}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <NumberField label="Ширина, м" value={value.site_width_m} onChange={(v) => update("site_width_m", v)} />
                 <NumberField label="Глубина, м" value={value.site_depth_m} onChange={(v) => update("site_depth_m", v)} />
@@ -839,6 +1699,47 @@ export function CostPlacementTab({ value, onChange }: Props) {
                     </div>
                   </div>
 
+                  <div data-testid="cost-analyst-explanation" className="mb-4 rounded-xl border border-violet-300/10 bg-violet-300/[0.035] p-3.5">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
+                        <div className="text-[12.5px] font-medium text-white/85">AI cost analyst</div>
+                        <div className="text-[10.5px] text-white/38">Explains the deterministic Class 5 estimate. It does not recalculate totals.</div>
+                      </div>
+                      <button
+                        type="button"
+                        data-testid="cost-analyst-generate"
+                        onClick={explainSelectedCost}
+                        disabled={analystLoading}
+                        className="rounded-lg border border-violet-300/20 bg-violet-300/10 px-3 py-1.5 text-[10.5px] font-medium text-violet-100/80 hover:bg-violet-300/15 disabled:opacity-45"
+                      >
+                        {analystLoading ? "Explaining..." : "Explain with GPT"}
+                      </button>
+                    </div>
+                    {analystError && (
+                      <div data-testid="cost-analyst-error" className="rounded-lg border border-rose-300/20 bg-rose-300/10 px-2 py-1.5 text-[10.5px] text-rose-100/75">
+                        {analystError}
+                      </div>
+                    )}
+                    {model.assumptions.analystExplanation ? (
+                      <div className="space-y-3">
+                        <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2">
+                          <div className="text-[10px] uppercase tracking-wide text-white/30 mb-1">
+                            {model.assumptions.analystModelUsed ?? "GPT"} · {model.assumptions.analystExplanation.confidence_level} confidence · {model.assumptions.analystExplainedAt ?? "not recorded"}
+                          </div>
+                          <div className="text-[12px] leading-relaxed text-white/75">{model.assumptions.analystExplanation.summary}</div>
+                        </div>
+                        <AnalystBulletGroup title="Key drivers" items={model.assumptions.analystExplanation.key_drivers} />
+                        <AnalystBulletGroup title="Risks" items={model.assumptions.analystExplanation.risk_notes} tone="warn" />
+                        <AnalystBulletGroup title="Missing data" items={model.assumptions.analystExplanation.missing_data} tone="warn" />
+                        <AnalystBulletGroup title="Next documents" items={model.assumptions.analystExplanation.next_documents} />
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2 text-[10.5px] leading-relaxed text-white/45">
+                        Generate a short analyst note after rates, AI inputs, geo, or site-photo risks are confirmed.
+                      </div>
+                    )}
+                  </div>
+
                   <div data-testid="cost-placement-leveling" className="mb-4 rounded-xl border border-white/[0.06] bg-black/10 overflow-hidden">
                     <div className="grid grid-cols-[1.1fr_1fr_1fr_0.9fr] gap-2 px-3 py-2 text-[10px] uppercase tracking-wide text-white/30 border-b border-white/[0.05]">
                       <span>Variant</span>
@@ -1011,11 +1912,19 @@ function buildCostAssumptions(value: CostPlacementDraft): CostAssumptions {
   const costParams = value.costParams ?? DEFAULT_COST_PARAMS;
   const manualRates = JSON.stringify(costParams) !== JSON.stringify(DEFAULT_COST_PARAMS);
   const uploadedRates = Boolean(state.uploadedRateFileName);
+  const aiMissingDataWarnings = state.aiMissingDataWarnings ?? [];
+  const geoWarnings = state.geoWarnings ?? [];
+  const visionWarnings = state.visionWarnings ?? [];
+  const fieldSources = state.fieldSources ?? {};
+  const sourceRegistry = buildSourceRegistry({ state, manualRates, uploadedRates, fieldSources });
   const missingDataWarnings = [
     "No geotechnical report attached",
     "No exact slope/topography survey attached",
     value.auto_parking ? "No official parking norm selected" : null,
     uploadedRates ? "Client uploaded screening rates are used" : manualRates ? "Manual screening rates are used" : "Placeholder rates are used",
+    ...aiMissingDataWarnings.map((warning) => `AI extraction: ${warning}`),
+    ...geoWarnings.map((warning) => `Geo: ${warning}`),
+    ...visionWarnings.map((warning) => `Vision: ${warning}`),
     "No official cost source is attached",
   ].filter(Boolean) as string[];
 
@@ -1034,6 +1943,31 @@ function buildCostAssumptions(value: CostPlacementDraft): CostAssumptions {
     confidenceLevel: uploadedRates ? state.confidenceLevel : manualRates ? "medium" : state.confidenceLevel,
     uploadedRateFileName: state.uploadedRateFileName,
     uploadedRateKeys: state.uploadedRateKeys,
+    aiExtractedAt: state.aiExtractedAt,
+    aiModelUsed: state.aiModelUsed,
+    aiConfidenceLevel: state.aiConfidenceLevel,
+    aiAppliedFields: state.aiAppliedFields ?? [],
+    aiRejectedFields: state.aiRejectedFields ?? [],
+    aiMissingDataWarnings,
+    fieldSources,
+    geoAddress: state.geoAddress ?? (value.site_address.trim() || null),
+    geoCoordinates: state.geoCoordinates ?? (
+      value.site_latitude !== null && value.site_longitude !== null
+        ? `${value.site_latitude}, ${value.site_longitude}`
+        : null
+    ),
+    geoRegionConfidence: state.geoRegionConfidence ?? null,
+    geoWarnings,
+    visionAnalyzedAt: state.visionAnalyzedAt ?? null,
+    visionModelUsed: state.visionModelUsed ?? null,
+    visionConfidenceLevel: state.visionConfidenceLevel ?? null,
+    visionAppliedFlags: state.visionAppliedFlags ?? [],
+    visionRejectedFlags: state.visionRejectedFlags ?? [],
+    visionWarnings,
+    sourceRegistry,
+    analystExplainedAt: state.analystExplainedAt ?? null,
+    analystModelUsed: state.analystModelUsed ?? null,
+    analystExplanation: state.analystExplanation ?? null,
     includedItems: INCLUDED_ITEMS,
     excludedItems: EXCLUDED_ITEMS,
     missingDataWarnings,
@@ -1061,6 +1995,9 @@ function CostAssumptionsPanel({
         <AssumptionRow label="Region" value={regionLabel(assumptions.region)} />
         <AssumptionRow label="Object type" value={assumptions.objectType} />
         <AssumptionRow label="Building class" value={qualityLabel(assumptions.buildingClass)} />
+        {assumptions.geoAddress && <AssumptionRow label="Geo address" value={assumptions.geoAddress} muted />}
+        {assumptions.geoCoordinates && <AssumptionRow label="Geo coordinates" value={assumptions.geoCoordinates} muted />}
+        {assumptions.geoRegionConfidence && <AssumptionRow label="Geo confidence" value={assumptions.geoRegionConfidence} warn={assumptions.geoRegionConfidence !== "high"} />}
         <AssumptionRow label="Estimate class" value="AACE Class 5" />
         <AssumptionRow label="Purpose" value="Early screening only" warn />
       </AssumptionSection>
@@ -1114,6 +2051,89 @@ function CostAssumptionsPanel({
             />
           </>
         )}
+        {assumptions.aiModelUsed && (
+          <>
+            <AssumptionRow label="AI extraction" value="brief-to-inputs only" warn={assumptions.aiConfidenceLevel !== "high"} />
+            <AssumptionRow label="AI model" value={assumptions.aiModelUsed} />
+            <AssumptionRow label="AI extracted" value={assumptions.aiExtractedAt ?? "not recorded"} />
+            <AssumptionRow label="AI confidence" value={assumptions.aiConfidenceLevel ?? "low"} warn={assumptions.aiConfidenceLevel !== "high"} />
+            <AssumptionRow
+              label="AI-applied fields"
+              value={assumptions.aiAppliedFields.map((key) => COST_AI_FIELD_LABELS[key as CostAiField] ?? key).join(", ")}
+              muted
+              help="GPT normalizes the user brief into form inputs. Cost totals still come from deterministic formulas."
+            />
+            {assumptions.aiRejectedFields.length > 0 && (
+              <AssumptionRow
+                label="AI-rejected fields"
+                value={assumptions.aiRejectedFields.map((key) => COST_AI_FIELD_LABELS[key as CostAiField] ?? key).join(", ")}
+                warn
+                help="Fields were visible in the GPT diff but were not applied by the user."
+              />
+            )}
+            <AssumptionRow
+              label="Field sources"
+              value={Object.entries(assumptions.fieldSources)
+                .filter(([key]) => key === "geo_region" || key.startsWith("vision_") || Object.prototype.hasOwnProperty.call(COST_AI_FIELD_LABELS, key) || Object.prototype.hasOwnProperty.call(COST_RATE_IMPORT_KEY_LABELS, key))
+                .map(([key, source]) => `${sourceFieldLabel(key)}: ${source}`)
+                .join(", ")}
+              muted
+            />
+          </>
+        )}
+        {assumptions.visionModelUsed && (
+          <>
+            <AssumptionRow label="Vision analysis" value="site image risk flags only" warn={assumptions.visionConfidenceLevel !== "high"} />
+            <AssumptionRow label="Vision model" value={assumptions.visionModelUsed} />
+            <AssumptionRow label="Vision analyzed" value={assumptions.visionAnalyzedAt ?? "not recorded"} />
+            <AssumptionRow label="Vision confidence" value={assumptions.visionConfidenceLevel ?? "low"} warn={assumptions.visionConfidenceLevel !== "high"} />
+            <AssumptionRow
+              label="Vision-applied flags"
+              value={assumptions.visionAppliedFlags.map((key) => VISION_RISK_LABELS[key] ?? key).join(", ")}
+              muted
+              help="Vision flags are screening hints only. Cost totals still come from deterministic formulas."
+            />
+            {assumptions.visionRejectedFlags.length > 0 && (
+              <AssumptionRow
+                label="Vision-rejected flags"
+                value={assumptions.visionRejectedFlags.map((key) => VISION_RISK_LABELS[key] ?? key).join(", ")}
+                warn
+              />
+            )}
+          </>
+        )}
+      </AssumptionSection>
+
+      <AssumptionSection title="G) Source Registry">
+        <div data-testid="cost-source-registry" className="space-y-2">
+          {assumptions.sourceRegistry.length === 0 && (
+            <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5 text-[10.5px] text-white/40">
+              No source registry entries yet.
+            </div>
+          )}
+          {assumptions.sourceRegistry.map((entry) => (
+            <div key={entry.id} className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-2.5 space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-medium text-white/75">{entry.label}</div>
+                  <div className="text-[10px] text-white/35">{entry.sourceName}</div>
+                </div>
+                <span className={["rounded-full border px-2 py-0.5 text-[9px] uppercase tracking-wide", sourceBadgeClass(entry.sourceType)].join(" ")}>
+                  {entry.sourceType}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] text-white/42">
+                <span>Year: <span className="text-white/62">{entry.sourceYear}</span></span>
+                <span className="text-right">Confidence: <span className={entry.confidenceLevel === "low" ? "text-amber-200" : "text-white/62"}>{entry.confidenceLevel}</span></span>
+                <span className="col-span-2">Updated: <span className="text-white/62">{entry.lastUpdated}</span></span>
+              </div>
+              <div className="text-[10px] leading-relaxed text-white/42">
+                Applies to: <span className="text-white/62">{entry.appliesTo.join(", ")}</span>
+              </div>
+              <div className="text-[10px] leading-relaxed text-white/35">{entry.note}</div>
+            </div>
+          ))}
+        </div>
       </AssumptionSection>
 
       <div className="rounded-xl border border-amber-300/15 bg-amber-300/[0.06] px-3 py-2 text-[10.5px] leading-relaxed text-amber-100/70">
@@ -1161,6 +2181,32 @@ function ItemPill({ label, included }: { label: string; included?: boolean }) {
   );
 }
 
+function sourceBadgeClass(sourceType: CostSourceType): string {
+  if (sourceType === "placeholder") return "border-amber-300/20 bg-amber-300/[0.08] text-amber-100/70";
+  if (sourceType === "official") return "border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-100/75";
+  if (sourceType === "market_calibrated") return "border-sky-300/20 bg-sky-300/[0.08] text-sky-100/75";
+  if (sourceType === "client_uploaded") return "border-blue-300/20 bg-blue-300/[0.08] text-blue-100/75";
+  if (sourceType === "ai_extracted") return "border-violet-300/20 bg-violet-300/[0.08] text-violet-100/75";
+  if (sourceType === "vision_extracted") return "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100/75";
+  return "border-white/[0.08] bg-white/[0.04] text-white/60";
+}
+
+function AnalystBulletGroup({ title, items, tone = "base" }: { title: string; items: string[]; tone?: "base" | "warn" }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-white/30 mb-1.5">{title}</div>
+      <ul className="space-y-1.5">
+        {items.map((item) => (
+          <li key={item} className={["text-[10.8px] leading-relaxed", tone === "warn" ? "text-amber-100/72" : "text-white/65"].join(" ")}>
+            - {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function Panel({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-white/[0.07] bg-[#151515]/65 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
@@ -1190,6 +2236,50 @@ function NumberField({ label, value, step = 1, testId, onChange }: {
         value={Number.isFinite(value) ? value : 0}
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full h-9 rounded-lg bg-black/20 border border-white/[0.08] px-2.5 text-[12px] text-white/80 outline-none focus:border-white/25"
+      />
+    </label>
+  );
+}
+
+function NullableNumberField({ label, value, step = 1, testId, onChange }: {
+  label: string;
+  value: number | null;
+  step?: number;
+  testId?: string;
+  onChange: (v: number | null) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-[10.5px] text-white/35 mb-1">{label}</span>
+      <input
+        type="number"
+        data-testid={testId}
+        step={step}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+        className="w-full h-9 rounded-lg bg-black/20 border border-white/[0.08] px-2.5 text-[12px] text-white/80 outline-none focus:border-white/25"
+      />
+    </label>
+  );
+}
+
+function TextField({ label, value, testId, placeholder, onChange }: {
+  label: string;
+  value: string;
+  testId?: string;
+  placeholder?: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-[10.5px] text-white/35 mb-1">{label}</span>
+      <input
+        type="text"
+        data-testid={testId}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full h-9 rounded-lg bg-black/20 border border-white/[0.08] px-2.5 text-[12px] text-white/80 outline-none focus:border-white/25 placeholder:text-white/25"
       />
     </label>
   );

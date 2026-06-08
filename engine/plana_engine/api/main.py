@@ -46,6 +46,20 @@ from ..cost import (
     AggregateCostEstimate, CostBuildupConfig, estimate_aggregate_cost,
     region_from_coords,
 )
+from ..cost.input_extractor import (
+    CostInputExtractionRequest,
+    CostInputExtractionResponse,
+    extract_cost_inputs_from_brief,
+)
+from ..cost.analyst_explainer import (
+    CostAnalystExplanationRequest,
+    CostAnalystExplanationResponse,
+    explain_cost_snapshot,
+)
+from ..cost.site_image_analyzer import (
+    SiteImageRiskAnalysisResponse,
+    analyze_site_image_risks,
+)
 from ..types import BuildingPurpose
 from ..visualizer import (
     DEFAULT_EXTERIOR_VIEWS, EXTERIOR_VIEWS,
@@ -2942,6 +2956,52 @@ calc();
 def cost_ui() -> Response:
     """Простая страница-форма для расчёта стоимости (тупая версия v0)."""
     return Response(content=_COST_UI_HTML, media_type="text/html; charset=utf-8")
+
+
+@app.post("/cost/extract-inputs", response_model=CostInputExtractionResponse)
+def cost_extract_inputs(req: CostInputExtractionRequest) -> CostInputExtractionResponse:
+    """Extract cost-placement inputs from a free-form brief via OpenAI.
+
+    The model only returns structured assumptions. It does not calculate cost
+    totals; deterministic cost formulas remain the only source of totals.
+    """
+    try:
+        return extract_cost_inputs_from_brief(req.brief)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/cost/analyze-site-image", response_model=SiteImageRiskAnalysisResponse)
+async def cost_analyze_site_image(site_image: UploadFile = File(...)) -> SiteImageRiskAnalysisResponse:
+    """Analyze a site photo for non-authoritative visual risk flags.
+
+    Vision output only suggests risks. It does not calculate costs and must be
+    confirmed by the user before affecting the deterministic cost model.
+    """
+    image_bytes = await site_image.read()
+    try:
+        return analyze_site_image_risks(image_bytes, content_type=site_image.content_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/cost/explain-snapshot", response_model=CostAnalystExplanationResponse)
+def cost_explain_snapshot(req: CostAnalystExplanationRequest) -> CostAnalystExplanationResponse:
+    """Explain a deterministic Class 5 cost snapshot via OpenAI.
+
+    The model only writes analyst commentary. It does not calculate or override
+    the cost totals.
+    """
+    try:
+        return explain_cost_snapshot(req)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ---------------------------------------------------------------------------

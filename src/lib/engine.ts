@@ -1241,6 +1241,107 @@ export async function enhanceBrief(brief: string): Promise<string> {
   return res.enhanced_brief;
 }
 
+export type CostInputExtraction = {
+  region: "Almaty" | "Astana" | "Shymkent" | "Aktobe" | "default" | null;
+  object_type: string | null;
+  building_class: "economy" | "comfort" | "business" | null;
+  site_width_m: number | null;
+  site_depth_m: number | null;
+  setback_front_m: number | null;
+  setback_side_m: number | null;
+  setback_rear_m: number | null;
+  gfa_above_ground_m2: number | null;
+  gfa_underground_m2: number | null;
+  efficiency_ratio: number | null;
+  market_price_per_sellable_m2: number | null;
+  floors_above: number | null;
+  floors_below: number | null;
+  footprint_width_m: number | null;
+  footprint_depth_m: number | null;
+  parking_mode: "open" | "underground" | "mixed" | null;
+  parking_spots: number | null;
+  complex_soil: boolean | null;
+  complex_slope: boolean | null;
+  missing_data_warnings: string[];
+  assumptions_notes: string[];
+  confidence_level: "low" | "medium" | "high";
+};
+
+export type CostInputExtractionResponse = {
+  extraction: CostInputExtraction;
+  model_used: string;
+  source: "openai";
+};
+
+export async function extractCostInputsFromBrief(brief: string): Promise<CostInputExtractionResponse> {
+  return request("/cost/extract-inputs", {
+    method: "POST",
+    body: JSON.stringify({ brief }),
+  });
+}
+
+export type SiteImageRiskFlag = {
+  key: "apparent_slope" | "limited_road_access" | "dense_context" | "visible_site_constraints" | "uncertain_image";
+  label: string;
+  severity: "low" | "medium" | "high";
+  suggested_value: boolean;
+  reason: string;
+};
+
+export type SiteImageRiskAnalysis = {
+  apparent_slope: boolean | null;
+  road_access: "clear" | "limited" | "unclear";
+  dense_context: boolean | null;
+  visible_constraints: string[];
+  risk_flags: SiteImageRiskFlag[];
+  missing_data_warnings: string[];
+  notes: string[];
+  confidence_level: "low" | "medium" | "high";
+};
+
+export type SiteImageRiskAnalysisResponse = {
+  analysis: SiteImageRiskAnalysis;
+  model_used: string;
+  source: "openai_vision";
+};
+
+export async function analyzeSiteImageRisks(siteImage: File): Promise<SiteImageRiskAnalysisResponse> {
+  const fd = new FormData();
+  fd.append("site_image", siteImage);
+  return request("/cost/analyze-site-image", {
+    method: "POST",
+    body: fd,
+  });
+}
+
+export type CostAnalystExplanation = {
+  summary: string;
+  key_drivers: string[];
+  risk_notes: string[];
+  missing_data: string[];
+  next_documents: string[];
+  confidence_level: "low" | "medium" | "high";
+};
+
+export type CostAnalystExplanationResponse = {
+  explanation: CostAnalystExplanation;
+  model_used: string;
+  source: "openai";
+};
+
+export async function explainCostSnapshot(payload: {
+  selected_variant: string;
+  cost_snapshot: Record<string, unknown>;
+  assumptions: Record<string, unknown>;
+  source_registry: Array<Record<string, unknown>>;
+  missing_data_warnings: string[];
+}): Promise<CostAnalystExplanationResponse> {
+  return request("/cost/explain-snapshot", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function editLayoutWithChat(
   layout: LayoutFloor,
   message: string,

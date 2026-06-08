@@ -244,6 +244,132 @@
       "priority": 14,
       "passes": true,
       "notes": "Implemented as frontend-only CSV rate import in src/components/CostPlacementTab.tsx and covered by cost-placement e2e."
+    },
+    {
+      "id": "US-015",
+      "title": "Add AI cost input extraction from brief",
+      "description": "As a founder, I want ChatGPT to read a free-form project brief and extract cost placement inputs so that the estimate starts from user intent instead of manual fields only.",
+      "acceptanceCriteria": [
+        "Add backend endpoint for AI cost input extraction using OpenAI runtime and OPENAI_MODEL",
+        "Return structured JSON with region, object type, building class, GFA, floors, parking, underground area, sellable efficiency, and missing data warnings",
+        "Do not let AI produce final cost totals directly",
+        "Keep deterministic cost formulas as the only source of calculated cost",
+        "Add frontend action to paste a brief and preview extracted assumptions",
+        "Require user confirmation before applying extracted assumptions to the cost placement draft",
+        "Show AI source metadata and confidence in the assumptions panel",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "Implemented GPT brief-to-cost-input extraction with backend OpenAI endpoint, frontend preview/apply flow, assumptions provenance, and backend/e2e coverage. Cost totals remain deterministic."
+    },
+    {
+      "id": "US-016",
+      "title": "Add source-aware assumption confirmation",
+      "description": "As a user, I want to review every AI-extracted assumption before it changes my cost model so that I can trust what the system understood.",
+      "acceptanceCriteria": [
+        "Show extracted assumptions as a diff against the current cost placement draft",
+        "Allow applying all fields or selected fields",
+        "Track each applied field source as manual, client_uploaded, or ai_extracted",
+        "Preserve existing CSV/manual rate flows",
+        "Show rejected or uncertain AI fields as warnings, not silent changes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "Implemented AI extraction diff review with selectable fields, rejected field tracking, and source metadata for manual, client_uploaded, and ai_extracted assumptions."
+    },
+    {
+      "id": "US-017",
+      "title": "Add geo input and region intelligence",
+      "description": "As a developer, I want address/coordinates to set region and geo-risk assumptions so that the estimate can react to project location more realistically.",
+      "acceptanceCriteria": [
+        "Add address/coordinates fields to cost placement draft",
+        "Derive a coarse Kazakhstan region/city from user input when possible",
+        "Apply region coefficient through the existing deterministic cost params",
+        "Show geo confidence and missing official geo data warnings",
+        "Do not integrate paid GIS/cadastre sources yet",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "Implemented MVP geo layer with address/coordinate inputs, coarse Kazakhstan city matching, user-confirmed region application, geo confidence, and non-official geo warnings."
+    },
+    {
+      "id": "US-018",
+      "title": "Add photo/site image risk analysis",
+      "description": "As a user, I want the system to inspect a site image and suggest cost risk flags so that obvious visual risks are not ignored.",
+      "acceptanceCriteria": [
+        "Add backend endpoint for OpenAI vision-based site risk analysis",
+        "Extract non-authoritative flags such as apparent slope, road access, visible constraints, dense context, and uncertainty",
+        "Never calculate cost directly from the image",
+        "Map confirmed visual risks to existing complex_slope and warning fields",
+        "Require user confirmation before applying any risk flag",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "Implemented OpenAI Vision site image risk analysis with upload endpoint, selectable visual risk flags, confirmed complex_slope mapping, and non-authoritative warnings."
+    },
+    {
+      "id": "US-019",
+      "title": "Add cost source registry",
+      "description": "As a founder, I want every rate and assumption to carry source metadata so that clients can understand whether a number is placeholder, manual, client-uploaded, AI-extracted, market-calibrated, or official.",
+      "acceptanceCriteria": [
+        "Add source registry data structure for assumptions and rates",
+        "Support placeholder, manual, client_uploaded, ai_extracted, market_calibrated, and official source types",
+        "Show source date, confidence, and update metadata in the assumptions panel",
+        "Keep current totals unchanged unless inputs/rates change",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "Implemented sourceRegistry inside costAssumptions with placeholder, manual, client_uploaded, ai_extracted, vision_extracted, market_calibrated, and official source type support plus UI registry panel."
+    },
+    {
+      "id": "US-020",
+      "title": "Add AI cost analyst explanation",
+      "description": "As a decision maker, I want ChatGPT to explain why the estimate changed so that the UI feels like an analyst, not a random calculator.",
+      "acceptanceCriteria": [
+        "Generate explanation from structured cost snapshot, assumptions, missing data, and selected variant",
+        "Do not allow AI to override deterministic totals",
+        "Show concise explanation bullets: key drivers, missing data, risks, and next required documents",
+        "Log model used and response success without logging secrets",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": "Implemented OpenAI analyst explanation endpoint and UI card. GPT explains deterministic snapshot drivers, risks, missing data, and next documents without recalculating totals."
+    },
+    {
+      "id": "US-021",
+      "title": "Add cost report export",
+      "description": "As a founder, I want to export the Class 5 estimate with assumptions and AI extraction metadata so that the result can be shared with clients or leadership.",
+      "acceptanceCriteria": [
+        "Export selected cost placement variant to PDF or CSV",
+        "Include expected/low/high range, cost buckets, included/excluded items, source metadata, and warnings",
+        "Include AI extracted fields and confirmation status when available",
+        "Clearly label the report as screening-only and not official Kazakhstan estimate documentation",
+        "Tests pass"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "Client-facing output after AI/geo/photo inputs are explainable."
+    },
+    {
+      "id": "US-022",
+      "title": "Add calibration dataset path",
+      "description": "As a product owner, I want a path to collect actual project cost outcomes so that the system can later support real ML calibration instead of only rules and LLM extraction.",
+      "acceptanceCriteria": [
+        "Define a minimal historical project cost schema",
+        "Document required fields for future ML calibration",
+        "Add import placeholder for historical project rows without affecting current cost totals",
+        "Explain that no predictive ML model is trained until enough verified data exists",
+        "Tests pass"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "Preparation for CatBoost/XGBoost/LightGBM calibration later; not part of immediate MVP calculation."
     }
   ]
 }
