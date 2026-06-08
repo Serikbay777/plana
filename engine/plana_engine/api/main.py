@@ -44,6 +44,7 @@ from ..cad.layout_schema import LayoutFloor
 from ..cad.floorplan_ifc import build_ifc_from_layout
 from ..cost import (
     AggregateCostEstimate, CostBuildupConfig, estimate_aggregate_cost,
+    region_from_coords,
 )
 from ..types import BuildingPurpose
 from ..visualizer import (
@@ -104,7 +105,7 @@ app.add_middleware(
 )
 
 # Публичные пути — не требуют токена
-_PUBLIC_PATHS = {"/health", "/auth/login", "/auth/register", "/docs", "/openapi.json", "/redoc"}
+_PUBLIC_PATHS = {"/health", "/auth/login", "/auth/register", "/docs", "/openapi.json", "/redoc", "/cost/ui"}
 
 
 @app.middleware("http")
@@ -2797,14 +2798,20 @@ def export_floorplan_ifc(req: ExportIfcRequest) -> Response:
 class AggregateCostRequest(BaseModel):
     """Вход для /cost/aggregate.
 
-    Либо задаётся gfa_m2 напрямую, либо передаётся layout (+n_floors) — тогда
-    GFA выводится как площадь контура этажа × число этажей.
+    GFA: либо gfa_m2 напрямую, либо layout (+n_floors) → площадь контура × этажи.
+    Регион: либо region строкой, либо координаты посадки lat/lon → ближайший город.
     """
     gfa_m2: float | None = None
     region: str = "default"
+    lat: float | None = None
+    lon: float | None = None
     building_type: str = "residential"
     n_floors: int = 1
     layout: LayoutFloor | None = None
+    residential_class: str | None = None
+    construction_type: str | None = None
+    parking_spaces: int = 0
+    parking_rate_per_space: float | None = None
     config: CostBuildupConfig | None = None
 
 
@@ -2835,12 +2842,100 @@ def cost_aggregate(req: AggregateCostRequest) -> AggregateCostEstimate:
     if gfa <= 0:
         raise HTTPException(status_code=422, detail="GFA должна быть > 0")
 
+    # Координаты посадки → регион (если заданы); иначе берём region как есть.
+    region = req.region
+    if req.lat is not None and req.lon is not None:
+        region = region_from_coords(req.lat, req.lon)
+
     return estimate_aggregate_cost(
         gfa_m2=gfa,
-        region=req.region,
+        region=region,
         building_type=req.building_type,
+        residential_class=req.residential_class,
+        construction_type=req.construction_type,
+        parking_spaces=req.parking_spaces,
+        parking_rate_per_space=req.parking_rate_per_space,
         config=req.config,
     )
+
+
+# Простая страница-форма (тупая версия v0): открыть /cost/ui в браузере.
+# Публичная (в _PUBLIC_PATHS); токен зашит в JS только для локального демо.
+_COST_UI_HTML = """<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plana · Расчёт стоимости (посадка)</title>
+<style>
+ body{font-family:system-ui,Arial,sans-serif;max-width:760px;margin:30px auto;padding:0 16px;color:#1a1a1a}
+ h1{font-size:20px;margin-bottom:4px} .sub{color:#666;font-size:13px;margin-bottom:20px}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+ label{display:block;font-size:13px;color:#444;margin-bottom:4px}
+ input,select{width:100%;padding:8px;font-size:14px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box}
+ button{margin-top:16px;padding:11px 22px;font-size:15px;background:#2563eb;color:#fff;border:0;border-radius:8px;cursor:pointer}
+ button:hover{background:#1d4ed8}
+ #range{font-size:26px;font-weight:700;margin:8px 0;color:#111}
+ #point{color:#555;font-size:14px}
+ .card{border:1px solid #e5e5e5;border-radius:10px;padding:16px;margin-top:20px}
+ table{width:100%;border-collapse:collapse;font-size:14px;margin-top:10px}
+ td{padding:5px 0;border-bottom:1px solid #f0f0f0}
+ td.r{text-align:right;font-variant-numeric:tabular-nums}
+ .warn{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px;font-size:12px;color:#9a3412;margin-top:6px}
+ .disc{color:#b91c1c;font-size:12px;margin-top:12px}
+</style></head><body>
+ <h1>Расчёт стоимости стадии «посадка на участок»</h1>
+ <div class="sub">Укрупнённая расчётная стоимость (УПСС). Диапазон AACE Class 5. НЕ сертифицированная смета. Ставки и коэффициенты — плейсхолдеры.</div>
+ <div class="grid">
+  <div><label>Регион (город)</label><select id="region">
+    <option>Алматы</option><option>Астана</option><option>Шымкент</option><option>Актобе</option>
+    <option value="default">Другой (средняя по РК)</option></select></div>
+  <div><label>Общая площадь, м² (GFA)</label><input id="gfa" type="number" value="15000"></div>
+  <div><label>Класс жилья</label><select id="cls">
+    <option>эконом</option><option selected>комфорт</option><option>бизнес</option>
+    <option>премиум</option><option>люкс</option></select></div>
+  <div><label>Конструктив</label><select id="con">
+    <option>панель</option><option selected>монолит</option><option>кирпич</option></select></div>
+  <div><label>Машино-мест паркинга</label><input id="park" type="number" value="0"></div>
+  <div></div>
+ </div>
+ <button onclick="calc()">Рассчитать</button>
+ <div id="out"></div>
+<script>
+const TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZW1vIiwiZW1haWwiOiJkZW1vQGUua3oiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MTI1MzUwNH0.w4if_hL3Iba9PGBnKzAT5Ivg5ipU_s2Q279F5o54g8I";
+const fmt=n=>Math.round(n).toLocaleString("ru-RU")+" ₸";
+const fmtB=n=>(n/1e9).toLocaleString("ru-RU",{maximumFractionDigits:2})+" млрд ₸";
+async function calc(){
+ const body={gfa_m2:Number(gfa.value),region:region.value,residential_class:cls.value,
+   construction_type:con.value,parking_spaces:Number(park.value)};
+ out.innerHTML="Считаю…";
+ try{
+  const r=await fetch("/cost/aggregate",{method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN},
+    body:JSON.stringify(body)});
+  if(!r.ok){out.innerHTML="Ошибка "+r.status;return;}
+  const d=await r.json();
+  let rows="<tr><td>База здания (СМР)</td><td class=r>"+fmt(d.building_base)+"</td></tr>";
+  if(d.parking_cost>0)rows+="<tr><td>Паркинг ("+d.parking_spaces+" мест)</td><td class=r>"+fmt(d.parking_cost)+"</td></tr>";
+  for(const ln of d.buildup)rows+="<tr><td>"+ln.label+"</td><td class=r>"+fmt(ln.amount)+"</td></tr>";
+  rows+="<tr><td>НДС</td><td class=r>"+fmt(d.vat)+"</td></tr>";
+  const warns=d.warnings.map(w=>"<div class=warn>⚠ "+w+"</div>").join("");
+  out.innerHTML="<div class=card><div style='color:#888;font-size:13px'>Регион: "+d.region+
+    " · "+d.gfa_m2.toLocaleString("ru-RU")+" м² · "+Math.round(d.rate_per_m2).toLocaleString("ru-RU")+
+    " ₸/м²"+(d.rate_official?"":" (плейсхолдер)")+
+    " · класс ×"+d.class_factor+" · констр. ×"+d.construction_factor+"</div>"+
+    "<div id=range>"+fmtB(d.total_low)+" — "+fmtB(d.total_high)+"</div>"+
+    "<div id=point>точечная оценка: "+fmt(d.total)+" · "+d.estimate_class+"</div>"+
+    "<table>"+rows+"</table><div class=disc>"+d.disclaimer+"</div>"+warns+"</div>";
+ }catch(e){out.innerHTML="Сеть/ошибка: "+e;}
+}
+calc();
+</script></body></html>
+"""
+
+
+@app.get("/cost/ui")
+def cost_ui() -> Response:
+    """Простая страница-форма для расчёта стоимости (тупая версия v0)."""
+    return Response(content=_COST_UI_HTML, media_type="text/html; charset=utf-8")
 
 
 # ---------------------------------------------------------------------------

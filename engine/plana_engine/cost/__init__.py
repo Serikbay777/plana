@@ -19,8 +19,11 @@ from .aggregate_cost import (
     capacity_from_ifc,
     estimate_aggregate_cost,
     estimate_aggregate_cost_from_ifc,
+    get_class_factor,
+    get_construction_factor,
     get_region_rate,
 )
+from .geo_region import nearest_city, region_from_coords
 from .qto import BillOfQuantities, QtyLine, aggregate_quantities, quantities_from_ifc
 
 __all__ = [
@@ -38,5 +41,10 @@ __all__ = [
     "capacity_from_ifc",
     "estimate_aggregate_cost",
     "estimate_aggregate_cost_from_ifc",
+    "get_class_factor",
+    "get_construction_factor",
     "get_region_rate",
+    # geo (координаты посадки → регион)
+    "nearest_city",
+    "region_from_coords",
 ]
