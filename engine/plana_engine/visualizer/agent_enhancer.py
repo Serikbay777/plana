@@ -39,6 +39,7 @@ from .kz_norms import (
     NormSection, build_norms_context, select_relevant_norms,
 )
 from .marketing_prompt import MarketingInputs
+from .. import norms
 from ..ai.openai_runtime import chat_completion, has_openai_api_key, resolve_openai_model
 
 
@@ -260,7 +261,7 @@ def _format_inputs_for_critic(inputs: MarketingInputs) -> str:
       - 2-комн: {int(inputs.k2_pct * 100)}%
       - 3-комн: {int(inputs.k3_pct * 100)}%
   • Лифты: {inputs.lifts_passenger} пассажирских + {inputs.lifts_freight} грузовых
-  • Паркинг: {inputs.parking_spaces_per_apt} м/м на квартиру, {inputs.parking_underground_levels} подземных этажа
+  • Паркинг: {norms.parking_ratio(inputs.housing_class, inputs.parking_spaces_per_apt)} м/м на квартиру, {inputs.parking_underground_levels} подземных этажа
   • Эвакуация: ≤ {inputs.fire_evacuation_max_m} м, тупиковые ≤ {inputs.fire_dead_end_corridor_max_m} м
   • Инсоляция: {"приоритет инсоляции" if inputs.insolation_priority else "без приоритета"}, мин. {inputs.insolation_min_hours} ч
   • ГПЗУ: КИТ {inputs.max_coverage_pct}%, высота ≤ {inputs.max_height_m} м
@@ -456,7 +457,7 @@ def enhance_with_kz_norms(
         purpose=inputs.purpose,
         floors=inputs.floors,
         lifts_passenger=inputs.lifts_passenger,
-        parking_spaces_per_apt=inputs.parking_spaces_per_apt,
+        parking_spaces_per_apt=norms.parking_ratio(inputs.housing_class, inputs.parking_spaces_per_apt),
         seismic_zone=use_seismic,
     )
 

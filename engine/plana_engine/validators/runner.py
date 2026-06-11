@@ -12,18 +12,25 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from ..domain import Project
-from . import coverage, floors, height, rooms, setbacks
+from . import (
+    coverage, far, floors, height, neighbor_gap, red_lines, rooms, setbacks,
+    zoning,
+)
 from .base import Violation
 
 
 _ValidatorFn = Callable[[Project], Iterable[Violation]]
 
 _VALIDATORS: list[tuple[str, _ValidatorFn]] = [
-    ("setbacks", setbacks.check),
-    ("coverage", coverage.check),
-    ("height",   height.check),
-    ("floors",   floors.check),
-    ("rooms",    rooms.check),
+    ("setbacks",     setbacks.check),
+    ("coverage",     coverage.check),
+    ("far",          far.check),
+    ("height",       height.check),
+    ("floors",       floors.check),
+    ("rooms",        rooms.check),
+    ("red_lines",    red_lines.check),
+    ("neighbor_gap", neighbor_gap.check),
+    ("zoning",       zoning.check),
 ]
 
 

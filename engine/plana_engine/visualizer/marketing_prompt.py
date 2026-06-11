@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .. import norms
+
 
 # ---------------------------------------------------------------------------
 # Входные параметры (то, что приходит из формы)
@@ -25,6 +27,11 @@ class MarketingInputs:
     floors: int = 1
     purpose: str = "residential"
     building_type: str = "multi_family"
+    # Класс жилья (эконом/комфорт/бизнес/премиум | 1..4 | I..IV). Принимает
+    # «грязное» значение — нормализуется в norms.normalize_housing_class().
+    # None → norms.DEFAULT_CLASS (комфорт). Управляет нормами площадей квартир,
+    # продаваемой доли, паркинга и озеленения (см. plana_engine/norms.py).
+    housing_class: str | None = None
 
     studio_pct: float = 0.0
     k1_pct: float = 0.0
@@ -34,7 +41,7 @@ class MarketingInputs:
 
     sections: int = 1
 
-    parking_spaces_per_apt: float = 1.0
+    parking_spaces_per_apt: float = 0.0  # 0 = авто по классу (norms.parking_ratio)
     parking_underground_levels: int = 1
 
     fire_evacuation_max_m: float = 25.0
@@ -51,6 +58,8 @@ class MarketingInputs:
 
     max_coverage_pct: float = 50.0
     max_height_m: float = 30.0
+    max_far: float = 0.0      # КИТ из ПДП/ГПЗУ; 0 = не задан (валидатор молчит)
+    max_floors: int = 0       # предельная этажность из ПДП/ГПЗУ; 0 = не задан
 
     site_polygon: tuple[tuple[float, float], ...] | None = None
 
@@ -398,6 +407,9 @@ def _prepare(inputs: MarketingInputs) -> PromptData:
     programs = [_apt_program(t, i + 1) for i, t in enumerate(types)]
     summary = _pct_summary(types)
 
+    # Паркинг/квартиру: явный ввод или норма по классу жилья (0 = авто).
+    _p_ratio = norms.parking_ratio(inputs.housing_class, inputs.parking_spaces_per_apt)
+
     # Секции (collapse если < 3 кв./ядро)
     n_sections = max(1, inputs.sections)
     effective_sections = n_sections if (n_units / n_sections) >= 3 else 1
@@ -416,12 +428,12 @@ def _prepare(inputs: MarketingInputs) -> PromptData:
         n_units=n_units,
         apartment_programs=programs,
         apt_summary=summary,
-        total_parking=round(n_units * inputs.floors * inputs.parking_spaces_per_apt),
+        total_parking=round(n_units * inputs.floors * _p_ratio),
         fire_evac_max_m=inputs.fire_evacuation_max_m,
         fire_exits=inputs.fire_evacuation_exits_per_section,
         fire_dead_end_m=inputs.fire_dead_end_corridor_max_m,
         parking_levels=inputs.parking_underground_levels,
-        parking_per_apt=inputs.parking_spaces_per_apt,
+        parking_per_apt=_p_ratio,
         max_coverage_pct=inputs.max_coverage_pct,
         max_height_m=inputs.max_height_m,
         setback_front=inputs.setback_front_m,

@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
+import math
+
 from shapely import Polygon as ShPolygon
+from shapely.affinity import scale as _scale
 
 from ..types import BuildingPurpose
 from ..visualizer.marketing_prompt import MarketingInputs
@@ -33,6 +36,19 @@ def _rect(x: float, y: float, w: float, h: float) -> ShPolygon:
         (x + w, y + h),
         (x,     y + h),
     ])
+
+
+def _largest_polygon(geom) -> ShPolygon:
+    """Свести результат пересечения к одному Polygon (крупнейшему по площади).
+
+    intersection может вернуть MultiPolygon/GeometryCollection — модель ждёт
+    единый Polygon. Берём крупнейший кусок; пустое — отдаём как есть наверх.
+    """
+    gt = getattr(geom, "geom_type", "")
+    if gt == "Polygon":
+        return geom
+    polys = [g for g in getattr(geom, "geoms", []) if g.geom_type == "Polygon"]
+    return max(polys, key=lambda g: g.area) if polys else geom
 
 
 def marketing_to_project(inputs: MarketingInputs) -> Project:
@@ -67,6 +83,24 @@ def marketing_to_project(inputs: MarketingInputs) -> Project:
     else:
         building_footprint = _rect(inner_x, inner_y, inner_w, inner_d)
 
+    # (1) Вписать пятно в РЕАЛЬНЫЙ контур участка. Для прямоугольника no-op,
+    # для свободного/непрямоугольного отвода — обрезает по полигону, чтобы
+    # застройка не вылезала за участок (иначе coverage > 100%).
+    clipped = building_footprint.intersection(site_boundary)
+    if not clipped.is_empty and clipped.area > 0:
+        building_footprint = _largest_polygon(clipped)
+
+    # (2) Ограничить пятно по проценту застройки (лимит из ПДП/ГПЗУ). Если
+    # запроектированное пятно больше нормы — ужать к центроиду до нормы.
+    cov = inputs.max_coverage_pct
+    if cov and 0 < cov < 100:
+        max_area = site_boundary.area * cov / 100.0
+        if building_footprint.area > max_area > 0:
+            f = math.sqrt(max_area / building_footprint.area)
+            building_footprint = _scale(
+                building_footprint, xfact=f, yfact=f, origin="centroid"
+            )
+
     try:
         purpose = BuildingPurpose(inputs.purpose)
     except ValueError:
@@ -81,7 +115,9 @@ def marketing_to_project(inputs: MarketingInputs) -> Project:
     gpzu = GpzuConstraints(
         max_height_m=inputs.max_height_m or None,
         max_coverage_pct=inputs.max_coverage_pct or None,
-        # max_floors / max_far / purpose_allowed нет в форме — None
+        max_far=inputs.max_far or None,
+        max_floors=inputs.max_floors or None,
+        # purpose_allowed нет в форме — None
     )
 
     site = Site(boundary=site_boundary, setbacks=setbacks, gpzu=gpzu)

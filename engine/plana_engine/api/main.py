@@ -200,6 +200,10 @@ class VisualizeFromInputsRequest(BaseModel):
     # Типология здания: single_family (без подъезда/лифтов/коридора) /
     # multi_family (секционка, default — старое поведение) / commercial / mixed.
     building_type: str = "multi_family"
+    # класс жилья (стандарт/комфорт/комфорт+/бизнес/премиум | I-IV | эконом-элит).
+    # None → норма по умолчанию (комфорт). Управляет нормами площадей/паркинга/
+    # озеленения/продаваемой доли (plana_engine/norms.py).
+    housing_class: str | None = None
     # квартирография
     studio_pct: float = 0.0
     k1_pct: float = 0.0
@@ -208,8 +212,8 @@ class VisualizeFromInputsRequest(BaseModel):
     k4_pct: float = 0.0
     # подъездность (количество секций — важно для жилых)
     sections: int = 1
-    # паркинг
-    parking_spaces_per_apt: float = 1.0
+    # паркинг (0 = авто по классу жилья, см. norms.parking_ratio)
+    parking_spaces_per_apt: float = 0.0
     parking_underground_levels: int = 1
     # пожарка
     fire_evacuation_max_m: float = 25.0
@@ -221,9 +225,11 @@ class VisualizeFromInputsRequest(BaseModel):
     # инсоляция
     insolation_priority: bool = True
     insolation_min_hours: float = 2.0
-    # ГПЗУ
+    # ГПЗУ / ПДП
     max_coverage_pct: float = 0.0
     max_height_m: float = 30.0
+    max_far: float = 0.0      # КИТ из ПДП/ГПЗУ; 0 = не задан
+    max_floors: int = 0       # предельная этажность из ПДП/ГПЗУ; 0 = не задан
     # рендер
     quality: str = "medium"
     # свободный контур участка [[x, y], ...] в метрах. None = прямоугольник.
@@ -251,6 +257,7 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         floors=req.floors,
         purpose=req.purpose.value,
         building_type=req.building_type,
+        housing_class=req.housing_class,
         studio_pct=req.studio_pct,
         k1_pct=req.k1_pct,
         k2_pct=req.k2_pct,
@@ -268,6 +275,8 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         insolation_min_hours=req.insolation_min_hours,
         max_coverage_pct=req.max_coverage_pct,
         max_height_m=req.max_height_m,
+        max_far=req.max_far,
+        max_floors=req.max_floors,
         site_polygon=tuple((p[0], p[1]) for p in req.site_polygon) if req.site_polygon else None,
         bedrooms=req.bedrooms,
         bathrooms=req.bathrooms,
@@ -518,7 +527,7 @@ async def visualize_site_placement(
     k1_pct: float = Form(0.0),
     k2_pct: float = Form(0.0),
     k3_pct: float = Form(0.0),
-    parking_spaces_per_apt: float = Form(1.0),
+    parking_spaces_per_apt: float = Form(0.0),
     parking_underground_levels: int = Form(1),
     max_coverage_pct: float = Form(50.0),
     max_height_m: float = Form(30.0),
@@ -1112,8 +1121,10 @@ def visualize_floor_by_level(req: FloorByLevelRequest) -> FloorVariantsResponse:
 
 def _build_parking_prompt(inputs: MarketingInputs, level: int, total_levels: int) -> str:
     from ..cad import compute_floorplan_metrics
+    from .. import norms
     m = compute_floorplan_metrics(inputs)
-    total_spaces = max(1, round(m.apartments_count * inputs.parking_spaces_per_apt))
+    p_ratio = norms.parking_ratio(inputs.housing_class, inputs.parking_spaces_per_apt)
+    total_spaces = max(1, round(m.apartments_count * p_ratio))
     spaces_per_level = max(1, round(total_spaces / max(1, total_levels)))
     col_count = max(2, round((inputs.site_width_m - 6) / 8))
     row_count = max(2, round((inputs.site_depth_m - 6) / 8))
@@ -1972,6 +1983,88 @@ async def import_gpzu(file: UploadFile = File(...)) -> GpzuImportResponse:
 
 
 # ---------------------------------------------------------------------------
+# Контекст участка из GIS (соседи / дороги / красные линии) — вход №1
+# ---------------------------------------------------------------------------
+
+
+class SiteContextRequest(BaseModel):
+    """Запрос /import/site-context — кольцо участка в WGS84 + радиус поиска."""
+    parcel_ring: list[list[float]]   # [[lon, lat], ...]
+    radius_m: float = 150.0
+
+
+class SiteContextResponse(BaseModel):
+    """Окружение участка в ЛОКАЛЬНЫХ метрах (origin = bbox-min участка).
+
+    Готово к передаче в /validate/project (red_lines / neighbors).
+    """
+    neighbor_buildings: list[list[list[float]]] = []
+    roads: list[list[list[float]]] = []
+    red_lines: list[list[list[float]]] = []
+    functional_zone: str = ""
+    counts: dict[str, int] = {}
+
+
+@app.post("/import/site-context", response_model=SiteContextResponse)
+def import_site_context(req: SiteContextRequest) -> SiteContextResponse:
+    """Подтянуть контекст участка из открытого ArcGIS «GIS Saulet» (Астана).
+
+    По кольцу участка (WGS84) возвращает соседние строения, проезжую часть и
+    красные линии, спроецированные в локальный метрический фрейм участка.
+    """
+    from ..importers.site_context import SiteContextError, fetch_site_context
+
+    try:
+        c = fetch_site_context(req.parcel_ring, radius_m=req.radius_m)
+    except SiteContextError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    def poly_coords(p) -> list[list[float]]:
+        return [[x, y] for x, y in p.exterior.coords]
+
+    def line_coords(ls) -> list[list[float]]:
+        return [[x, y] for x, y in ls.coords]
+
+    return SiteContextResponse(
+        neighbor_buildings=[poly_coords(p) for p in c.neighbor_buildings],
+        roads=[poly_coords(p) for p in c.roads],
+        red_lines=[line_coords(ls) for ls in c.red_lines],
+        functional_zone=c.functional_zone,
+        counts=c.counts,
+    )
+
+
+# GIS geojson-прокси для карты (browser → engine → GIS, обходит CORS/SSL).
+
+
+@app.get("/gis/parcels")
+def gis_parcels(west: float, south: float, east: float, north: float) -> dict:
+    from ..importers.site_context import SiteContextError, fetch_parcels_geojson
+    try:
+        return fetch_parcels_geojson((west, south, east, north))
+    except SiteContextError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/gis/neighbors")
+def gis_neighbors(west: float, south: float, east: float, north: float) -> dict:
+    from ..importers.site_context import SiteContextError, fetch_neighbors_geojson
+    try:
+        return fetch_neighbors_geojson((west, south, east, north))
+    except SiteContextError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/gis/redlines")
+def gis_redlines(west: float, south: float, east: float, north: float) -> dict:
+    from ..importers.site_context import SiteContextError, fetch_redlines_geojson
+    try:
+        return fetch_redlines_geojson((west, south, east, north))
+    except SiteContextError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Валидация проекта по KZ-нормам и ГПЗУ
 # Закрывает ТЗ-пункт 2.2 «Проверка архитектурных ограничений и нормативов»
 # ---------------------------------------------------------------------------
@@ -1994,6 +2087,11 @@ class ProjectValidationSummary(BaseModel):
     total_footprint_m2: float
     coverage_pct: float
     buildings_count: int
+    total_volume_m3: float          # строительный объём (пятно × высота)
+    total_floor_area_m2: float      # общая поэтажная площадь (GFA)
+    far: float                      # КИТ = GFA / площадь участка
+    green_area_m2: float            # нормативное озеленение (площадь × %класса)
+    green_pct: float                # % озеленения по классу жилья
 
 
 class ProjectValidationResponse(BaseModel):
@@ -2012,8 +2110,15 @@ class ValidateProjectRequest(VisualizeFromInputsRequest):
     геометрии комнат через layout_to_project; без него — прежний путь
     marketing_to_project (floors=[], комнатные проверки молчат). Совместимо
     со старыми клиентами, которые layout не шлют (precedent: ExportIfcRequest).
+
+    Контекст участка (опционально, в локальных метрах того же фрейма, что и
+    site_polygon — см. importers.site_context): красные линии как полилинии,
+    соседние строения как полигоны. Включают валидаторы red_lines/neighbor_gap.
     """
     layout: LayoutFloor | None = None
+    red_lines: list[list[list[float]]] | None = None   # [[[x,y],...], ...]
+    neighbors: list[list[list[float]]] | None = None    # [[[x,y],...], ...]
+    functional_zone: str = ""   # функциональная зона участка (из /import/site-context)
 
 
 @app.post("/validate/project", response_model=ProjectValidationResponse)
@@ -2039,13 +2144,34 @@ def validate_project_endpoint(
         project = layout_to_project(req.layout, inputs)
     else:
         project = marketing_to_project(inputs)
+
+    # Контекст участка (красные линии + соседи) в локальных метрах → в Site,
+    # чтобы отработали валидаторы red_lines / neighbor_gap.
+    if req.red_lines:
+        from shapely.geometry import LineString as _LS
+        project.site.red_lines = [_LS(pl) for pl in req.red_lines if len(pl) >= 2]
+    if req.neighbors:
+        from shapely.geometry import Polygon as _Poly
+        project.site.neighbors = [
+            _Poly(pg) for pg in req.neighbors if len(pg) >= 3
+        ]
+    if req.functional_zone:
+        project.site.functional_zone = req.functional_zone
+
     violations = validate_project(project)
 
+    from .. import norms
+    green_pct = norms.norms_for(inputs.housing_class).green_pct_of_plot
     summary = ProjectValidationSummary(
         site_area_m2=round(project.site_area_m2, 1),
         total_footprint_m2=round(project.total_footprint_m2, 1),
         coverage_pct=project.coverage_pct,
         buildings_count=len(project.buildings),
+        total_volume_m3=round(project.total_volume_m3, 1),
+        total_floor_area_m2=round(project.total_floor_area_m2, 1),
+        far=project.far,
+        green_area_m2=round(norms.green_area_m2(project.site_area_m2, inputs.housing_class), 1),
+        green_pct=green_pct,
     )
 
     items = [

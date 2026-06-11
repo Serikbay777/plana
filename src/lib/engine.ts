@@ -256,12 +256,20 @@ export type VisualizeFromInputsRequest = {
   // инсоляция
   insolation_priority?: boolean;
   insolation_min_hours?: number;
-  // ГПЗУ
+  // ГПЗУ / ПДП
   max_coverage_pct?: number;
   max_height_m?: number;
+  max_far?: number;            // КИТ из ПДП/ГПЗУ (0 = не задан)
+  max_floors?: number;         // предельная этажность из ПДП/ГПЗУ
+  // класс жилья (стандарт/комфорт/комфорт+/бизнес/премиум | I-IV | эконом-элит)
+  housing_class?: string | null;
   quality?: "low" | "medium" | "high";
   // свободный контур участка [[x_m, y_m], ...]
   site_polygon?: [number, number][] | null;
+  // контекст участка в локальных метрах (из importSiteContext)
+  red_lines?: number[][][] | null;     // полилинии
+  neighbors?: number[][][] | null;     // полигоны соседей
+  functional_zone?: string;            // функциональная зона участка
   // тип здания: multi_family (default) / single_family / commercial / mixed_use
   building_type?: string;
   // типология этажа для multi_family:
@@ -974,7 +982,43 @@ export type ProjectValidationSummary = {
   total_footprint_m2: number;
   coverage_pct: number;
   buildings_count: number;
+  total_volume_m3: number;
+  total_floor_area_m2: number;
+  far: number;
+  green_area_m2: number;
+  green_pct: number;
 };
+
+// Контекст участка из GIS (соседи/дороги/красные линии) в локальных метрах.
+export type SiteContext = {
+  neighbor_buildings: number[][][];
+  roads: number[][][];
+  red_lines: number[][][];
+  functional_zone: string;
+  counts: Record<string, number>;
+};
+
+/** Подтянуть контекст участка из GIS по кольцу WGS84 [[lon,lat],...]. */
+export async function importSiteContext(
+  parcelRing: [number, number][],
+  radiusM = 150,
+): Promise<SiteContext> {
+  return request("/import/site-context", {
+    method: "POST",
+    body: JSON.stringify({ parcel_ring: parcelRing, radius_m: radiusM }),
+  });
+}
+
+// GIS geojson через прокси движка (browser → engine → GIS; обходит CORS/SSL).
+type Bounds = { west: number; south: number; east: number; north: number };
+
+function gisQuery(path: string, b: Bounds): Promise<GeoJSON.FeatureCollection> {
+  return request(`${path}?west=${b.west}&south=${b.south}&east=${b.east}&north=${b.north}`);
+}
+
+export const fetchGisParcels = (b: Bounds) => gisQuery("/gis/parcels", b);
+export const fetchGisNeighbors = (b: Bounds) => gisQuery("/gis/neighbors", b);
+export const fetchGisRedLines = (b: Bounds) => gisQuery("/gis/redlines", b);
 
 export type ProjectValidationResponse = {
   summary: ProjectValidationSummary;

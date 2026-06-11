@@ -34,7 +34,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..types import BuildingPurpose
-from ._shapely_adapter import PolygonField
+from ._shapely_adapter import LineStringField, PolygonField
 
 
 # ── общие config ────────────────────────────────────────────────────────────
@@ -76,7 +76,9 @@ class Site(BaseModel):
     boundary: PolygonField
     setbacks: Setbacks = Field(default_factory=Setbacks)
     gpzu: GpzuConstraints = Field(default_factory=GpzuConstraints)
-    red_lines: list[PolygonField] = Field(default_factory=list)
+    red_lines: list[LineStringField] = Field(default_factory=list)   # красные линии (полилинии)
+    neighbors: list[PolygonField] = Field(default_factory=list)      # соседние строения
+    functional_zone: str = ""   # функциональная зона из градрегламента (Жилая/Коммерческая/…)
 
     @property
     def area_m2(self) -> float:
@@ -250,6 +252,16 @@ class Building(BaseModel):
     def footprint_area_m2(self) -> float:
         return float(self.footprint.area)
 
+    @property
+    def volume_m3(self) -> float:
+        """Строительный объём = пятно застройки × высота."""
+        return self.footprint_area_m2 * self.height_m
+
+    @property
+    def floor_area_m2(self) -> float:
+        """Общая поэтажная площадь (GFA) = пятно × этажность."""
+        return self.footprint_area_m2 * self.floors_count
+
 
 # ── Проект ──────────────────────────────────────────────────────────────────
 
@@ -269,11 +281,28 @@ class Project(BaseModel):
         return sum(b.footprint_area_m2 for b in self.buildings)
 
     @property
+    def total_volume_m3(self) -> float:
+        """Суммарный строительный объём по всем зданиям проекта."""
+        return sum(b.volume_m3 for b in self.buildings)
+
+    @property
     def coverage_pct(self) -> float:
         """Процент застройки = пятна / участок × 100%."""
         if self.site_area_m2 <= 0:
             return 0.0
         return round(self.total_footprint_m2 / self.site_area_m2 * 100, 1)
+
+    @property
+    def total_floor_area_m2(self) -> float:
+        """Суммарная поэтажная площадь (GFA) по всем зданиям."""
+        return sum(b.floor_area_m2 for b in self.buildings)
+
+    @property
+    def far(self) -> float:
+        """КИТ (коэффициент использования территории) = GFA / площадь участка."""
+        if self.site_area_m2 <= 0:
+            return 0.0
+        return round(self.total_floor_area_m2 / self.site_area_m2, 2)
 
 
 __all__ = [

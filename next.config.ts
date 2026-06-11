@@ -12,6 +12,11 @@ function normalizeEngineUrl(value: string | undefined): string | null {
 const engineUrl = normalizeEngineUrl(process.env.ENGINE_URL);
 
 const nextConfig: NextConfig = {
+  // Лок-файл d:\yarn.lock выше по дереву сбивал авто-детект корня воркспейса
+  // (Next выбирал d:\ и не резолвил tailwindcss → OOM). Фиксируем корень на проекте.
+  turbopack: {
+    root: __dirname,
+  },
   async rewrites() {
     if (!engineUrl) return [];
 

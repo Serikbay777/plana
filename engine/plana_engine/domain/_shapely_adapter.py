@@ -20,7 +20,7 @@ from typing import Annotated, Any
 import shapely
 from pydantic import GetJsonSchemaHandler
 from pydantic_core import core_schema
-from shapely import MultiPolygon, Polygon
+from shapely import LineString, MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
 
@@ -84,6 +84,7 @@ class _ShapelyAdapter:
 # Annotated-типы для прямого использования в моделях.
 PolygonField = Annotated[Polygon, _ShapelyAdapter(Polygon)]
 MultiPolygonField = Annotated[MultiPolygon, _ShapelyAdapter(MultiPolygon)]
+LineStringField = Annotated[LineString, _ShapelyAdapter(LineString)]
 
 
-__all__ = ["PolygonField", "MultiPolygonField"]
+__all__ = ["PolygonField", "MultiPolygonField", "LineStringField"]

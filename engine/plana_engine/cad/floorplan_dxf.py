@@ -28,6 +28,7 @@ from ezdxf.document import Drawing  # noqa: E402
 from ezdxf.enums import TextEntityAlignment  # noqa: E402
 from ezdxf.layouts import Modelspace  # noqa: E402
 
+from .. import norms  # noqa: E402
 from ..visualizer.marketing_prompt import MarketingInputs  # noqa: E402
 
 
@@ -245,7 +246,15 @@ class FloorPlanDxfBuilder:
 
     # ── 4. Раскладка квартир ─────────────────────────────────────────────────
 
-    _APT_TYPE_AREA: dict[str, float] = {"Ст": 30.0, "1К": 45.0, "2К": 65.0, "3К": 90.0}
+    # Подпись «Ст/1К/2К/3К» → ключ нормы площади (площади берутся из norms по классу).
+    _APT_LABEL_TO_NORM_KEY: dict[str, str] = {"Ст": "studio", "1К": "k1", "2К": "k2", "3К": "k3"}
+
+    def _apt_area_for(self, label: str) -> float:
+        """Площадь квартиры данного типа по классу жилья (norms), либо средняя."""
+        key = self._APT_LABEL_TO_NORM_KEY.get(label)
+        if key is None:
+            return self._avg_apartment_area()
+        return norms.norms_for(self.inputs.housing_class).apt_area_m2[key]
 
     def _apt_type_sequence(self, count: int) -> list[str]:
         """Типы квартир по проценту микса в нужном количестве."""
@@ -284,7 +293,7 @@ class FloorPlanDxfBuilder:
             # Юг (нижний фасад)
             for i in range(apts_per_side):
                 t_label = types[i]
-                area = self._APT_TYPE_AREA.get(t_label, self._avg_apartment_area())
+                area = self._apt_area_for(t_label)
                 x = x_start + i * side_w
                 self._add_rect(
                     x + 0.05, WALL_BEARING_M + 0.05,
@@ -306,7 +315,7 @@ class FloorPlanDxfBuilder:
             # Север (верхний фасад)
             for i in range(apts_per_side):
                 t_label = types[apts_per_side + i]
-                area = self._APT_TYPE_AREA.get(t_label, self._avg_apartment_area())
+                area = self._apt_area_for(t_label)
                 x = x_start + i * side_w
                 y = self.H - WALL_BEARING_M - apt_zone_depth + 0.05
                 self._add_rect(
@@ -328,21 +337,23 @@ class FloorPlanDxfBuilder:
     def _approx_unit_count(self) -> int:
         """Грубая оценка кол-ва квартир на этаже."""
         floor_area = self.W * self.H
-        saleable = floor_area * 0.55
+        # Продаваемая доля по классу жилья (вместо хардкода 0.55) — norms.py.
+        saleable = floor_area * norms.norms_for(self.inputs.housing_class).saleable_ratio
         avg = self._avg_apartment_area()
         return max(2, min(40, round(saleable / avg)))
 
     def _avg_apartment_area(self) -> float:
-        """Средняя площадь квартиры по проценту микса."""
+        """Средняя площадь квартиры по проценту микса (площади — из norms по классу)."""
         s = self.inputs.studio_pct + self.inputs.k1_pct + \
             self.inputs.k2_pct + self.inputs.k3_pct
         if s < 0.01:
             return 50.0
+        area = norms.norms_for(self.inputs.housing_class).apt_area_m2
         return (
-            30 * self.inputs.studio_pct +
-            45 * self.inputs.k1_pct +
-            65 * self.inputs.k2_pct +
-            90 * self.inputs.k3_pct
+            area["studio"] * self.inputs.studio_pct +
+            area["k1"] * self.inputs.k1_pct +
+            area["k2"] * self.inputs.k2_pct +
+            area["k3"] * self.inputs.k3_pct
         ) / s
 
     # ── 5a. Оконные проёмы ───────────────────────────────────────────────────

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from .. import norms
 from .marketing_prompt import MarketingInputs, _approx_unit_count
 
 
@@ -36,7 +37,8 @@ def build_site_placement_prompt(inputs: MarketingInputs) -> str:
     n_floors = inputs.floors
     inner_w = inputs.site_width_m - 2 * inputs.setback_side_m
     inner_h = inputs.site_depth_m - inputs.setback_front_m - inputs.setback_rear_m
-    parking_total = int(_approx_unit_count(inputs, inner_w, inner_h) * inputs.floors * inputs.parking_spaces_per_apt)
+    _p_ratio = norms.parking_ratio(inputs.housing_class, inputs.parking_spaces_per_apt)
+    parking_total = int(_approx_unit_count(inputs, inner_w, inner_h) * inputs.floors * _p_ratio)
 
     return f"""Place a {purpose_descriptor} ({n_floors} storeys, footprint approximately {inner_w:.0f}×{inner_h:.0f} meters) onto this aerial site photo.
 
