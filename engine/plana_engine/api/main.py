@@ -2092,6 +2092,8 @@ class ProjectValidationSummary(BaseModel):
     far: float                      # КИТ = GFA / площадь участка
     green_area_m2: float            # нормативное озеленение (площадь × %класса)
     green_pct: float                # % озеленения по классу жилья
+    # пятна застройки в ЛОКАЛЬНЫХ метрах (для отрисовки на карте обратной проекцией)
+    footprints_local: list[list[list[float]]] = []
 
 
 class ProjectValidationResponse(BaseModel):
@@ -2172,6 +2174,10 @@ def validate_project_endpoint(
         far=project.far,
         green_area_m2=round(norms.green_area_m2(project.site_area_m2, inputs.housing_class), 1),
         green_pct=green_pct,
+        footprints_local=[
+            [[round(x, 2), round(y, 2)] for x, y in b.footprint.exterior.coords]
+            for b in project.buildings
+        ],
     )
 
     items = [

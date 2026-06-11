@@ -6,8 +6,8 @@ import { getToken } from "@/lib/auth";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
-  ringFromFeature, projectRingToLocal, classifyParcel,
-  type BBox, type EnginePurpose,
+  ringFromFeature, projectRingToLocal, localToWgs84, classifyParcel,
+  type BBox, type EnginePurpose, type ProjOrigin,
 } from "@/lib/gis";
 import {
   fetchGisParcels, fetchGisNeighbors, fetchGisRedLines,
@@ -40,6 +40,7 @@ type SelCtx = {
   local: [number, number][];
   width: number;
   height: number;
+  proj: ProjOrigin;
   ctx: SiteContext;
 };
 
@@ -112,6 +113,7 @@ export default function MapPage() {
     const ring = ringFromFeature(feat.geometry);
     if (!ring) return;
     setData("selected", { type: "FeatureCollection", features: [feat] });
+    setData("footprint", { type: "FeatureCollection", features: [] });
     const props = (feat.properties ?? {}) as Record<string, unknown>;
     const floors = parseInt(String(props.floor ?? "").split(",")[0]) || 9;
     const klass = String(props.house_klass ?? "");
@@ -120,9 +122,13 @@ export default function MapPage() {
     setResult(null); setErr(null); setZone(""); setLoading(true);
     try {
       const ctx = await importSiteContext(ring);
-      const { local, width, height } = projectRingToLocal(ring);
+      const pr = projectRingToLocal(ring);
       // дефолты параметров из отвода; ТЭП посчитает эффект ниже
-      setSel({ name, designation: cls.label, isSocial: cls.isSocial, local, width, height, ctx });
+      setSel({
+        name, designation: cls.label, isSocial: cls.isSocial,
+        local: pr.local, width: pr.width, height: pr.height,
+        proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx,
+      });
       setParams({
         housing_class: normalizeClass(klass),
         purpose: cls.purpose,
@@ -150,7 +156,19 @@ export default function MapPage() {
       red_lines: sel.ctx.red_lines, neighbors: sel.ctx.neighbor_buildings,
       functional_zone: sel.ctx.functional_zone,
     })
-      .then((r) => { if (!cancelled) setResult(r); })
+      .then((r) => {
+        if (cancelled) return;
+        setResult(r);
+        // обратная проекция пятен застройки → WGS84 → на карту
+        const fps = r.summary.footprints_local ?? [];
+        setData("footprint", {
+          type: "FeatureCollection",
+          features: fps.map((ring) => ({
+            type: "Feature", properties: {},
+            geometry: { type: "Polygon", coordinates: [localToWgs84(ring, sel.proj)] },
+          })),
+        });
+      })
       .catch((e) => {
         if (cancelled) return;
         if (isAuthError(e)) setAuthNeeded(true);
@@ -158,7 +176,7 @@ export default function MapPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sel, params]);
+  }, [sel, params, setData]);
 
   // Нет токена → сразу просим войти (прокси движка за авторизацией).
   useEffect(() => {
@@ -182,6 +200,7 @@ export default function MapPage() {
       map.addSource("redlines", { type: "geojson", data: empty });
       map.addSource("parcels", { type: "geojson", data: empty });
       map.addSource("selected", { type: "geojson", data: empty });
+      map.addSource("footprint", { type: "geojson", data: empty });
 
       map.addLayer({ id: "neighbors-fill", type: "fill", source: "neighbors",
         paint: { "fill-color": "#94a3b8", "fill-opacity": 0.35 } });
@@ -193,6 +212,10 @@ export default function MapPage() {
         paint: { "line-color": "#2563eb", "line-width": 1 } });
       map.addLayer({ id: "selected-line", type: "line", source: "selected",
         paint: { "line-color": "#16a34a", "line-width": 3 } });
+      map.addLayer({ id: "footprint-fill", type: "fill", source: "footprint",
+        paint: { "fill-color": "#f97316", "fill-opacity": 0.5 } });
+      map.addLayer({ id: "footprint-line", type: "line", source: "footprint",
+        paint: { "line-color": "#ea580c", "line-width": 1.5 } });
 
       map.on("click", "parcels-fill", (e) => {
         if (e.features?.[0]) onParcelClick(e.features[0] as GeoJSON.Feature);
