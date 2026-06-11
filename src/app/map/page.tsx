@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { getToken } from "@/lib/auth";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
@@ -69,6 +70,8 @@ export default function MapPage() {
   const [result, setResult] = useState<ProjectValidationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [authNeeded, setAuthNeeded] = useState(false);
+  const [gisLoading, setGisLoading] = useState(false);
 
   const setData = useCallback((id: string, fc: GeoJSON.FeatureCollection) => {
     const src = mapRef.current?.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -78,6 +81,7 @@ export default function MapPage() {
   const refresh = useCallback(async () => {
     const map = mapRef.current;
     if (!map) return;
+    if (!getToken()) { setAuthNeeded(true); setHint("Нужен вход в систему"); return; }
     if (map.getZoom() < MIN_FETCH_ZOOM) {
       setHint("Приблизьте карту, чтобы загрузить участки");
       setData("parcels", { type: "FeatureCollection", features: [] });
@@ -87,6 +91,7 @@ export default function MapPage() {
     }
     const b = map.getBounds();
     const bbox: BBox = { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() };
+    setGisLoading(true);
     try {
       const [parcels, neighbors, redlines] = await Promise.all([
         fetchGisParcels(bbox), fetchGisNeighbors(bbox), fetchGisRedLines(bbox),
@@ -96,7 +101,10 @@ export default function MapPage() {
       setData("redlines", redlines);
       setHint(`Участков в кадре: ${parcels.features.length}. Кликните участок.`);
     } catch (e) {
-      setHint("GIS недоступен: " + (e instanceof Error ? e.message : String(e)));
+      if (isAuthError(e)) { setAuthNeeded(true); setHint("Нужен вход в систему"); }
+      else setHint("GIS недоступен: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setGisLoading(false);
     }
   }, [setData]);
 
@@ -123,7 +131,8 @@ export default function MapPage() {
       });
       setZone(ctx.functional_zone);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (isAuthError(e)) setAuthNeeded(true);
+      else setErr(e instanceof Error ? e.message : String(e));
       setLoading(false);
     }
   }, [setData]);
@@ -142,10 +151,19 @@ export default function MapPage() {
       functional_zone: sel.ctx.functional_zone,
     })
       .then((r) => { if (!cancelled) setResult(r); })
-      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); })
+      .catch((e) => {
+        if (cancelled) return;
+        if (isAuthError(e)) setAuthNeeded(true);
+        else setErr(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [sel, params]);
+
+  // Нет токена → сразу просим войти (прокси движка за авторизацией).
+  useEffect(() => {
+    if (!getToken()) setAuthNeeded(true);
+  }, []);
 
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
@@ -200,7 +218,15 @@ export default function MapPage() {
           <h1 className="text-lg font-semibold">Посадка на участок</h1>
           <Link href="/app" className="text-xs text-blue-600 hover:underline">в приложение →</Link>
         </div>
-        <p className="mb-3 text-xs text-gray-500">{ready ? hint : "Загрузка карты…"}</p>
+        <p className="mb-1 text-xs text-gray-500">{ready ? hint : "Загрузка карты…"}</p>
+        {gisLoading && <p className="mb-2 text-xs text-blue-600">Загрузка участков из ГИС…</p>}
+
+        {authNeeded && (
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            Данные ГИС доступны после входа в систему.{" "}
+            <Link href="/login" className="font-medium text-blue-600 hover:underline">Войти →</Link>
+          </div>
+        )}
 
         {sel && params && (
           <div className="mb-3 rounded-lg border border-gray-200 p-3">
@@ -297,6 +323,12 @@ export default function MapPage() {
 
 function fmt(n: number): string {
   return Math.round(n).toLocaleString("ru-RU");
+}
+
+function isAuthError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  const status = (e as { status?: number } | null)?.status;
+  return status === 401 || /not authenticated|401|unauthor/i.test(m);
 }
 
 // Бейдж происхождения цифры: gis (из карты) / calc (расчёт) / norm (норматив).
