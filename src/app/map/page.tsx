@@ -1,13 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { ringFromFeature, projectRingToLocal, classifyParcel, type BBox } from "@/lib/gis";
+import {
+  ringFromFeature, projectRingToLocal, classifyParcel,
+  type BBox, type EnginePurpose,
+} from "@/lib/gis";
 import {
   fetchGisParcels, fetchGisNeighbors, fetchGisRedLines,
   importSiteContext, validateProject,
-  type ProjectValidationResponse,
+  type ProjectValidationResponse, type SiteContext,
 } from "@/lib/engine";
 
 const ASTANA: [number, number] = [71.43, 51.13];
@@ -26,20 +30,41 @@ const OSM_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: "osm", type: "raster", source: "osm" }],
 };
 
-type Selected = {
+// Кэш выбранного участка (геометрия + контекст GIS) — чтобы правки параметров
+// пересчитывали ТЭП БЕЗ повторных запросов в GIS.
+type SelCtx = {
   name: string;
-  klass: string;
-  floors: number;
-  designation: string;   // распознанное назначение отвода
-  isSocial: boolean;     // соцобъект — жилая посадка неприменима
+  designation: string;
+  isSocial: boolean;
+  local: [number, number][];
+  width: number;
+  height: number;
+  ctx: SiteContext;
 };
+
+// Редактируемые пользователем параметры посадки (мгновенный пересчёт).
+type EditParams = {
+  housing_class: string;
+  purpose: EnginePurpose;
+  max_coverage_pct: number;
+  floors: number;
+};
+
+const CLASS_OPTIONS: { value: string; label: string }[] = [
+  { value: "standard", label: "стандарт" },
+  { value: "comfort", label: "комфорт" },
+  { value: "comfort_plus", label: "комфорт+" },
+  { value: "business", label: "бизнес" },
+  { value: "premium", label: "премиум" },
+];
 
 export default function MapPage() {
   const mapDiv = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [ready, setReady] = useState(false);
   const [hint, setHint] = useState("Приблизьте карту и кликните участок");
-  const [selected, setSelected] = useState<Selected | null>(null);
+  const [sel, setSel] = useState<SelCtx | null>(null);
+  const [params, setParams] = useState<EditParams | null>(null);
   const [zone, setZone] = useState("");
   const [result, setResult] = useState<ProjectValidationResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -84,26 +109,43 @@ export default function MapPage() {
     const klass = String(props.house_klass ?? "");
     const name = String(props.name ?? "Участок");
     const cls = classifyParcel(name);
-    setSelected({ name, klass, floors, designation: cls.label, isSocial: cls.isSocial });
     setResult(null); setErr(null); setZone(""); setLoading(true);
     try {
       const ctx = await importSiteContext(ring);
       const { local, width, height } = projectRingToLocal(ring);
-      const res = await validateProject({
-        site_width_m: width, site_depth_m: height, site_polygon: local,
-        floors, housing_class: klass, purpose: cls.purpose, max_coverage_pct: 50,
-        studio_pct: 0.2, k1_pct: 0.4, k2_pct: 0.3, k3_pct: 0.1,
-        red_lines: ctx.red_lines, neighbors: ctx.neighbor_buildings,
-        functional_zone: ctx.functional_zone,
+      // дефолты параметров из отвода; ТЭП посчитает эффект ниже
+      setSel({ name, designation: cls.label, isSocial: cls.isSocial, local, width, height, ctx });
+      setParams({
+        housing_class: normalizeClass(klass),
+        purpose: cls.purpose,
+        max_coverage_pct: 50,
+        floors,
       });
       setZone(ctx.functional_zone);
-      setResult(res);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-    } finally {
       setLoading(false);
     }
   }, [setData]);
+
+  // Пересчёт ТЭП при выборе участка или правке параметров — БЕЗ запросов в GIS.
+  useEffect(() => {
+    if (!sel || !params) return;
+    let cancelled = false;
+    setLoading(true); setErr(null);
+    validateProject({
+      site_width_m: sel.width, site_depth_m: sel.height, site_polygon: sel.local,
+      floors: params.floors, housing_class: params.housing_class, purpose: params.purpose,
+      max_coverage_pct: params.max_coverage_pct,
+      studio_pct: 0.2, k1_pct: 0.4, k2_pct: 0.3, k3_pct: 0.1,
+      red_lines: sel.ctx.red_lines, neighbors: sel.ctx.neighbor_buildings,
+      functional_zone: sel.ctx.functional_zone,
+    })
+      .then((r) => { if (!cancelled) setResult(r); })
+      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sel, params]);
 
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
@@ -154,27 +196,59 @@ export default function MapPage() {
     <div className="flex h-screen w-screen">
       <div ref={mapDiv} className="flex-1" />
       <aside className="w-[380px] shrink-0 overflow-y-auto border-l border-gray-200 bg-white p-4 text-sm">
-        <h1 className="mb-1 text-lg font-semibold">Посадка на участок</h1>
+        <div className="mb-1 flex items-center justify-between">
+          <h1 className="text-lg font-semibold">Посадка на участок</h1>
+          <Link href="/app" className="text-xs text-blue-600 hover:underline">в приложение →</Link>
+        </div>
         <p className="mb-3 text-xs text-gray-500">{ready ? hint : "Загрузка карты…"}</p>
 
-        {selected && (
+        {sel && params && (
           <div className="mb-3 rounded-lg border border-gray-200 p-3">
-            <div className="font-medium">{selected.name}</div>
-            <div className="text-xs text-gray-500">
-              класс «{selected.klass || "—"}» · {selected.floors} эт.
-            </div>
+            <div className="font-medium">{sel.name}</div>
             <div className="mt-1 text-xs">
-              <span className="text-gray-400">назначение отвода: </span>{selected.designation}
+              <span className="text-gray-400">назначение отвода: </span>{sel.designation}
             </div>
             <div className={`mt-2 inline-block rounded px-2 py-0.5 text-xs ${zoneState.cls}`}>
               {zoneState.label}
             </div>
-            {selected.isSocial && (
+            {sel.isSocial && (
               <div className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">
                 ⚠ Отвод выделен под соцобъект — жилая застройка тут неприменима.
                 ТЭП ниже показаны как гипотеза «если бы здесь строили ЖК».
               </div>
             )}
+
+            <div className="mt-3 space-y-2 border-t border-gray-100 pt-2">
+              <div className="text-xs font-medium text-gray-500">Параметры (меняй → пересчёт)</div>
+              <label className="flex items-center justify-between gap-2">
+                <span className="text-xs">Класс жилья</span>
+                <select
+                  className="rounded border border-gray-300 px-1 py-0.5 text-xs"
+                  value={params.housing_class}
+                  onChange={(e) => setParams({ ...params, housing_class: e.target.value })}
+                >
+                  {CLASS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+              <label className="flex items-center justify-between gap-2">
+                <span className="text-xs">Этажность</span>
+                <input
+                  type="number" min={1} max={60}
+                  className="w-20 rounded border border-gray-300 px-1 py-0.5 text-right text-xs"
+                  value={params.floors}
+                  onChange={(e) => setParams({ ...params, floors: Math.max(1, +e.target.value || 1) })}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-2">
+                <span className="text-xs">% застройки (лимит)</span>
+                <input
+                  type="number" min={1} max={100}
+                  className="w-20 rounded border border-gray-300 px-1 py-0.5 text-right text-xs"
+                  value={params.max_coverage_pct}
+                  onChange={(e) => setParams({ ...params, max_coverage_pct: Math.min(100, Math.max(1, +e.target.value || 1)) })}
+                />
+              </label>
+            </div>
           </div>
         )}
 
@@ -186,15 +260,19 @@ export default function MapPage() {
             <h2 className="mb-1 mt-2 font-medium">8 ТЭП</h2>
             <table className="w-full">
               <tbody className="[&_td]:py-0.5 [&_td:last-child]:text-right [&_td:last-child]:font-medium">
-                <tr><td>Площадь территории</td><td>{fmt(s.site_area_m2)} м²</td></tr>
-                <tr><td>Площадь застройки</td><td>{fmt(s.total_footprint_m2)} м²</td></tr>
-                <tr><td>Процент застройки</td><td>{s.coverage_pct}%</td></tr>
-                <tr><td>Строит. объём</td><td>{fmt(s.total_volume_m3)} м³</td></tr>
-                <tr><td>Поэтажная площадь (GFA)</td><td>{fmt(s.total_floor_area_m2)} м²</td></tr>
-                <tr><td>КИТ</td><td>{s.far}</td></tr>
-                <tr><td>Озеленение</td><td>{fmt(s.green_area_m2)} м² ({s.green_pct}%)</td></tr>
+                <tr><td>Площадь территории <Src k="gis" /></td><td>{fmt(s.site_area_m2)} м²</td></tr>
+                <tr><td>Площадь застройки <Src k="calc" /></td><td>{fmt(s.total_footprint_m2)} м²</td></tr>
+                <tr><td>Процент застройки <Src k="calc" /></td><td>{s.coverage_pct}%</td></tr>
+                <tr><td>Строит. объём <Src k="calc" /></td><td>{fmt(s.total_volume_m3)} м³</td></tr>
+                <tr><td>Поэтажная площадь (GFA) <Src k="calc" /></td><td>{fmt(s.total_floor_area_m2)} м²</td></tr>
+                <tr><td>КИТ <Src k="calc" /></td><td>{s.far}</td></tr>
+                <tr><td>Озеленение <Src k="norm" /></td><td>{fmt(s.green_area_m2)} м² ({s.green_pct}%)</td></tr>
               </tbody>
             </table>
+            <p className="mt-1 text-[10px] leading-tight text-gray-400">
+              <Src k="gis" /> из карты ГИС · <Src k="calc" /> расчёт по геометрии + вашим параметрам ·{" "}
+              <Src k="norm" /> норматив по классу (черновой, уточняется ГПЗУ)
+            </p>
 
             <h2 className="mb-1 mt-3 font-medium">
               Нормоконтроль
@@ -219,6 +297,29 @@ export default function MapPage() {
 
 function fmt(n: number): string {
   return Math.round(n).toLocaleString("ru-RU");
+}
+
+// Бейдж происхождения цифры: gis (из карты) / calc (расчёт) / norm (норматив).
+function Src({ k }: { k: "gis" | "calc" | "norm" }) {
+  const map = {
+    gis: { t: "ГИС", c: "bg-blue-50 text-blue-600" },
+    calc: { t: "расчёт", c: "bg-gray-100 text-gray-500" },
+    norm: { t: "норма", c: "bg-amber-50 text-amber-700" },
+  }[k];
+  return <span className={`ml-1 rounded px-1 text-[10px] align-middle ${map.c}`}>{map.t}</span>;
+}
+
+// Грязный класс отвода ("4"/"IV"/…) → значение из CLASS_OPTIONS (как на бэке).
+function normalizeClass(raw: string): string {
+  const k = (raw || "").trim().toLowerCase().replace(/\s/g, "").replace(/\.$/, "");
+  const map: Record<string, string> = {
+    "1": "premium", i: "premium", элит: "premium", премиум: "premium",
+    "2": "business", ii: "business", бизнес: "business",
+    "3": "comfort", iii: "comfort", комфорт: "comfort",
+    "4": "standard", iv: "standard", эконом: "standard", стандарт: "standard",
+    "комфорт+": "comfort_plus",
+  };
+  return map[k] ?? "comfort";
 }
 
 function sevCls(sev: string): string {

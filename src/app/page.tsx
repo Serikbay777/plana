@@ -69,6 +69,7 @@ function Nav() {
           <a href="#features" className="hover:text-neutral-950 transition">Возможности</a>
           <a href="#how" className="hover:text-neutral-950 transition">Как работает</a>
           <a href="#cta" className="hover:text-neutral-950 transition">Цены</a>
+          <Link href="/map" className="hover:text-neutral-950 transition">Карта посадки</Link>
         </nav>
         <div className="flex items-center gap-2">
           <Link
