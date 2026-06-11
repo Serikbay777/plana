@@ -33,6 +33,7 @@ import {
   exportFloorplanDxf,
   exportFloorplanIfc,
   generateFloorLayout,
+  generateGisMasterplan,
   getFloorplanMetrics,
   visualizeParking,
   type DxfImportResult,
@@ -44,6 +45,7 @@ import {
   type PlacementVariant,
   type InteriorGalleryItem,
   type FloorPlanMetrics,
+  type GisMasterplanResponse,
   type LayoutFloor,
 } from "@/lib/engine";
 import { getSession, signOut, type Session } from "@/lib/auth";
@@ -53,6 +55,10 @@ import { PdfVizTab, type PdfVizResult } from "@/components/PdfVizTab";
 import { ArchitecturalDrawingsTab, FloorPlanSvg } from "@/components/ArchitecturalDrawingsTab";
 import { AlbumImagesViewer } from "@/components/AlbumImagesViewer";
 import { CostPlacementTab, DEFAULT_COST_PLACEMENT_DRAFT, type CostPlacementDraft } from "@/components/CostPlacementTab";
+import {
+  GIS_MASTERPLAN_HANDOFF_KEY,
+  type GisMasterplanHandoff,
+} from "@/lib/gis-masterplan-handoff";
 import { svgToPngBlob } from "@/lib/export/toPng";
 
 // ---------------------------------------------------------------------------
@@ -190,6 +196,18 @@ type PlacementBag = {
 };
 const EMPTY_PLACEMENT: PlacementBag = {
   state: "idle", variants: [], elapsedMs: null, errorMessage: null,
+};
+
+type GisMasterplanBag = {
+  state: GenState;
+  response: GisMasterplanResponse | null;
+  errorMessage: string | null;
+};
+
+const EMPTY_GIS_MASTERPLAN: GisMasterplanBag = {
+  state: "idle",
+  response: null,
+  errorMessage: null,
 };
 
 // Конструируем тело для visualize-эндпоинтов
@@ -332,6 +350,8 @@ export default function AppPage() {
 
   const [form, setForm] = useState<PromptFormState>(DEFAULT_PROMPT_FORM);
   const [tab, setTab] = useState<TopTab>("ai_plans");
+  const [gisHandoff, setGisHandoff] = useState<GisMasterplanHandoff | null>(null);
+  const [gisMasterplanBag, setGisMasterplanBag] = useState<GisMasterplanBag>(EMPTY_GIS_MASTERPLAN);
 
   // ГПЗУ-импорт PDF → автозаполнение формы (Vision)
   const [gpzuLoading, setGpzuLoading] = useState(false);
@@ -403,7 +423,66 @@ export default function AppPage() {
     setAuthChecked(true);
   }, [router]);
 
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (requestedTab) setTab(topTabForRun(requestedTab));
+  }, []);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(GIS_MASTERPLAN_HANDOFF_KEY);
+    if (!raw) return;
+    try {
+      const handoff = JSON.parse(raw) as GisMasterplanHandoff;
+      if (handoff.source !== "gis_multi_parcel_map" || handoff.parcels.length === 0) return;
+      const equivalentSide = Math.sqrt(Math.max(1, handoff.summary.totalAreaM2));
+      const width = Math.max(1, Math.round(Math.max(handoff.summary.maxWidthM, equivalentSide)));
+      const depth = Math.max(1, Math.round(Math.max(handoff.summary.maxDepthM, equivalentSide)));
+      setGisHandoff(handoff);
+      setProjectName(`GIS masterplan: ${handoff.summary.parcelsCount} parcel${handoff.summary.parcelsCount > 1 ? "s" : ""}`);
+      setForm((current) => ({
+        ...current,
+        site_width_m: width,
+        site_depth_m: depth,
+        building_width_m: Math.max(12, Math.round(width * 0.45)),
+        building_depth_m: Math.max(12, Math.round(depth * 0.32)),
+        floors: handoff.summary.avgFloors,
+        max_height_m: handoff.summary.avgFloors * 3.15,
+        max_coverage_pct: 50,
+        site_polygon: handoff.parcels.length === 1 ? handoff.parcels[0].local : null,
+      }));
+    } catch {
+      /* ignore malformed GIS handoff */
+    } finally {
+      window.localStorage.removeItem(GIS_MASTERPLAN_HANDOFF_KEY);
+    }
+  }, []);
+
   // ---- загрузка последних проектов для переключателя
+  const handleGenerateGisMasterplan = useCallback(async () => {
+    if (!gisHandoff || gisMasterplanBag.state === "loading") return;
+    setGisMasterplanBag({ ...EMPTY_GIS_MASTERPLAN, state: "loading" });
+    try {
+      const response = await generateGisMasterplan({
+        parcels: gisHandoff.parcels.map((parcel) => ({
+          id: parcel.id,
+          name: parcel.name,
+          designation: parcel.designation,
+          functionalZone: parcel.functionalZone,
+          isSocial: parcel.isSocial,
+          local: parcel.local,
+          width: parcel.width,
+          height: parcel.height,
+          areaM2: parcel.areaM2,
+          params: parcel.params,
+        })),
+        strategy_hint: "Create three GIS-based site planning scenarios for control in Plana: maximum GFA, balanced courtyard, and social mix.",
+      });
+      setGisMasterplanBag({ state: "ready", response, errorMessage: null });
+    } catch (e) {
+      setGisMasterplanBag({ ...EMPTY_GIS_MASTERPLAN, state: "error", errorMessage: (e as Error).message });
+    }
+  }, [gisHandoff, gisMasterplanBag.state]);
+
   useEffect(() => {
     if (!authChecked) return;
     listProjects()
@@ -1029,6 +1108,8 @@ export default function AppPage() {
     setVizFloorBag(EMPTY_IMAGE_BAG);
     setSiteBag(EMPTY_IMAGE_BAG);
     setCostPlacementDraft(DEFAULT_COST_PLACEMENT_DRAFT);
+    setGisHandoff(null);
+    setGisMasterplanBag(EMPTY_GIS_MASTERPLAN);
     setCurrentFloor(1);
     window.history.replaceState(null, "", "/app");
   };
@@ -1152,6 +1233,30 @@ export default function AppPage() {
         {/* RIGHT — зависит от таба + панель истории */}
         <div className="flex min-h-[660px] gap-0 rounded-2xl overflow-hidden">
         <section className="surface-strong relative overflow-hidden flex flex-col flex-1 min-w-0 rounded-2xl" style={historyOpen ? { borderRadius: "1rem 0 0 1rem" } : {}}>
+          {gisHandoff && (
+            <GisMasterplanIntakePanel
+              handoff={gisHandoff}
+              onOpenSite={() => setTab("site")}
+              onOpenAi={() => setTab("ai_plans")}
+              onOpenCost={() => setTab("cost_placement")}
+              onGenerateMasterplan={handleGenerateGisMasterplan}
+              masterplanState={gisMasterplanBag.state}
+              onDismiss={() => setGisHandoff(null)}
+            />
+          )}
+          {gisHandoff && gisMasterplanBag.response && (
+            <GisAiMasterplanPanel
+              handoff={gisHandoff}
+              response={gisMasterplanBag.response}
+              errorMessage={gisMasterplanBag.errorMessage}
+              onRegenerate={handleGenerateGisMasterplan}
+            />
+          )}
+          {gisHandoff && gisMasterplanBag.state === "error" && !gisMasterplanBag.response && (
+            <div className="border-b border-rose-300/15 bg-rose-500/[0.06] px-4 py-3 text-sm text-rose-100">
+              AI masterplan failed: {gisMasterplanBag.errorMessage}
+            </div>
+          )}
           {restoredRun && topTabForRun(restoredRun.tab) === tab && (
             <SavedRunGallery run={restoredRun} onClose={() => setRestoredRun(null)} />
           )}
@@ -1322,6 +1427,221 @@ function SavedRunGallery({ run, onClose }: { run: GenerationRun; onClose: () => 
       </div>
     </div>
   );
+}
+
+function GisMasterplanIntakePanel({
+  handoff,
+  onOpenSite,
+  onOpenAi,
+  onOpenCost,
+  onGenerateMasterplan,
+  masterplanState,
+  onDismiss,
+}: {
+  handoff: GisMasterplanHandoff;
+  onOpenSite: () => void;
+  onOpenAi: () => void;
+  onOpenCost: () => void;
+  onGenerateMasterplan: () => void;
+  masterplanState: GenState;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="border-b border-emerald-300/15 bg-emerald-300/[0.055] px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-emerald-200/80">GIS masterplan intake</div>
+          <div className="mt-1 text-sm text-white/84">
+            Imported {handoff.summary.parcelsCount} parcel{handoff.summary.parcelsCount > 1 ? "s" : ""} from /map for AI-assisted site control.
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-white/55">
+            <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1">{Math.round(handoff.summary.totalAreaM2).toLocaleString("ru-RU")} m2 total</span>
+            <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1">{handoff.summary.avgFloors} avg floors</span>
+            <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1">{handoff.summary.functionalZones.join(", ") || "zone unknown"}</span>
+            {handoff.summary.hasSocialParcel && <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-amber-100">social parcel included</span>}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onGenerateMasterplan}
+            disabled={masterplanState === "loading"}
+            className="rounded-lg border border-violet-300/25 bg-violet-400/12 px-3 py-2 text-xs font-medium text-violet-100 hover:bg-violet-300/15 disabled:cursor-wait disabled:opacity-60"
+          >
+            {masterplanState === "loading" ? "Generating..." : "Generate AI masterplan"}
+          </button>
+          <button type="button" onClick={onOpenSite} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/75 hover:bg-white/10">
+            Site controls
+          </button>
+          <button type="button" onClick={onOpenAi} className="rounded-lg border border-emerald-300/25 bg-emerald-300/10 px-3 py-2 text-xs font-medium text-emerald-100 hover:bg-emerald-300/15">
+            AI planning
+          </button>
+          <button type="button" onClick={onOpenCost} className="rounded-lg border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-300/15">
+            Cost
+          </button>
+          <button type="button" onClick={onDismiss} className="rounded-lg border border-white/10 bg-black/10 px-3 py-2 text-xs text-white/45 hover:bg-white/5">
+            Dismiss
+          </button>
+        </div>
+      </div>
+      <div className="mt-2 max-h-20 overflow-auto rounded-lg border border-white/10 bg-black/10 p-2 text-[11px] text-white/45">
+        {handoff.parcels.map((parcel) => (
+          <div key={parcel.id} className="flex justify-between gap-3 border-b border-white/[0.05] py-1 last:border-b-0">
+            <span className="truncate">{parcel.name}</span>
+            <span className="shrink-0">{Math.round(parcel.areaM2).toLocaleString("ru-RU")} m2</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GisAiMasterplanPanel({
+  handoff,
+  response,
+  errorMessage,
+  onRegenerate,
+}: {
+  handoff: GisMasterplanHandoff;
+  response: GisMasterplanResponse;
+  errorMessage: string | null;
+  onRegenerate: () => void;
+}) {
+  const parcelById = new Map(handoff.parcels.map((parcel) => [parcel.id, parcel]));
+  return (
+    <div className="border-b border-violet-300/15 bg-violet-300/[0.045] px-4 py-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-violet-200/80">AI GIS masterplan scenarios</div>
+          <div className="mt-1 text-sm text-white/82">
+            OpenAI generated {response.scenarios.length} structured placement scenarios from selected real parcels.
+          </div>
+          <div className="mt-1 text-[11px] text-white/42">
+            Model: {response.model_used} · coordinates are local meters per parcel · screening concept, not official approval.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRegenerate}
+          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 hover:bg-white/10"
+        >
+          Regenerate
+        </button>
+      </div>
+      {errorMessage && (
+        <div className="mb-3 rounded-lg border border-rose-300/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+          Latest regenerate failed: {errorMessage}
+        </div>
+      )}
+      <div className="grid gap-3 lg:grid-cols-3">
+        {response.scenarios.map((scenario) => (
+          <div key={scenario.key} className="overflow-hidden rounded-2xl border border-white/[0.08] bg-black/15">
+            <div className="border-b border-white/[0.06] px-3 py-2">
+              <div className="text-sm font-medium text-white/88">{scenario.title}</div>
+              <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-white/45">{scenario.strategy}</div>
+            </div>
+            <div className="bg-black/20 p-3">
+              <GisScenarioPreview scenario={scenario} parcelById={parcelById} />
+            </div>
+            <div className="space-y-2 px-3 py-3">
+              <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+                <div className="rounded-lg bg-white/[0.04] px-2 py-1">
+                  <div className="font-semibold text-white/85">{scenario.objects.length}</div>
+                  <div className="text-white/35">objects</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.04] px-2 py-1">
+                  <div className="font-semibold text-white/85">{scenario.objects.filter((o) => o.type === "residential_block").length}</div>
+                  <div className="text-white/35">homes</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.04] px-2 py-1">
+                  <div className="font-semibold text-white/85">{scenario.objects.filter((o) => o.type === "school" || o.type === "kindergarten").length}</div>
+                  <div className="text-white/35">social</div>
+                </div>
+              </div>
+              <div className="max-h-28 space-y-1 overflow-auto pr-1 text-[11px]">
+                {scenario.objects.map((object) => (
+                  <div key={object.id} className="flex justify-between gap-2 rounded-lg bg-white/[0.035] px-2 py-1 text-white/55">
+                    <span className="truncate">{object.name}</span>
+                    <span className="shrink-0 text-white/35">{Math.round(object.width)}×{Math.round(object.depth)} m · {object.floors} fl</span>
+                  </div>
+                ))}
+              </div>
+              {(scenario.warnings.length > 0 || scenario.rule_notes.length > 0) && (
+                <details className="rounded-lg border border-amber-300/12 bg-amber-300/[0.05] px-2 py-1.5">
+                  <summary className="cursor-pointer select-none text-[11px] text-amber-100/80">Warnings and rule notes</summary>
+                  <div className="mt-1 space-y-1 text-[10.5px] leading-relaxed text-amber-50/60">
+                    {[...scenario.warnings, ...scenario.rule_notes].slice(0, 6).map((note) => (
+                      <div key={note}>- {note}</div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GisScenarioPreview({
+  scenario,
+  parcelById,
+}: {
+  scenario: GisMasterplanResponse["scenarios"][number];
+  parcelById: Map<string, GisMasterplanHandoff["parcels"][number]>;
+}) {
+  const parcels = Array.from(parcelById.values());
+  const width = Math.max(1, ...parcels.map((parcel) => parcel.width));
+  const height = Math.max(1, ...parcels.map((parcel) => parcel.height));
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-44 w-full rounded-xl border border-white/[0.06] bg-[#0b1020]">
+      {parcels.map((parcel, index) => {
+        const points = parcel.local.map(([x, y]) => `${x},${y}`).join(" ");
+        return (
+          <polygon
+            key={parcel.id}
+            points={points}
+            fill={index % 2 === 0 ? "rgba(16,185,129,0.10)" : "rgba(59,130,246,0.10)"}
+            stroke="rgba(255,255,255,0.28)"
+            strokeWidth={0.8}
+          />
+        );
+      })}
+      {scenario.objects.map((object) => {
+        const parcel = parcelById.get(object.parcel_id);
+        if (!parcel) return null;
+        const x = object.x - object.width / 2;
+        const y = object.y - object.depth / 2;
+        return (
+          <g key={object.id} transform={`rotate(${object.rotationDeg} ${object.x} ${object.y})`}>
+            <rect
+              x={x}
+              y={y}
+              width={object.width}
+              height={object.depth}
+              rx={1.5}
+              fill={gisObjectColor(object.type)}
+              stroke="rgba(255,255,255,0.55)"
+              strokeWidth={0.7}
+            />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function gisObjectColor(type: GisMasterplanResponse["scenarios"][number]["objects"][number]["type"]) {
+  switch (type) {
+    case "residential_block": return "rgba(139,92,246,0.72)";
+    case "school": return "rgba(59,130,246,0.74)";
+    case "kindergarten": return "rgba(34,197,94,0.72)";
+    case "parking": return "rgba(148,163,184,0.68)";
+    case "commerce": return "rgba(245,158,11,0.72)";
+    case "yard": return "rgba(16,185,129,0.45)";
+    default: return "rgba(255,255,255,0.55)";
+  }
 }
 
 function SavedAssetCard({ asset }: { asset: ProjectAsset }) {

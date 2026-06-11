@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getToken } from "@/lib/auth";
 import { createProject, listProjects, getProject, type Project } from "@/lib/projects";
+import { MasterplanWorkspace } from "@/components/MasterplanWorkspace";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
@@ -15,6 +16,13 @@ import {
   importSiteContext, validateProject,
   type ProjectValidationResponse, type SiteContext,
 } from "@/lib/engine";
+import type { MasterplanObject } from "@/lib/masterplan";
+import {
+  GIS_MASTERPLAN_HANDOFF_KEY,
+  buildGisMasterplanHandoff,
+  polygonArea,
+  type GisMasterplanParcel,
+} from "@/lib/gis-masterplan-handoff";
 
 const ASTANA: [number, number] = [71.43, 51.13];
 const MIN_FETCH_ZOOM = 13; // ниже — слишком много отводов
@@ -54,6 +62,8 @@ type EditParams = {
   floors: number;
 };
 
+type BasketParcel = GisMasterplanParcel;
+
 const CLASS_OPTIONS: { value: string; label: string }[] = [
   { value: "standard", label: "стандарт" },
   { value: "comfort", label: "комфорт" },
@@ -77,6 +87,9 @@ export default function MapPage() {
   const [gisLoading, setGisLoading] = useState(false);
   const [saved, setSaved] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [masterplanObjects, setMasterplanObjects] = useState<MasterplanObject[]>([]);
+  const [basketParcels, setBasketParcels] = useState<BasketParcel[]>([]);
 
   const setData = useCallback((id: string, fc: GeoJSON.FeatureCollection) => {
     const src = mapRef.current?.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -123,23 +136,41 @@ export default function MapPage() {
     const klass = String(props.house_klass ?? "");
     const name = String(props.name ?? "Участок");
     const cls = classifyParcel(name);
-    setResult(null); setErr(null); setZone(""); setLoading(true);
+    setResult(null); setErr(null); setZone(""); setMasterplanObjects([]); setLoading(true);
     try {
       const ctx = await importSiteContext(ring);
       const pr = projectRingToLocal(ring);
+      const nextParams: EditParams = {
+        housing_class: normalizeClass(klass),
+        purpose: cls.purpose,
+        max_coverage_pct: 50,
+        floors,
+      };
+      const basketParcel: BasketParcel = {
+        id: parcelKey(ring),
+        name,
+        designation: cls.label,
+        functionalZone: ctx.functional_zone,
+        isSocial: cls.isSocial,
+        ringWgs84: ring,
+        local: pr.local,
+        width: pr.width,
+        height: pr.height,
+        areaM2: polygonArea(pr.local),
+        ctx,
+        params: nextParams,
+      };
       // дефолты параметров из отвода; ТЭП посчитает эффект ниже
       setSel({
         name, designation: cls.label, isSocial: cls.isSocial, ringWgs84: ring,
         local: pr.local, width: pr.width, height: pr.height,
         proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx,
       });
-      setParams({
-        housing_class: normalizeClass(klass),
-        purpose: cls.purpose,
-        max_coverage_pct: 50,
-        floors,
-      });
+      setParams(nextParams);
       setZone(ctx.functional_zone);
+      setBasketParcels((current) => (
+        current.some((parcel) => parcel.id === basketParcel.id) ? current : [...current, basketParcel]
+      ));
     } catch (e) {
       if (isAuthError(e)) setAuthNeeded(true);
       else setErr(e instanceof Error ? e.message : String(e));
@@ -149,8 +180,20 @@ export default function MapPage() {
 
   // Пересчёт ТЭП при выборе участка или правке параметров — БЕЗ запросов в GIS.
   useEffect(() => {
+    setData("selected", {
+      type: "FeatureCollection",
+      features: basketParcels.map((parcel) => ({
+        type: "Feature",
+        properties: { id: parcel.id, name: parcel.name },
+        geometry: { type: "Polygon", coordinates: [parcel.ringWgs84] },
+      })),
+    });
+  }, [basketParcels, setData]);
+
+  useEffect(() => {
     if (!sel || !params) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true); setErr(null);
     validateProject({
       site_width_m: sel.width, site_depth_m: sel.height, site_polygon: sel.local,
@@ -202,6 +245,7 @@ export default function MapPage() {
         params,
         ctx: sel.ctx,
         tep: result.summary,
+        masterplanObjects,
         savedAt: new Date().toISOString(),
       });
       await loadSavedList();
@@ -211,7 +255,7 @@ export default function MapPage() {
     } finally {
       setSaving(false);
     }
-  }, [sel, params, result, zone, loadSavedList]);
+  }, [sel, params, result, zone, masterplanObjects, loadSavedList]);
 
   const loadProject = useCallback(async (id: string) => {
     setErr(null); setLoading(true);
@@ -219,7 +263,7 @@ export default function MapPage() {
       const p = await getProject(id);
       const d = p.params as Record<string, unknown> & {
         kind?: string; parcel?: { name: string; designation: string; isSocial: boolean; ringWgs84: [number, number][]; functionalZone: string };
-        params?: EditParams; ctx?: SiteContext;
+        params?: EditParams; ctx?: SiteContext; masterplanObjects?: MasterplanObject[];
       };
       if (d?.kind !== "posadka" || !d.parcel?.ringWgs84) { setErr("Это не посадочный проект"); setLoading(false); return; }
       const ring = d.parcel.ringWgs84;
@@ -231,6 +275,7 @@ export default function MapPage() {
         proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx: d.ctx as SiteContext,
       });
       setParams(d.params as EditParams);
+      setMasterplanObjects(Array.isArray(d.masterplanObjects) ? d.masterplanObjects : []);
       const map = mapRef.current;
       if (map) {
         setData("selected", { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } }] });
@@ -248,6 +293,7 @@ export default function MapPage() {
   // Список сохранённых + deep-link ?project=<id>
   useEffect(() => {
     if (!getToken()) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadSavedList();
     const id = new URLSearchParams(window.location.search).get("project");
     if (id) loadProject(id);
@@ -255,6 +301,7 @@ export default function MapPage() {
 
   // Нет токена → сразу просим войти (прокси движка за авторизацией).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!getToken()) setAuthNeeded(true);
   }, []);
 
@@ -307,6 +354,21 @@ export default function MapPage() {
 
   const s = result?.summary;
   const zoneState = zoneBuildability(zone, result);
+  const basketSummary = buildGisMasterplanHandoff(basketParcels).summary;
+
+  function removeBasketParcel(id: string) {
+    setBasketParcels((current) => current.filter((parcel) => parcel.id !== id));
+  }
+
+  function clearBasket() {
+    setBasketParcels([]);
+  }
+
+  function sendBasketToApp() {
+    if (basketParcels.length === 0) return;
+    window.localStorage.setItem(GIS_MASTERPLAN_HANDOFF_KEY, JSON.stringify(buildGisMasterplanHandoff(basketParcels)));
+    window.location.href = "/app?tab=site";
+  }
 
   return (
     <div className="flex h-screen w-screen">
@@ -343,6 +405,80 @@ export default function MapPage() {
             </div>
           </div>
         )}
+
+        <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50/70 p-3">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+              Multi-parcel selection
+            </div>
+            {basketParcels.length > 0 && (
+              <button type="button" onClick={clearBasket} className="text-[11px] text-emerald-700 hover:underline">
+                clear
+              </button>
+            )}
+          </div>
+          {basketParcels.length === 0 ? (
+            <p className="text-xs leading-relaxed text-emerald-900/70">
+              Click parcels on the map to add them here. Then send the selected GIS context into /app for masterplan control.
+            </p>
+          ) : (
+            <>
+              <div className="mb-2 grid grid-cols-3 gap-1 text-center text-[11px]">
+                <div className="rounded bg-white/70 p-1">
+                  <div className="font-semibold text-emerald-900">{basketSummary.parcelsCount}</div>
+                  <div className="text-emerald-700/70">parcels</div>
+                </div>
+                <div className="rounded bg-white/70 p-1">
+                  <div className="font-semibold text-emerald-900">{fmt(basketSummary.totalAreaM2)}</div>
+                  <div className="text-emerald-700/70">m2</div>
+                </div>
+                <div className="rounded bg-white/70 p-1">
+                  <div className="font-semibold text-emerald-900">{basketSummary.avgFloors}</div>
+                  <div className="text-emerald-700/70">avg floors</div>
+                </div>
+              </div>
+              <div className="mb-2 max-h-32 space-y-1 overflow-auto pr-1">
+                {basketParcels.map((parcel) => (
+                  <div key={parcel.id} className="flex items-center justify-between gap-2 rounded border border-emerald-200 bg-white/70 px-2 py-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const pr = projectRingToLocal(parcel.ringWgs84);
+                        setSel({
+                          name: parcel.name,
+                          designation: parcel.designation,
+                          isSocial: parcel.isSocial,
+                          ringWgs84: parcel.ringWgs84,
+                          local: parcel.local,
+                          width: parcel.width,
+                          height: parcel.height,
+                          proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky },
+                          ctx: parcel.ctx,
+                        });
+                        setParams(parcel.params);
+                        setZone(parcel.functionalZone);
+                      }}
+                      className="min-w-0 flex-1 truncate text-left text-emerald-950 hover:underline"
+                      title={parcel.name}
+                    >
+                      {parcel.name}
+                    </button>
+                    <button type="button" onClick={() => removeBasketParcel(parcel.id)} className="text-emerald-700/70 hover:text-red-600">
+                      remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={sendBasketToApp}
+                className="w-full rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800"
+              >
+                Send selected parcels to /app
+              </button>
+            </>
+          )}
+        </div>
 
         {sel && params && (
           <div className="mb-3 rounded-lg border border-gray-200 p-3">
@@ -391,6 +527,13 @@ export default function MapPage() {
                 />
               </label>
             </div>
+            <button
+              type="button"
+              onClick={() => setWorkspaceOpen(true)}
+              className="mt-3 w-full rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800"
+            >
+              Управлять участком
+            </button>
           </div>
         )}
 
@@ -441,6 +584,27 @@ export default function MapPage() {
           </>
         )}
       </aside>
+      {workspaceOpen && sel && params && (
+        <MasterplanWorkspace
+          parcel={{
+            name: sel.name,
+            designation: sel.designation,
+            functionalZone: zone,
+            isSocial: sel.isSocial,
+            local: sel.local,
+            width: sel.width,
+            height: sel.height,
+            ctx: sel.ctx,
+          }}
+          params={params}
+          result={result}
+          objects={masterplanObjects}
+          saving={saving}
+          onObjectsChange={setMasterplanObjects}
+          onSave={saveProject}
+          onClose={() => setWorkspaceOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -456,6 +620,13 @@ function isAuthError(e: unknown): boolean {
 }
 
 // Бейдж происхождения цифры: gis (из карты) / calc (расчёт) / norm (норматив).
+function parcelKey(ring: [number, number][]): string {
+  return ring
+    .slice(0, 4)
+    .map(([lon, lat]) => `${lon.toFixed(6)},${lat.toFixed(6)}`)
+    .join("|");
+}
+
 function Src({ k }: { k: "gis" | "calc" | "norm" }) {
   const map = {
     gis: { t: "ГИС", c: "bg-blue-50 text-blue-600" },

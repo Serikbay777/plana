@@ -1,3 +1,16 @@
-⚠ Fast Refresh had to perform a full reload due to a runtime error.
-⚠ Fast Refresh had to perform a full reload due to a runtime error.
+[browser] Error: can't serialize object of unregistered class nf
+    at new Promise (<anonymous>)
+    at Generator.next (<anonymous>) (<anonymous>)
+[browser] Error: can't serialize object of unregistered class nf
+    at new Promise (<anonymous>)
+    at Generator.next (<anonymous>) (<anonymous>)
+[browser] Error: can't serialize object of unregistered class nf
+    at new Promise (<anonymous>)
+    at Generator.next (<anonymous>) (<anonymous>)
+[browser] Error: can't serialize object of unregistered class nf
+    at new Promise (<anonymous>)
+    at Generator.next (<anonymous>) (<anonymous>)
+[browser] Error: can't serialize object of unregistered class nf
+    at new Promise (<anonymous>)
+    at Generator.next (<anonymous>) (<anonymous>)
 ⚠ Fast Refresh had to perform a full reload due to a runtime error.

@@ -1042,6 +1042,53 @@ export async function validateProject(
   });
 }
 
+export type GisMasterplanObjectType =
+  | "residential_block"
+  | "school"
+  | "kindergarten"
+  | "parking"
+  | "commerce"
+  | "yard";
+
+export type GisMasterplanGeneratedObject = {
+  id: string;
+  parcel_id: string;
+  type: GisMasterplanObjectType;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  depth: number;
+  rotationDeg: number;
+  floors: number;
+  rationale: string;
+};
+
+export type GisMasterplanScenario = {
+  key: string;
+  title: string;
+  strategy: string;
+  objects: GisMasterplanGeneratedObject[];
+  rule_notes: string[];
+  warnings: string[];
+};
+
+export type GisMasterplanResponse = {
+  scenarios: GisMasterplanScenario[];
+  model_used: string;
+  source: "openai";
+};
+
+export async function generateGisMasterplan(payload: {
+  parcels: Array<Record<string, unknown>>;
+  strategy_hint?: string;
+}): Promise<GisMasterplanResponse> {
+  return request("/generate/gis-masterplan", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export type AptTypeRow = {
   type_code: string;
   label: string;

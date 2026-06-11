@@ -60,6 +60,12 @@ from ..cost.site_image_analyzer import (
     SiteImageRiskAnalysisResponse,
     analyze_site_image_risks,
 )
+from ..ai.openai_runtime import OpenAIConfigError, OpenAIRuntimeError
+from ..gis_masterplan_ai import (
+    GisMasterplanRequest,
+    GisMasterplanResponse,
+    generate_gis_masterplan,
+)
 from ..types import BuildingPurpose
 from ..visualizer import (
     DEFAULT_EXTERIOR_VIEWS, EXTERIOR_VIEWS,
@@ -2062,6 +2068,21 @@ def gis_redlines(west: float, south: float, east: float, north: float) -> dict:
         return fetch_redlines_geojson((west, south, east, north))
     except SiteContextError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/generate/gis-masterplan", response_model=GisMasterplanResponse)
+def generate_gis_masterplan_endpoint(req: GisMasterplanRequest) -> GisMasterplanResponse:
+    """Generate structured AI masterplan scenarios from selected GIS parcels."""
+    try:
+        return generate_gis_masterplan(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OpenAIConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OpenAIRuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

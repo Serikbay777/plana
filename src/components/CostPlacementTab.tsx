@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, BarChart3, Calculator, CheckCircle2, Coins, Info, Map as MapIcon } from "lucide-react";
 import {
   analyzeSiteImageRisks,
@@ -249,6 +249,20 @@ export const DEFAULT_COST_PLACEMENT_DRAFT: CostPlacementDraft = {
 type Props = {
   value: CostPlacementDraft;
   onChange: (next: CostPlacementDraft) => void;
+};
+
+type MasterplanCostHandoff = {
+  source: "gis_masterplan_workspace";
+  site_area_m2: number;
+  gfa_above_ground_m2: number;
+  footprint_m2: number;
+  floors_above: number;
+  building_count: number;
+  parking_count: number;
+  green_area_m2: number;
+  coverage_pct: number;
+  far: number;
+  risk_flags: string[];
 };
 
 type CostPlacementRow = {
@@ -1230,6 +1244,54 @@ export function CostPlacementTab({ value, onChange }: Props) {
   const selected = model.rows.find((row) => row.placement.variant_key === value.selected_variant_key) ?? model.rows[0];
   const cheapest = model.rows.find((row) => row.isCheapest) ?? model.rows[0];
   const geoSuggestion = deriveGeoRegion(value);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem("__plana_masterplan_cost_handoff");
+    if (!raw) return;
+    try {
+      const handoff = JSON.parse(raw) as Partial<MasterplanCostHandoff>;
+      if (handoff.source !== "gis_masterplan_workspace") return;
+      const footprintSide = Math.sqrt(Math.max(1, Number(handoff.footprint_m2 ?? 1)));
+      const siteSide = Math.sqrt(Math.max(1, Number(handoff.site_area_m2 ?? value.site_width_m * value.site_depth_m)));
+      onChange({
+        ...value,
+        site_width_m: Math.round(siteSide),
+        site_depth_m: Math.round(siteSide),
+        gfa_above_ground_m2: Math.max(1, Math.round(Number(handoff.gfa_above_ground_m2 ?? value.gfa_above_ground_m2))),
+        floors_above: Math.max(1, Math.round(Number(handoff.floors_above ?? value.floors_above))),
+        footprint_width_m: Math.max(1, Math.round(footprintSide)),
+        footprint_depth_m: Math.max(1, Math.round(footprintSide)),
+        parking_mode: Number(handoff.parking_count ?? 0) > 0 ? "open" : value.parking_mode,
+        costAssumptions: {
+          ...value.costAssumptions,
+          objectType: "GIS masterplan / multifamily screening",
+          geoRegionConfidence: "medium",
+          geoWarnings: [
+            ...(value.costAssumptions.geoWarnings ?? []),
+            "Cost inputs imported from GIS masterplan workspace; site polygon approximated to equivalent square for current Class 5 model.",
+          ],
+          missingDataWarnings: Array.from(new Set([
+            ...value.costAssumptions.missingDataWarnings,
+            ...(handoff.risk_flags ?? []),
+          ])),
+          fieldSources: {
+            ...(value.costAssumptions.fieldSources ?? {}),
+            site_width_m: "manual",
+            site_depth_m: "manual",
+            gfa_above_ground_m2: "manual",
+            floors_above: "manual",
+            footprint_width_m: "manual",
+            footprint_depth_m: "manual",
+          },
+        },
+      });
+    } catch {
+      /* ignore malformed handoff */
+    } finally {
+      window.localStorage.removeItem("__plana_masterplan_cost_handoff");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const update = <K extends keyof CostPlacementDraft>(key: K, next: CostPlacementDraft[K]) => {
     const fieldSources = Object.prototype.hasOwnProperty.call(COST_AI_FIELD_LABELS, key)
