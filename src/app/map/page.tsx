@@ -77,6 +77,7 @@ export default function MapPage() {
   const [gisLoading, setGisLoading] = useState(false);
   const [saved, setSaved] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   const setData = useCallback((id: string, fc: GeoJSON.FeatureCollection) => {
     const src = mapRef.current?.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -123,7 +124,7 @@ export default function MapPage() {
     const klass = String(props.house_klass ?? "");
     const name = String(props.name ?? "Участок");
     const cls = classifyParcel(name);
-    setResult(null); setErr(null); setZone(""); setLoading(true);
+    setResult(null); setErr(null); setZone(""); setSavedMsg(null); setLoading(true);
     try {
       const ctx = await importSiteContext(ring);
       const pr = projectRingToLocal(ring);
@@ -191,7 +192,7 @@ export default function MapPage() {
 
   const saveProject = useCallback(async () => {
     if (!sel || !params || !result) return;
-    setSaving(true); setErr(null);
+    setSaving(true); setErr(null); setSavedMsg(null);
     try {
       await createProject(sel.name.slice(0, 80) || "Участок", {
         kind: "posadka",
@@ -205,6 +206,7 @@ export default function MapPage() {
         savedAt: new Date().toISOString(),
       });
       await loadSavedList();
+      setSavedMsg("Сохранено ✓ — доступно в «Сохранённых участках» и в Истории проектов");
     } catch (e) {
       if (isAuthError(e)) setAuthNeeded(true);
       else setErr(e instanceof Error ? e.message : String(e));
@@ -438,6 +440,7 @@ export default function MapPage() {
             >
               {saving ? "Сохраняю…" : "Сохранить проект"}
             </button>
+            {savedMsg && <p className="mt-1 text-xs text-green-700">{savedMsg}</p>}
           </>
         )}
       </aside>
