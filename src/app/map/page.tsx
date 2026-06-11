@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getToken } from "@/lib/auth";
+import { createProject, listProjects, getProject, type Project } from "@/lib/projects";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
@@ -37,6 +38,7 @@ type SelCtx = {
   name: string;
   designation: string;
   isSocial: boolean;
+  ringWgs84: [number, number][];
   local: [number, number][];
   width: number;
   height: number;
@@ -73,6 +75,8 @@ export default function MapPage() {
   const [err, setErr] = useState<string | null>(null);
   const [authNeeded, setAuthNeeded] = useState(false);
   const [gisLoading, setGisLoading] = useState(false);
+  const [saved, setSaved] = useState<Project[]>([]);
+  const [saving, setSaving] = useState(false);
 
   const setData = useCallback((id: string, fc: GeoJSON.FeatureCollection) => {
     const src = mapRef.current?.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -125,7 +129,7 @@ export default function MapPage() {
       const pr = projectRingToLocal(ring);
       // дефолты параметров из отвода; ТЭП посчитает эффект ниже
       setSel({
-        name, designation: cls.label, isSocial: cls.isSocial,
+        name, designation: cls.label, isSocial: cls.isSocial, ringWgs84: ring,
         local: pr.local, width: pr.width, height: pr.height,
         proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx,
       });
@@ -177,6 +181,77 @@ export default function MapPage() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [sel, params, setData]);
+
+  const loadSavedList = useCallback(async () => {
+    try {
+      const all = await listProjects();
+      setSaved(all.filter((p) => (p.params as Record<string, unknown>)?.kind === "posadka"));
+    } catch { /* список не критичен */ }
+  }, []);
+
+  const saveProject = useCallback(async () => {
+    if (!sel || !params || !result) return;
+    setSaving(true); setErr(null);
+    try {
+      await createProject(sel.name.slice(0, 80) || "Участок", {
+        kind: "posadka",
+        parcel: {
+          name: sel.name, designation: sel.designation, isSocial: sel.isSocial,
+          ringWgs84: sel.ringWgs84, functionalZone: zone,
+        },
+        params,
+        ctx: sel.ctx,
+        tep: result.summary,
+        savedAt: new Date().toISOString(),
+      });
+      await loadSavedList();
+    } catch (e) {
+      if (isAuthError(e)) setAuthNeeded(true);
+      else setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [sel, params, result, zone, loadSavedList]);
+
+  const loadProject = useCallback(async (id: string) => {
+    setErr(null); setLoading(true);
+    try {
+      const p = await getProject(id);
+      const d = p.params as Record<string, unknown> & {
+        kind?: string; parcel?: { name: string; designation: string; isSocial: boolean; ringWgs84: [number, number][]; functionalZone: string };
+        params?: EditParams; ctx?: SiteContext;
+      };
+      if (d?.kind !== "posadka" || !d.parcel?.ringWgs84) { setErr("Это не посадочный проект"); setLoading(false); return; }
+      const ring = d.parcel.ringWgs84;
+      const pr = projectRingToLocal(ring);
+      setZone(d.parcel.functionalZone ?? "");
+      setSel({
+        name: d.parcel.name, designation: d.parcel.designation, isSocial: !!d.parcel.isSocial,
+        ringWgs84: ring, local: pr.local, width: pr.width, height: pr.height,
+        proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx: d.ctx as SiteContext,
+      });
+      setParams(d.params as EditParams);
+      const map = mapRef.current;
+      if (map) {
+        setData("selected", { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } }] });
+        const lons = ring.map((r) => r[0]); const lats = ring.map((r) => r[1]);
+        map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 80, duration: 600 });
+      }
+      // ТЭП + пятно пересчитает эффект валидации (сработает на смену sel/params)
+    } catch (e) {
+      if (isAuthError(e)) setAuthNeeded(true);
+      else setErr(e instanceof Error ? e.message : String(e));
+      setLoading(false);
+    }
+  }, [setData]);
+
+  // Список сохранённых + deep-link ?project=<id>
+  useEffect(() => {
+    if (!getToken()) return;
+    loadSavedList();
+    const id = new URLSearchParams(window.location.search).get("project");
+    if (id) loadProject(id);
+  }, [loadSavedList, loadProject]);
 
   // Нет токена → сразу просим войти (прокси движка за авторизацией).
   useEffect(() => {
@@ -248,6 +323,24 @@ export default function MapPage() {
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
             Данные ГИС доступны после входа в систему.{" "}
             <Link href="/login" className="font-medium text-blue-600 hover:underline">Войти →</Link>
+          </div>
+        )}
+
+        {saved.length > 0 && (
+          <div className="mb-3">
+            <div className="mb-1 text-xs font-medium text-gray-500">Сохранённые участки ({saved.length})</div>
+            <div className="flex flex-wrap gap-1">
+              {saved.slice(0, 12).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => loadProject(p.id)}
+                  title={p.name}
+                  className="rounded border border-gray-200 px-2 py-0.5 text-xs hover:bg-gray-50"
+                >
+                  {p.name.length > 18 ? p.name.slice(0, 18) + "…" : p.name}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -337,6 +430,14 @@ export default function MapPage() {
                 </li>
               ))}
             </ul>
+
+            <button
+              onClick={saveProject}
+              disabled={saving}
+              className="mt-3 w-full rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "Сохраняю…" : "Сохранить проект"}
+            </button>
           </>
         )}
       </aside>
