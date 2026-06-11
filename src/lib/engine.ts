@@ -987,6 +987,7 @@ export type ProjectValidationSummary = {
   far: number;
   green_area_m2: number;
   green_pct: number;
+  footprints_local?: number[][][];   // пятна застройки в локальных метрах
 };
 
 // Контекст участка из GIS (соседи/дороги/красные линии) в локальных метрах.

@@ -8,7 +8,10 @@ export type BBox = { west: number; south: number; east: number; north: number };
 const LAT_M = 110574;
 const LON_M = 111320;
 
-export type LocalProjection = {
+// Параметры локальной проекции участка — нужны и для прямой, и для обратной.
+export type ProjOrigin = { lon0: number; lat0: number; kx: number; ky: number };
+
+export type LocalProjection = ProjOrigin & {
   local: [number, number][];   // кольцо в локальных метрах
   width: number;
   height: number;
@@ -19,14 +22,21 @@ export function projectRingToLocal(ring: [number, number][]): LocalProjection {
   const lon0 = Math.min(...ring.map((p) => p[0]));
   const lat0 = Math.min(...ring.map((p) => p[1]));
   const kx = LON_M * Math.cos((lat0 * Math.PI) / 180);
+  const ky = LAT_M;
   const local = ring.map(
-    (p) => [(p[0] - lon0) * kx, (p[1] - lat0) * LAT_M] as [number, number],
+    (p) => [(p[0] - lon0) * kx, (p[1] - lat0) * ky] as [number, number],
   );
   return {
+    lon0, lat0, kx, ky,
     local,
     width: Math.max(...local.map((p) => p[0])),
     height: Math.max(...local.map((p) => p[1])),
   };
+}
+
+/** Обратная проекция: локальные метры → WGS84 [[lon,lat],...]. */
+export function localToWgs84(coords: number[][], o: ProjOrigin): [number, number][] {
+  return coords.map((p) => [p[0] / o.kx + o.lon0, p[1] / o.ky + o.lat0] as [number, number]);
 }
 
 export type EnginePurpose = "residential" | "commercial" | "mixed_use" | "hotel";

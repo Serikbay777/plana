@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { getToken } from "@/lib/auth";
+import { createProject, listProjects, getProject, type Project } from "@/lib/projects";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
-  ringFromFeature, projectRingToLocal, classifyParcel,
-  type BBox, type EnginePurpose,
+  ringFromFeature, projectRingToLocal, localToWgs84, classifyParcel,
+  type BBox, type EnginePurpose, type ProjOrigin,
 } from "@/lib/gis";
 import {
   fetchGisParcels, fetchGisNeighbors, fetchGisRedLines,
@@ -36,9 +38,11 @@ type SelCtx = {
   name: string;
   designation: string;
   isSocial: boolean;
+  ringWgs84: [number, number][];
   local: [number, number][];
   width: number;
   height: number;
+  proj: ProjOrigin;
   ctx: SiteContext;
 };
 
@@ -69,6 +73,10 @@ export default function MapPage() {
   const [result, setResult] = useState<ProjectValidationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [authNeeded, setAuthNeeded] = useState(false);
+  const [gisLoading, setGisLoading] = useState(false);
+  const [saved, setSaved] = useState<Project[]>([]);
+  const [saving, setSaving] = useState(false);
 
   const setData = useCallback((id: string, fc: GeoJSON.FeatureCollection) => {
     const src = mapRef.current?.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -78,6 +86,7 @@ export default function MapPage() {
   const refresh = useCallback(async () => {
     const map = mapRef.current;
     if (!map) return;
+    if (!getToken()) { setAuthNeeded(true); setHint("Нужен вход в систему"); return; }
     if (map.getZoom() < MIN_FETCH_ZOOM) {
       setHint("Приблизьте карту, чтобы загрузить участки");
       setData("parcels", { type: "FeatureCollection", features: [] });
@@ -87,6 +96,7 @@ export default function MapPage() {
     }
     const b = map.getBounds();
     const bbox: BBox = { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() };
+    setGisLoading(true);
     try {
       const [parcels, neighbors, redlines] = await Promise.all([
         fetchGisParcels(bbox), fetchGisNeighbors(bbox), fetchGisRedLines(bbox),
@@ -96,7 +106,10 @@ export default function MapPage() {
       setData("redlines", redlines);
       setHint(`Участков в кадре: ${parcels.features.length}. Кликните участок.`);
     } catch (e) {
-      setHint("GIS недоступен: " + (e instanceof Error ? e.message : String(e)));
+      if (isAuthError(e)) { setAuthNeeded(true); setHint("Нужен вход в систему"); }
+      else setHint("GIS недоступен: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setGisLoading(false);
     }
   }, [setData]);
 
@@ -104,6 +117,7 @@ export default function MapPage() {
     const ring = ringFromFeature(feat.geometry);
     if (!ring) return;
     setData("selected", { type: "FeatureCollection", features: [feat] });
+    setData("footprint", { type: "FeatureCollection", features: [] });
     const props = (feat.properties ?? {}) as Record<string, unknown>;
     const floors = parseInt(String(props.floor ?? "").split(",")[0]) || 9;
     const klass = String(props.house_klass ?? "");
@@ -112,9 +126,13 @@ export default function MapPage() {
     setResult(null); setErr(null); setZone(""); setLoading(true);
     try {
       const ctx = await importSiteContext(ring);
-      const { local, width, height } = projectRingToLocal(ring);
+      const pr = projectRingToLocal(ring);
       // дефолты параметров из отвода; ТЭП посчитает эффект ниже
-      setSel({ name, designation: cls.label, isSocial: cls.isSocial, local, width, height, ctx });
+      setSel({
+        name, designation: cls.label, isSocial: cls.isSocial, ringWgs84: ring,
+        local: pr.local, width: pr.width, height: pr.height,
+        proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx,
+      });
       setParams({
         housing_class: normalizeClass(klass),
         purpose: cls.purpose,
@@ -123,7 +141,8 @@ export default function MapPage() {
       });
       setZone(ctx.functional_zone);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (isAuthError(e)) setAuthNeeded(true);
+      else setErr(e instanceof Error ? e.message : String(e));
       setLoading(false);
     }
   }, [setData]);
@@ -141,11 +160,103 @@ export default function MapPage() {
       red_lines: sel.ctx.red_lines, neighbors: sel.ctx.neighbor_buildings,
       functional_zone: sel.ctx.functional_zone,
     })
-      .then((r) => { if (!cancelled) setResult(r); })
-      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); })
+      .then((r) => {
+        if (cancelled) return;
+        setResult(r);
+        // обратная проекция пятен застройки → WGS84 → на карту
+        const fps = r.summary.footprints_local ?? [];
+        setData("footprint", {
+          type: "FeatureCollection",
+          features: fps.map((ring) => ({
+            type: "Feature", properties: {},
+            geometry: { type: "Polygon", coordinates: [localToWgs84(ring, sel.proj)] },
+          })),
+        });
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (isAuthError(e)) setAuthNeeded(true);
+        else setErr(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sel, params]);
+  }, [sel, params, setData]);
+
+  const loadSavedList = useCallback(async () => {
+    try {
+      const all = await listProjects();
+      setSaved(all.filter((p) => (p.params as Record<string, unknown>)?.kind === "posadka"));
+    } catch { /* список не критичен */ }
+  }, []);
+
+  const saveProject = useCallback(async () => {
+    if (!sel || !params || !result) return;
+    setSaving(true); setErr(null);
+    try {
+      await createProject(sel.name.slice(0, 80) || "Участок", {
+        kind: "posadka",
+        parcel: {
+          name: sel.name, designation: sel.designation, isSocial: sel.isSocial,
+          ringWgs84: sel.ringWgs84, functionalZone: zone,
+        },
+        params,
+        ctx: sel.ctx,
+        tep: result.summary,
+        savedAt: new Date().toISOString(),
+      });
+      await loadSavedList();
+    } catch (e) {
+      if (isAuthError(e)) setAuthNeeded(true);
+      else setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [sel, params, result, zone, loadSavedList]);
+
+  const loadProject = useCallback(async (id: string) => {
+    setErr(null); setLoading(true);
+    try {
+      const p = await getProject(id);
+      const d = p.params as Record<string, unknown> & {
+        kind?: string; parcel?: { name: string; designation: string; isSocial: boolean; ringWgs84: [number, number][]; functionalZone: string };
+        params?: EditParams; ctx?: SiteContext;
+      };
+      if (d?.kind !== "posadka" || !d.parcel?.ringWgs84) { setErr("Это не посадочный проект"); setLoading(false); return; }
+      const ring = d.parcel.ringWgs84;
+      const pr = projectRingToLocal(ring);
+      setZone(d.parcel.functionalZone ?? "");
+      setSel({
+        name: d.parcel.name, designation: d.parcel.designation, isSocial: !!d.parcel.isSocial,
+        ringWgs84: ring, local: pr.local, width: pr.width, height: pr.height,
+        proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx: d.ctx as SiteContext,
+      });
+      setParams(d.params as EditParams);
+      const map = mapRef.current;
+      if (map) {
+        setData("selected", { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } }] });
+        const lons = ring.map((r) => r[0]); const lats = ring.map((r) => r[1]);
+        map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 80, duration: 600 });
+      }
+      // ТЭП + пятно пересчитает эффект валидации (сработает на смену sel/params)
+    } catch (e) {
+      if (isAuthError(e)) setAuthNeeded(true);
+      else setErr(e instanceof Error ? e.message : String(e));
+      setLoading(false);
+    }
+  }, [setData]);
+
+  // Список сохранённых + deep-link ?project=<id>
+  useEffect(() => {
+    if (!getToken()) return;
+    loadSavedList();
+    const id = new URLSearchParams(window.location.search).get("project");
+    if (id) loadProject(id);
+  }, [loadSavedList, loadProject]);
+
+  // Нет токена → сразу просим войти (прокси движка за авторизацией).
+  useEffect(() => {
+    if (!getToken()) setAuthNeeded(true);
+  }, []);
 
   useEffect(() => {
     if (!mapDiv.current || mapRef.current) return;
@@ -164,6 +275,7 @@ export default function MapPage() {
       map.addSource("redlines", { type: "geojson", data: empty });
       map.addSource("parcels", { type: "geojson", data: empty });
       map.addSource("selected", { type: "geojson", data: empty });
+      map.addSource("footprint", { type: "geojson", data: empty });
 
       map.addLayer({ id: "neighbors-fill", type: "fill", source: "neighbors",
         paint: { "fill-color": "#94a3b8", "fill-opacity": 0.35 } });
@@ -175,6 +287,10 @@ export default function MapPage() {
         paint: { "line-color": "#2563eb", "line-width": 1 } });
       map.addLayer({ id: "selected-line", type: "line", source: "selected",
         paint: { "line-color": "#16a34a", "line-width": 3 } });
+      map.addLayer({ id: "footprint-fill", type: "fill", source: "footprint",
+        paint: { "fill-color": "#f97316", "fill-opacity": 0.5 } });
+      map.addLayer({ id: "footprint-line", type: "line", source: "footprint",
+        paint: { "line-color": "#ea580c", "line-width": 1.5 } });
 
       map.on("click", "parcels-fill", (e) => {
         if (e.features?.[0]) onParcelClick(e.features[0] as GeoJSON.Feature);
@@ -200,7 +316,33 @@ export default function MapPage() {
           <h1 className="text-lg font-semibold">Посадка на участок</h1>
           <Link href="/app" className="text-xs text-blue-600 hover:underline">в приложение →</Link>
         </div>
-        <p className="mb-3 text-xs text-gray-500">{ready ? hint : "Загрузка карты…"}</p>
+        <p className="mb-1 text-xs text-gray-500">{ready ? hint : "Загрузка карты…"}</p>
+        {gisLoading && <p className="mb-2 text-xs text-blue-600">Загрузка участков из ГИС…</p>}
+
+        {authNeeded && (
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            Данные ГИС доступны после входа в систему.{" "}
+            <Link href="/login" className="font-medium text-blue-600 hover:underline">Войти →</Link>
+          </div>
+        )}
+
+        {saved.length > 0 && (
+          <div className="mb-3">
+            <div className="mb-1 text-xs font-medium text-gray-500">Сохранённые участки ({saved.length})</div>
+            <div className="flex flex-wrap gap-1">
+              {saved.slice(0, 12).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => loadProject(p.id)}
+                  title={p.name}
+                  className="rounded border border-gray-200 px-2 py-0.5 text-xs hover:bg-gray-50"
+                >
+                  {p.name.length > 18 ? p.name.slice(0, 18) + "…" : p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {sel && params && (
           <div className="mb-3 rounded-lg border border-gray-200 p-3">
@@ -288,6 +430,14 @@ export default function MapPage() {
                 </li>
               ))}
             </ul>
+
+            <button
+              onClick={saveProject}
+              disabled={saving}
+              className="mt-3 w-full rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "Сохраняю…" : "Сохранить проект"}
+            </button>
           </>
         )}
       </aside>
@@ -297,6 +447,12 @@ export default function MapPage() {
 
 function fmt(n: number): string {
   return Math.round(n).toLocaleString("ru-RU");
+}
+
+function isAuthError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  const status = (e as { status?: number } | null)?.status;
+  return status === 401 || /not authenticated|401|unauthor/i.test(m);
 }
 
 // Бейдж происхождения цифры: gis (из карты) / calc (расчёт) / norm (норматив).
