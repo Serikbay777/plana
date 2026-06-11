@@ -1,7 +1,8 @@
 """Проверка предельной высоты зданий по ГПЗУ + спец-ТУ для жилых > 75 м.
 
-Источник: `Site.gpzu.max_height_m` (если задано). Для жилых зданий выше
-75 м — СНиП РК 3.02-43-2007 п. 1.2 требует специальных технических условий.
+Источник: `Site.gpzu.max_height_m` (если задано). Жилые многоквартирные здания
+нормируются СН РК 3.02-01-2023 (до 75 м); выше — требуются специальные
+технические условия. (Прежний СНиП РК 3.02-43-2007 отменён.)
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from ..types import BuildingPurpose
 from .base import Violation
 
 
-_RESIDENTIAL_SPECIAL_CONDITIONS_THRESHOLD = 75.0  # СНиП РК 3.02-43-2007 п. 1.2
+_RESIDENTIAL_SPECIAL_CONDITIONS_THRESHOLD = 75.0  # СН РК 3.02-01-2023 (порог спец-ТУ)
 
 
 def check(project: Project) -> Iterable[Violation]:
@@ -46,7 +47,7 @@ def check(project: Project) -> Iterable[Violation]:
                     f"Жилое здание #{i+1} ({b.height_m:.1f} м) выше 75 м — "
                     f"требуются специальные технические условия."
                 ),
-                norm="СНиП РК 3.02-43-2007 п. 1.2",
+                norm="СН РК 3.02-01-2023 (жилые многоквартирные, спец-ТУ >75 м)",
                 actual=b.height_m,
                 expected=_RESIDENTIAL_SPECIAL_CONDITIONS_THRESHOLD,
                 target=f"building[{i}]",
