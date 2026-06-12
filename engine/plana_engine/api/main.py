@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -30,6 +31,35 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+
+def _load_local_env() -> None:
+    """Load local .env for Windows/dev runs without overriding real deployment env."""
+    candidates = [
+        Path.cwd() / ".env",
+        Path.cwd().parent / ".env",
+        Path(__file__).resolve().parents[3] / ".env",
+    ]
+    env_file = next((path for path in candidates if path.exists()), None)
+    if env_file is None:
+        return
+    last_key: str | None = None
+    for raw_line in env_file.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key and (key[0].isalpha() or key[0] == "_") and all(ch.isalnum() or ch == "_" for ch in key):
+                last_key = key
+                os.environ.setdefault(key, value.strip().strip('"').strip("'"))
+                continue
+        if last_key and last_key in os.environ:
+            os.environ[last_key] = os.environ[last_key] + line
+
+
+_load_local_env()
 
 from .. import __version__
 from ..auth import init_db, router as auth_router
@@ -2083,6 +2113,134 @@ def generate_gis_masterplan_endpoint(req: GisMasterplanRequest) -> GisMasterplan
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class GisRenderParcel(BaseModel):
+    id: str
+    name: str = ""
+    designation: str = ""
+    functionalZone: str = ""
+    isSocial: bool = False
+    areaM2: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+    local: list[list[float]] = []
+
+
+class GisRenderHandoff(BaseModel):
+    parcels: list[GisRenderParcel]
+    summary: dict[str, Any] = {}
+
+
+class GisRenderObject(BaseModel):
+    id: str
+    parcel_id: str
+    type: str
+    name: str
+    x: float
+    y: float
+    width: float
+    depth: float
+    rotationDeg: float = 0.0
+    floors: int = 1
+    rationale: str = ""
+
+
+class GisRenderScenario(BaseModel):
+    key: str
+    title: str
+    strategy: str
+    objects: list[GisRenderObject]
+    rule_notes: list[str] = []
+    warnings: list[str] = []
+
+
+class GisMasterplanRenderRequest(BaseModel):
+    handoff: GisRenderHandoff
+    scenario: GisRenderScenario
+    strategy_hint: str = ""
+
+
+def _build_gis_masterplan_render_prompt(req: GisMasterplanRenderRequest) -> str:
+    """Build a visual prompt from the selected GIS scenario without changing its geometry."""
+    parcels = req.handoff.parcels
+    total_area = sum(max(0.0, parcel.areaM2) for parcel in parcels)
+    parcel_lines = [
+        (
+            f"- Parcel {parcel.id}: {parcel.designation or parcel.name or 'site parcel'}, "
+            f"area {parcel.areaM2:.0f} m2, approx frame {parcel.width:.0f}x{parcel.height:.0f} m, "
+            f"zone: {parcel.functionalZone or 'unknown'}, social parcel: {'yes' if parcel.isSocial else 'no'}"
+        )
+        for parcel in parcels
+    ]
+    object_lines = [
+        (
+            f"- {obj.name} [{obj.type}] on parcel {obj.parcel_id}: center ({obj.x:.1f}, {obj.y:.1f}) m, "
+            f"size {obj.width:.1f}x{obj.depth:.1f} m, rotation {obj.rotationDeg:.0f} deg, "
+            f"{obj.floors} floors. Rationale: {obj.rationale or 'not specified'}"
+        )
+        for obj in req.scenario.objects
+    ]
+    warnings = [*req.scenario.warnings, *req.scenario.rule_notes]
+    warning_lines = [f"- {note}" for note in warnings[:10]]
+    return "\n".join([
+        "Create a professional architectural masterplan concept render for a selected real GIS parcel group in Kazakhstan.",
+        "Use an aerial oblique / 2.5D presentation style, clean urban planning board, high-end architecture office look.",
+        "The image must visualize the structured scenario below. Preserve the object count, relative positions, parcel boundaries, and approximate scale.",
+        "Do not invent extra towers, schools, roads, or parks beyond the scenario. Do not claim official approval.",
+        "Show parcel boundaries clearly, building footprints, courtyard/green areas, internal drives, pedestrian paths, parking, and social facilities if present.",
+        "Use distinguishable colors/materials: residential blocks, school/kindergarten, commerce, parking, yard/landscape.",
+        "Avoid unreadable fake text labels. If labels appear, keep them minimal and schematic.",
+        "",
+        f"Scenario title: {req.scenario.title}",
+        f"Scenario strategy: {req.scenario.strategy}",
+        f"User planning instruction: {req.strategy_hint or 'none'}",
+        f"Total selected parcel area: {total_area:.0f} m2",
+        "",
+        "Parcels:",
+        *parcel_lines,
+        "",
+        "Objects to visualize exactly:",
+        *object_lines,
+        "",
+        "Known caveats / rule notes to keep visually conservative:",
+        *(warning_lines or ["- none"]),
+        "",
+        "Output: a polished concept visualization, not a legal drawing, suitable for early client discussion.",
+    ])
+
+
+@app.post("/visualize/gis-masterplan")
+def visualize_gis_masterplan(req: GisMasterplanRenderRequest) -> Response:
+    """Generate an image render for a selected structured GIS masterplan scenario."""
+    if not req.handoff.parcels:
+        raise HTTPException(status_code=400, detail="No GIS parcels provided")
+    if not req.scenario.objects:
+        raise HTTPException(status_code=400, detail="No GIS scenario objects provided")
+
+    prompt = _build_gis_masterplan_render_prompt(req)
+    try:
+        result = generate_image_with_meta(
+            prompt,
+            GenerationOptions(quality="medium"),
+            use_cache=False,
+        )
+    except MissingAPIKey as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except OpenAIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"GIS masterplan visualization failed: {exc}") from exc
+
+    return Response(
+        content=result.png,
+        media_type="image/png",
+        headers={
+            "X-Model-Used": result.model_used,
+            "X-Enhancer-Used": "none",
+            "Access-Control-Expose-Headers": "X-Model-Used, X-Enhancer-Used",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

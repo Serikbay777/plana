@@ -1244,6 +1244,7 @@ export function CostPlacementTab({ value, onChange }: Props) {
   const selected = model.rows.find((row) => row.placement.variant_key === value.selected_variant_key) ?? model.rows[0];
   const cheapest = model.rows.find((row) => row.isCheapest) ?? model.rows[0];
   const geoSuggestion = deriveGeoRegion(value);
+  const isGisMasterplanSource = value.costAssumptions.objectType.toLowerCase().includes("gis masterplan");
 
   useEffect(() => {
     const raw = window.localStorage.getItem("__plana_masterplan_cost_handoff");
@@ -1605,6 +1606,32 @@ export function CostPlacementTab({ value, onChange }: Props) {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
+        {isGisMasterplanSource && (
+          <div className="mb-4 rounded-2xl border border-emerald-300/18 bg-emerald-300/[0.055] px-4 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200/75">Источник расчёта: GIS-мастерплан</div>
+                <div className="mt-1 text-[12px] leading-relaxed text-white/58">
+                  GFA, пятно, этажность и параметры участка взяты из выбранного AI-сценария. Это Class 5 screening, не официальная сметная документация РК.
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+                <div className="rounded-lg bg-black/18 px-3 py-1.5">
+                  <div className="font-semibold text-white/85">{fmt(value.gfa_above_ground_m2)}</div>
+                  <div className="text-white/35">GFA м²</div>
+                </div>
+                <div className="rounded-lg bg-black/18 px-3 py-1.5">
+                  <div className="font-semibold text-white/85">{value.floors_above}</div>
+                  <div className="text-white/35">этажей</div>
+                </div>
+                <div className="rounded-lg bg-black/18 px-3 py-1.5">
+                  <div className="font-semibold text-white/85">{fmt(value.footprint_width_m * value.footprint_depth_m)}</div>
+                  <div className="text-white/35">пятно м²</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-4">
           <aside className="space-y-3">
             <Panel title="AI brief extraction" icon={<Info size={13} className="text-violet-300" />}>

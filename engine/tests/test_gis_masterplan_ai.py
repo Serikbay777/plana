@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from fastapi.testclient import TestClient
 
 from plana_engine import gis_masterplan_ai
+from plana_engine.visualizer.openai_client import GenerationResult
 from plana_engine.api.main import app
 from plana_engine.auth.jwt_utils import create_token
 
@@ -142,3 +143,73 @@ def test_gis_masterplan_uses_openai_structured_response(monkeypatch) -> None:
     assert body["model_used"] == "gpt-5.5"
     assert len(body["scenarios"]) == 3
     assert body["scenarios"][0]["objects"][0]["parcel_id"] == "p1"
+
+
+def test_gis_masterplan_visualization_returns_png(monkeypatch) -> None:
+    captured = {}
+
+    def fake_generate_image_with_meta(prompt, opts, use_cache=True):
+        captured["prompt"] = prompt
+        captured["quality"] = opts.quality
+        captured["use_cache"] = use_cache
+        return GenerationResult(png=b"fake-png", model_used="gpt-image-2")
+
+    monkeypatch.setattr(
+        "plana_engine.api.main.generate_image_with_meta",
+        fake_generate_image_with_meta,
+    )
+
+    scenario = {
+        "key": "social_mix",
+        "title": "Social Mix",
+        "strategy": "Residential and kindergarten.",
+        "objects": [
+            {
+                "id": "b1",
+                "parcel_id": "p1",
+                "type": "residential_block",
+                "name": "Residential block",
+                "x": 50,
+                "y": 40,
+                "width": 38,
+                "depth": 20,
+                "rotationDeg": 0,
+                "floors": 9,
+                "rationale": "Compact slab.",
+            },
+            {
+                "id": "k1",
+                "parcel_id": "p1",
+                "type": "kindergarten",
+                "name": "Kindergarten",
+                "x": 70,
+                "y": 30,
+                "width": 24,
+                "depth": 18,
+                "rotationDeg": 0,
+                "floors": 2,
+                "rationale": "Social infrastructure.",
+            },
+        ],
+        "rule_notes": ["Check red lines."],
+        "warnings": ["No official parking norm selected."],
+    }
+
+    r = _client.post(
+        "/visualize/gis-masterplan",
+        headers=_AUTH,
+        json={
+            "handoff": {"parcels": [_parcel()], "summary": {"parcelsCount": 1}},
+            "scenario": scenario,
+            "strategy_hint": "Keep a green courtyard and safe access.",
+        },
+    )
+
+    assert r.status_code == 200
+    assert r.content == b"fake-png"
+    assert r.headers["content-type"] == "image/png"
+    assert r.headers["x-model-used"] == "gpt-image-2"
+    assert captured["quality"] == "medium"
+    assert captured["use_cache"] is False
+    assert "Kindergarten" in captured["prompt"]
+    assert "Keep a green courtyard" in captured["prompt"]

@@ -1089,6 +1089,33 @@ export async function generateGisMasterplan(payload: {
   });
 }
 
+export async function visualizeGisMasterplan(payload: {
+  handoff: unknown;
+  scenario: GisMasterplanScenario;
+  strategy_hint?: string;
+}): Promise<VisualizeResult> {
+  const res = await fetch(`${ENGINE_URL}/visualize/gis-masterplan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const j = await res.json();
+      detail = parseDetail(j.detail, detail);
+    } catch {
+      /* ignore */
+    }
+    throw new EngineError(res.status, detail);
+  }
+  return {
+    blob: await res.blob(),
+    modelUsed: res.headers.get("X-Model-Used"),
+    enhancerUsed: res.headers.get("X-Enhancer-Used"),
+  };
+}
+
 export type AptTypeRow = {
   type_code: string;
   label: string;

@@ -1,0 +1,7 @@
+INFO:     Loading environment from '.env'
+INFO:     Started server process [3788]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8002 (Press CTRL+C to quit)
+OpenAI request failed operation=gis.masterplan.generate model=gpt-5.5 error=OpenAI API authentication failed
+OpenAI request failed operation=gis.masterplan.generate model=gpt-5.5 error=OpenAI API authentication failed
