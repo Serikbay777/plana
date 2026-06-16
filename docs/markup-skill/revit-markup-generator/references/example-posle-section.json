@@ -1,0 +1,78 @@
+{
+  "metadata": {
+    "schema_version": "1.0",
+    "section": "AR",
+    "stage": "RP",
+    "convention_id": "must-team-default",
+    "level": "2 этаж",
+    "elevation_m": 4.2,
+    "prompt": "Промаркировать левую секцию типового этажа из После.pdf (3к/2к/1к)"
+  },
+  "units": "m",
+  "coefficients": { "balcony": 0.3, "loggia": 0.5, "terrace": 0.3 },
+  "room_tags": [
+    { "room_id": "a-gost", "name": "Гостиная", "area_m2": 17.75, "tag_point": [3.0, 5.0], "apartment": "3k" },
+    { "room_id": "a-sp",   "name": "Спальня",  "area_m2": 12.61, "tag_point": [1.6, 5.2], "apartment": "3k" },
+    { "room_id": "a-kuh",  "name": "Кухня",    "area_m2": 10.29, "tag_point": [4.8, 5.4], "apartment": "3k" },
+    { "room_id": "a-su",   "name": "С/у",      "area_m2": 4.20,  "tag_point": [1.1, 4.4], "apartment": "3k" },
+    { "room_id": "a-kor",  "name": "Коридор",  "area_m2": 9.51,  "tag_point": [3.3, 4.1], "apartment": "3k" },
+    { "room_id": "a-prih", "name": "Прихожая", "area_m2": 2.93,  "tag_point": [4.3, 4.3], "apartment": "3k" },
+
+    { "room_id": "b-gost", "name": "Гостиная",    "area_m2": 17.26, "tag_point": [2.9, 2.0], "apartment": "2k" },
+    { "room_id": "b-sp",   "name": "Спальня",     "area_m2": 12.77, "tag_point": [4.2, 1.2], "apartment": "2k" },
+    { "room_id": "b-kuh",  "name": "Кухня-ниша",  "area_m2": 6.00,  "tag_point": [2.3, 3.0], "apartment": "2k" },
+    { "room_id": "b-su",   "name": "С/у",         "area_m2": 3.26,  "tag_point": [0.9, 2.8], "apartment": "2k" },
+    { "room_id": "b-prih", "name": "Прихожая",    "area_m2": 1.93,  "tag_point": [3.2, 2.5], "apartment": "2k" },
+
+    { "room_id": "c-gost", "name": "Гостиная", "area_m2": 16.01, "tag_point": [9.2, 1.6], "apartment": "1k" },
+    { "room_id": "c-kuh",  "name": "Кухня",    "area_m2": 9.73,  "tag_point": [7.6, 1.4], "apartment": "1k" },
+    { "room_id": "c-su",   "name": "С/у",      "area_m2": 4.41,  "tag_point": [6.6, 2.3], "apartment": "1k" },
+    { "room_id": "c-prih", "name": "Прихожая", "area_m2": 6.02,  "tag_point": [8.0, 2.6], "apartment": "1k" },
+    { "room_id": "c-gard", "name": "Гардероб", "area_m2": 3.15,  "tag_point": [9.0, 2.6], "apartment": "1k" },
+
+    { "room_id": "lh",  "name": "Лифтовой холл",       "area_m2": 11.63, "tag_point": [6.2, 5.3] },
+    { "room_id": "mkk", "name": "Межквартирный коридор", "area_m2": 23.16, "tag_point": [7.4, 3.4] },
+    { "room_id": "lk",  "name": "Лестничная клетка",    "area_m2": 15.46, "tag_point": [9.4, 4.6] }
+  ],
+  "apartments": [
+    { "number": 1, "type": "3k", "living_m2": 50.06, "total_m2": 80.25, "total_coeff_m2": 81.46, "tag_point": [3.0, 5.0] },
+    { "number": 2, "type": "2k", "living_m2": 30.03, "total_m2": 42.37, "total_coeff_m2": 43.64, "tag_point": [2.9, 2.0] },
+    { "number": 3, "type": "1k", "living_m2": 16.01, "total_m2": 39.32, "total_coeff_m2": 40.90, "tag_point": [9.2, 1.6] }
+  ],
+  "openings": [
+    { "id": "ok1a", "kind": "window", "mark": "ОК-1", "host_wall": "w-s-1", "width_mm": 1500, "height_mm": 1500, "tag_point": [1.6, 0.1] },
+    { "id": "ok3a", "kind": "window", "mark": "ОК-3", "host_wall": "w-s-2", "width_mm": 1800, "height_mm": 1500, "tag_point": [4.8, 0.1] },
+    { "id": "ok1b", "kind": "window", "mark": "ОК-1", "host_wall": "w-s-3", "width_mm": 1500, "height_mm": 1500, "tag_point": [8.0, 0.1] },
+    { "id": "d2",   "kind": "door",   "mark": "Д-2",  "host_wall": "w-i-1", "width_mm": 800,  "height_mm": 2100, "tag_point": [3.4, 3.6] },
+    { "id": "d7",   "kind": "door",   "mark": "Д-7",  "host_wall": "w-i-2", "width_mm": 900,  "height_mm": 2100, "tag_point": [5.9, 4.6] },
+    { "id": "pd3",  "kind": "sill",   "mark": "ПД-3",  "host_wall": "w-s-2", "width_mm": 1800, "tag_point": [4.8, 6.4] },
+    { "id": "pd35", "kind": "sill",   "mark": "ПД-35", "host_wall": "w-s-1", "width_mm": 1500, "tag_point": [1.6, 0.3] },
+    { "id": "pd27", "kind": "sill",   "mark": "ПД-27", "host_wall": "w-s-2", "width_mm": 1800, "tag_point": [4.8, 0.3] },
+    { "id": "pd31", "kind": "sill",   "mark": "ПД-31", "host_wall": "w-s-3", "width_mm": 1500, "tag_point": [8.0, 0.3] },
+    { "id": "vv1",  "kind": "vent",   "mark": "ВВ-1",  "host_wall": "w-i-3", "tag_point": [1.0, 4.5] }
+  ],
+  "level_marks": [
+    { "point": [3.3, 4.1], "elevation_m": 4.2 }
+  ],
+  "schedules": [
+    { "kind": "floors", "title": "Экспликация полов", "sheet": "АР-012" },
+    { "kind": "finish", "title": "Ведомость внутренней отделки", "sheet": "АР-013" },
+    { "kind": "fill",   "title": "Спецификация элементов заполнения проёмов", "sheet": "АР-014" },
+    { "kind": "vent",   "title": "Ведомость вытяжек", "sheet": "АР-016" }
+  ],
+  "titleblock": {
+    "project_name": "Многоквартирный жилой комплекс со встроенными помещениями и паркингом",
+    "block": "Блок 4",
+    "stage": "РП",
+    "sheet_number": "696_01_01_AR01_01",
+    "format": "А3А",
+    "gip": "Койчев С.",
+    "normcontrol": "Сыдыков Р.",
+    "executor": "Алтаева Ж.",
+    "company": "Must Team"
+  },
+  "_TODO": [
+    "Лоджии 2к=2.53(1.27), 1к=3.16(1.58) — занести как помещения с коэф. после сверки конвенции",
+    "Подтвердить нумерацию ПД (видны ПД-3/5/11/15/25/27/31/35/38/42) и Д у Must Team"
+  ]
+}

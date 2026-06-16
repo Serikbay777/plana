@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { getToken } from "@/lib/auth";
 import { createProject, listProjects, getProject, type Project } from "@/lib/projects";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
-  ringFromFeature, projectRingToLocal, localToWgs84, classifyParcel,
+  ringFromFeature, projectRingToLocal, localToWgs84, classifyParcel, annotateBuiltParcels,
   type BBox, type EnginePurpose, type ProjOrigin,
 } from "@/lib/gis";
 import {
@@ -38,12 +38,37 @@ type SelCtx = {
   name: string;
   designation: string;
   isSocial: boolean;
+  isHousing: boolean;    // назначение отвода допускает жильё
+  built: boolean;        // на отводе уже есть существующее здание (ГИС слой 15)
+  owner: string;         // Застройщик
+  target: string;        // Целевое назначение
+  stadia: string;        // Стадия освоения
+  cadastral: string;     // Кадастровый номер
+  address: string;       // Адрес отвода
+  facts: ParcelFacts;    // фактические ТЭП проекта из отвода (ГИС)
+  pdp: ParcelPdp;        // этажность по ПДП (план города)
   ringWgs84: [number, number][];
   local: [number, number][];
   width: number;
   height: number;
   proj: ProjOrigin;
   ctx: SiteContext;
+};
+
+// Фактические ТЭП проекта, записанные в самом отводе ГИС (первоисточник).
+type ParcelFacts = {
+  floorRaw: string;          // «этажность» как в ГИС («7, 9, 12»)
+  houseArea: number | null;  // площадь здания, м² (≈ общая/GFA)
+  livingArea: number | null; // жилая площадь, м²
+  apart: number | null;      // количество квартир
+  parking: number | null;    // машино-мест
+};
+
+// Этажность по ПДП (слой 7 «Здания ПДП») — план города, надёжный источник
+// этажности для участка, особенно когда у отвода своё поле floor пустое.
+type ParcelPdp = {
+  floorsMax: number | null;  // максимальная этажность по ПДП
+  floorsRaw: string;         // как в ГИС («9», «7,9,12»)
 };
 
 // Редактируемые пользователем параметры посадки (мгновенный пересчёт).
@@ -69,12 +94,15 @@ export default function MapPage() {
   const [hint, setHint] = useState("Приблизьте карту и кликните участок");
   const [sel, setSel] = useState<SelCtx | null>(null);
   const [params, setParams] = useState<EditParams | null>(null);
+  const [editParams, setEditParams] = useState(false); // параметры залочены по источнику, пока не «переопределить»
   const [zone, setZone] = useState("");
   const [result, setResult] = useState<ProjectValidationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [authNeeded, setAuthNeeded] = useState(false);
   const [gisLoading, setGisLoading] = useState(false);
+  const [onlyVacant, setOnlyVacant] = useState(false);
+  const [counts, setCounts] = useState<{ free: number; built: number; nondev: number } | null>(null);
   const [saved, setSaved] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -102,10 +130,13 @@ export default function MapPage() {
       const [parcels, neighbors, redlines] = await Promise.all([
         fetchGisParcels(bbox), fetchGisNeighbors(bbox), fetchGisRedLines(bbox),
       ]);
+      // отметить, какие отводы уже застроены (есть здание из слоя 15 внутри)
+      const c = annotateBuiltParcels(parcels, neighbors);
+      setCounts(c);
       setData("parcels", parcels);
       setData("neighbors", neighbors);
       setData("redlines", redlines);
-      setHint(`Участков в кадре: ${parcels.features.length}. Кликните участок.`);
+      setHint(`Участков в кадре: ${parcels.features.length} · свободных: ${c.free}. Кликните участок.`);
     } catch (e) {
       if (isAuthError(e)) { setAuthNeeded(true); setHint("Нужен вход в систему"); }
       else setHint("GIS недоступен: " + (e instanceof Error ? e.message : String(e)));
@@ -117,20 +148,53 @@ export default function MapPage() {
   const onParcelClick = useCallback(async (feat: GeoJSON.Feature) => {
     const ring = ringFromFeature(feat.geometry);
     if (!ring) return;
-    setData("selected", { type: "FeatureCollection", features: [feat] });
+    // Выделяем РОВНО одно кольцо — то, что уходит в ТЭП. Иначе MultiPolygon-отвод
+    // подсвечивал бы несколько участков, хотя считается только первый.
+    setData("selected", {
+      type: "FeatureCollection",
+      features: [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } }],
+    });
     setData("footprint", { type: "FeatureCollection", features: [] });
     const props = (feat.properties ?? {}) as Record<string, unknown>;
-    const floors = parseInt(String(props.floor ?? "").split(",")[0]) || 9;
+    const str = (k: string) => String(props[k] ?? "").trim();
+    // числа из ГИС идут «21 459,32» / «0,9» — убираем пробелы, запятую → точку
+    const numFrom = (k: string) => {
+      const n = parseFloat(str(k).replace(/\s/g, "").replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    };
     const klass = String(props.house_klass ?? "");
     const name = String(props.name ?? "Участок");
     const cls = classifyParcel(name);
-    setResult(null); setErr(null); setZone(""); setSavedMsg(null); setLoading(true);
+    // этажность из отвода: берём МАКС из перечня («7, 9, 12» → 12) как лимит
+    const floorRaw = str("floor");
+    const floorNums = (floorRaw.match(/\d+/g) ?? []).map(Number);
+    const otvodFloorsMax = floorNums.length ? Math.max(...floorNums) : null;
+    const facts: ParcelFacts = {
+      floorRaw,
+      houseArea: numFrom("house_area"),
+      livingArea: numFrom("living_area"),
+      apart: numFrom("apart"),
+      parking: numFrom("namber_parcing"),
+    };
+    const meta = {
+      built: props.built === true,
+      owner: str("owner"),
+      target: str("target"),
+      stadia: str("stadia"),
+      cadastral: str("cadastral_number"),
+      address: str("address"),
+      facts,
+    };
+    setResult(null); setErr(null); setZone(""); setSavedMsg(null); setEditParams(false); setLoading(true);
     try {
       const ctx = await importSiteContext(ring);
       const pr = projectRingToLocal(ring);
-      // дефолты параметров из отвода; ТЭП посчитает эффект ниже
+      // этажность по приоритету источника: отвод → ПДП (план) → дефолт
+      const pdpMax = ctx.pdp_floors_max ?? null;
+      const floors = otvodFloorsMax ?? pdpMax ?? 9;
+      const pdp: ParcelPdp = { floorsMax: pdpMax, floorsRaw: (ctx.pdp_floors ?? []).join(", ") };
       setSel({
-        name, designation: cls.label, isSocial: cls.isSocial, ringWgs84: ring,
+        name, designation: cls.label, isSocial: cls.isSocial, isHousing: cls.isHousing, ...meta, pdp, ringWgs84: ring,
         local: pr.local, width: pr.width, height: pr.height,
         proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx,
       });
@@ -156,7 +220,10 @@ export default function MapPage() {
     validateProject({
       site_width_m: sel.width, site_depth_m: sel.height, site_polygon: sel.local,
       floors: params.floors, housing_class: params.housing_class, purpose: params.purpose,
-      max_coverage_pct: params.max_coverage_pct,
+      // % застройки — это ЦЕЛЬ массинга (допущение), а не лимит ГПЗУ. max_coverage_pct
+      // (лимит для нормоконтроля) не шлём — реального ГПЗУ нет, иначе проверка
+      // сравнивала бы допущение само с собой.
+      coverage_target_pct: params.max_coverage_pct,
       studio_pct: 0.2, k1_pct: 0.4, k2_pct: 0.3, k3_pct: 0.1,
       red_lines: sel.ctx.red_lines, neighbors: sel.ctx.neighbor_buildings,
       functional_zone: sel.ctx.functional_zone,
@@ -197,7 +264,9 @@ export default function MapPage() {
       await createProject(sel.name.slice(0, 80) || "Участок", {
         kind: "posadka",
         parcel: {
-          name: sel.name, designation: sel.designation, isSocial: sel.isSocial,
+          name: sel.name, designation: sel.designation, isSocial: sel.isSocial, isHousing: sel.isHousing,
+          built: sel.built, owner: sel.owner, target: sel.target, stadia: sel.stadia,
+          cadastral: sel.cadastral, address: sel.address, facts: sel.facts, pdp: sel.pdp,
           ringWgs84: sel.ringWgs84, functionalZone: zone,
         },
         params,
@@ -220,7 +289,11 @@ export default function MapPage() {
     try {
       const p = await getProject(id);
       const d = p.params as Record<string, unknown> & {
-        kind?: string; parcel?: { name: string; designation: string; isSocial: boolean; ringWgs84: [number, number][]; functionalZone: string };
+        kind?: string; parcel?: {
+          name: string; designation: string; isSocial: boolean; isHousing?: boolean; ringWgs84: [number, number][]; functionalZone: string;
+          built?: boolean; owner?: string; target?: string; stadia?: string; cadastral?: string; address?: string;
+          facts?: ParcelFacts; pdp?: ParcelPdp;
+        };
         params?: EditParams; ctx?: SiteContext;
       };
       if (d?.kind !== "posadka" || !d.parcel?.ringWgs84) { setErr("Это не посадочный проект"); setLoading(false); return; }
@@ -229,6 +302,11 @@ export default function MapPage() {
       setZone(d.parcel.functionalZone ?? "");
       setSel({
         name: d.parcel.name, designation: d.parcel.designation, isSocial: !!d.parcel.isSocial,
+        isHousing: d.parcel.isHousing ?? !d.parcel.isSocial,
+        facts: d.parcel.facts ?? { floorRaw: "", houseArea: null, livingArea: null, apart: null, parking: null },
+        pdp: d.parcel.pdp ?? { floorsMax: null, floorsRaw: "" },
+        built: !!d.parcel.built, owner: d.parcel.owner ?? "", target: d.parcel.target ?? "",
+        stadia: d.parcel.stadia ?? "", cadastral: d.parcel.cadastral ?? "", address: d.parcel.address ?? "",
         ringWgs84: ring, local: pr.local, width: pr.width, height: pr.height,
         proj: { lon0: pr.lon0, lat0: pr.lat0, kx: pr.kx, ky: pr.ky }, ctx: d.ctx as SiteContext,
       });
@@ -283,10 +361,18 @@ export default function MapPage() {
         paint: { "fill-color": "#94a3b8", "fill-opacity": 0.35 } });
       map.addLayer({ id: "redlines-line", type: "line", source: "redlines",
         paint: { "line-color": "#dc2626", "line-width": 1.5, "line-dasharray": [2, 1] } });
+      // свободное пятно под застройку — зелёное; застроенное — серое;
+      // непрофильный отвод (щит/благоустройство/сети) — бледно-нейтральный
       map.addLayer({ id: "parcels-fill", type: "fill", source: "parcels",
-        paint: { "fill-color": "#3b82f6", "fill-opacity": 0.12 } });
+        paint: {
+          "fill-color": ["case", ["get", "built"], "#94a3b8", ["get", "developable"], "#22c55e", "#cbd5e1"],
+          "fill-opacity": ["case", ["get", "built"], 0.10, ["get", "developable"], 0.22, 0.05],
+        } });
       map.addLayer({ id: "parcels-line", type: "line", source: "parcels",
-        paint: { "line-color": "#2563eb", "line-width": 1 } });
+        paint: {
+          "line-color": ["case", ["get", "built"], "#64748b", ["get", "developable"], "#059669", "#cbd5e1"],
+          "line-width": 1,
+        } });
       map.addLayer({ id: "selected-line", type: "line", source: "selected",
         paint: { "line-color": "#16a34a", "line-width": 3 } });
       map.addLayer({ id: "footprint-fill", type: "fill", source: "footprint",
@@ -307,8 +393,20 @@ export default function MapPage() {
     return () => { map.remove(); mapRef.current = null; };
   }, [refresh, onParcelClick]);
 
+  // Тоггл «только свободные»: прячем застроенные отводы фильтром слоя.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    // «только свободные» = под застройку И без здания (прячем застроенные и непрофильные)
+    const filter = onlyVacant
+      ? (["all", ["!", ["get", "built"]], ["get", "developable"]] as maplibregl.FilterSpecification)
+      : null;
+    if (map.getLayer("parcels-fill")) map.setFilter("parcels-fill", filter);
+    if (map.getLayer("parcels-line")) map.setFilter("parcels-line", filter);
+  }, [onlyVacant, ready, counts]);
+
   const s = result?.summary;
-  const zoneState = zoneBuildability(zone, result);
+  const zoneState = zoneBuildability(zone, result, sel);
 
   return (
     <div className="flex h-screen w-screen">
@@ -320,6 +418,28 @@ export default function MapPage() {
         </div>
         <p className="mb-1 text-xs text-gray-500">{ready ? hint : "Загрузка карты…"}</p>
         {gisLoading && <p className="mb-2 text-xs text-blue-600">Загрузка участков из ГИС…</p>}
+
+        <label className="mb-2 flex items-center gap-2 text-xs text-gray-700">
+          <input
+            type="checkbox"
+            checked={onlyVacant}
+            onChange={(e) => setOnlyVacant(e.target.checked)}
+          />
+          <span>Только свободные участки под застройку</span>
+          {counts && (
+            <span className="ml-auto whitespace-nowrap text-gray-400">
+              <span className="text-emerald-600">●</span> {counts.free} ·{" "}
+              <span className="text-slate-400">●</span> {counts.built} ·{" "}
+              <span className="text-slate-300">●</span> {counts.nondev}
+            </span>
+          )}
+        </label>
+        <p className="mb-2 text-[10px] leading-tight text-gray-400">
+          «Свободно» (<span className="text-emerald-600">●</span>) = пятно под застройку без здания внутри.
+          <span className="text-slate-400"> ●</span> застроено,
+          <span className="text-slate-300"> ●</span> непрофильное (щит/благоустройство/сети).
+          Оценка по геометрии и назначению, не юр-статус — проверяйте по ГПЗУ.
+        </p>
 
         {authNeeded && (
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
@@ -348,26 +468,64 @@ export default function MapPage() {
 
         {sel && params && (
           <div className="mb-3 rounded-lg border border-gray-200 p-3">
-            <div className="font-medium">{sel.name}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-medium">{sel.name}</div>
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${sel.built ? "bg-gray-100 text-gray-600" : "bg-emerald-50 text-emerald-700"}`}>
+                {sel.built ? "застроен" : "свободен"}
+              </span>
+            </div>
             <div className="mt-1 text-xs">
               <span className="text-gray-400">назначение отвода: </span>{sel.designation}
             </div>
+            <dl className="mt-1 space-y-0.5 text-xs">
+              {sel.owner && <Row label="застройщик">{sel.owner}</Row>}
+              {sel.target && <Row label="целевое назначение">{sel.target}</Row>}
+              {sel.stadia && <Row label="стадия">{sel.stadia}</Row>}
+              {sel.cadastral && <Row label="кадастр">{sel.cadastral}</Row>}
+              {sel.address && <Row label="адрес">{sel.address}</Row>}
+            </dl>
             <div className={`mt-2 inline-block rounded px-2 py-0.5 text-xs ${zoneState.cls}`}>
               {zoneState.label}
             </div>
-            {sel.isSocial && (
-              <div className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">
-                ⚠ Отвод выделен под соцобъект — жилая застройка тут неприменима.
-                ТЭП ниже показаны как гипотеза «если бы здесь строили ЖК».
+            {!sel.isHousing && (
+              <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                Назначение отвода — не жильё. ТЭП ниже показаны как гипотеза
+                «если бы здесь строили ЖК».
+              </div>
+            )}
+
+            {(sel.facts.floorRaw || sel.facts.houseArea != null || sel.facts.apart != null || sel.pdp.floorsRaw) && (
+              <div className="mt-2 rounded border border-emerald-100 bg-emerald-50/50 p-2 text-xs">
+                <div className="mb-1 font-medium text-emerald-800">Факт по отводу / ПДП (ГИС)</div>
+                <dl className="space-y-0.5">
+                  {sel.facts.floorRaw && <Row label="этажность (отвод)">{sel.facts.floorRaw}</Row>}
+                  {sel.pdp.floorsMax != null && (
+                    <Row label="этажность по ПДП">до {sel.pdp.floorsMax} эт.</Row>
+                  )}
+                  {sel.facts.houseArea != null && <Row label="площадь здания">{fmt(sel.facts.houseArea)} м²</Row>}
+                  {sel.facts.livingArea != null && <Row label="жилая площадь">{fmt(sel.facts.livingArea)} м²</Row>}
+                  {sel.facts.apart != null && <Row label="квартир">{sel.facts.apart}</Row>}
+                  {sel.facts.parking != null && <Row label="парковка">{sel.facts.parking} м/м</Row>}
+                  {sel.facts.houseArea != null && s && s.site_area_m2 > 0 && (
+                    <Row label="реальный КИТ">{(sel.facts.houseArea / s.site_area_m2).toFixed(2)}</Row>
+                  )}
+                </dl>
               </div>
             )}
 
             <div className="mt-3 space-y-2 border-t border-gray-100 pt-2">
-              <div className="text-xs font-medium text-gray-500">Параметры (меняй → пересчёт)</div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-gray-500">Параметры посадки</span>
+                <label className="flex items-center gap-1 text-[11px] text-gray-500">
+                  <input type="checkbox" checked={editParams} onChange={(e) => setEditParams(e.target.checked)} />
+                  переопределить
+                </label>
+              </div>
               <label className="flex items-center justify-between gap-2">
                 <span className="text-xs">Класс жилья</span>
                 <select
-                  className="rounded border border-gray-300 px-1 py-0.5 text-xs"
+                  disabled={!editParams}
+                  className="rounded border border-gray-300 px-1 py-0.5 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                   value={params.housing_class}
                   onChange={(e) => setParams({ ...params, housing_class: e.target.value })}
                 >
@@ -375,23 +533,35 @@ export default function MapPage() {
                 </select>
               </label>
               <label className="flex items-center justify-between gap-2">
-                <span className="text-xs">Этажность</span>
+                <span className="text-xs">
+                  Этажность {sel.facts.floorRaw ? <Tag t="отвод" /> : sel.pdp.floorsMax != null ? <Tag t="ПДП" /> : <Tag t="дефолт" />}
+                </span>
                 <input
-                  type="number" min={1} max={60}
-                  className="w-20 rounded border border-gray-300 px-1 py-0.5 text-right text-xs"
+                  type="number" min={1} max={60} disabled={!editParams}
+                  className="w-20 rounded border border-gray-300 px-1 py-0.5 text-right text-xs disabled:bg-gray-50 disabled:text-gray-500"
                   value={params.floors}
                   onChange={(e) => setParams({ ...params, floors: Math.max(1, +e.target.value || 1) })}
                 />
               </label>
               <label className="flex items-center justify-between gap-2">
-                <span className="text-xs">% застройки (лимит)</span>
+                <span className="text-xs">% застройки <Tag t="допущение" /></span>
                 <input
-                  type="number" min={1} max={100}
-                  className="w-20 rounded border border-gray-300 px-1 py-0.5 text-right text-xs"
+                  type="number" min={1} max={100} disabled={!editParams}
+                  className="w-20 rounded border border-gray-300 px-1 py-0.5 text-right text-xs disabled:bg-gray-50 disabled:text-gray-500"
                   value={params.max_coverage_pct}
                   onChange={(e) => setParams({ ...params, max_coverage_pct: Math.min(100, Math.max(1, +e.target.value || 1)) })}
                 />
               </label>
+              {!editParams && (
+                <p className="text-[10px] leading-tight text-gray-400">
+                  Этажность — {sel.facts.floorRaw
+                    ? `из отвода (${sel.facts.floorRaw})`
+                    : sel.pdp.floorsMax != null
+                      ? `по ПДП (до ${sel.pdp.floorsMax} эт., макс из плановых зданий)`
+                      : "дефолт (нет в отводе/ПДП)"}, не выдумана. % застройки — допущение
+                  (нет в ГИС/Градрегламенте, берётся из ГПЗУ). Включи «переопределить» для what-if.
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -458,6 +628,21 @@ function isAuthError(e: unknown): boolean {
   return status === 401 || /not authenticated|401|unauthor/i.test(m);
 }
 
+// Строка «ярлык: значение» для данных отвода из ГИС.
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-2">
+      <dt className="shrink-0 text-gray-400">{label}:</dt>
+      <dd className="min-w-0 break-words">{children}</dd>
+    </div>
+  );
+}
+
+// Мелкий бейдж источника параметра (отвод/ПДП/допущение).
+function Tag({ t }: { t: string }) {
+  return <span className="ml-1 rounded bg-gray-100 px-1 text-[9px] align-middle text-gray-500">{t}</span>;
+}
+
 // Бейдж происхождения цифры: gis (из карты) / calc (расчёт) / norm (норматив).
 function Src({ k }: { k: "gis" | "calc" | "norm" }) {
   const map = {
@@ -487,8 +672,19 @@ function sevCls(sev: string): string {
   return "bg-blue-50 text-blue-700";
 }
 
-function zoneBuildability(zone: string, res: ProjectValidationResponse | null): { label: string; cls: string } {
+// Один согласованный вердикт. Назначение САМОГО отвода важнее функциональной зоны:
+// соцобъект/нежилое — жильё неуместно, даже если зона «Жилая». Иначе — статус по зоне.
+function zoneBuildability(
+  zone: string,
+  res: ProjectValidationResponse | null,
+  sel: SelCtx | null,
+): { label: string; cls: string } {
   if (!res) return { label: "—", cls: "bg-gray-100 text-gray-500" };
+  const z = zone ? `зона «${zone}»` : "зона не указана";
+  if (sel?.isSocial)
+    return { label: `Отвод под соцобъект — жильё неприменимо (${z})`, cls: "bg-red-100 text-red-700" };
+  if (sel && !sel.isHousing)
+    return { label: `Отвод под «${sel.designation}» — не жильё (${z})`, cls: "bg-amber-100 text-amber-700" };
   const v = res.violations.find((x) => x.rule.startsWith("zoning"));
   if (v) return { label: `Зона «${zone}»: уточните ПДП`, cls: "bg-amber-100 text-amber-700" };
   if (zone) return { label: `Зона «${zone}»: жильё ОК`, cls: "bg-green-100 text-green-700" };

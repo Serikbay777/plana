@@ -90,9 +90,10 @@ def marketing_to_project(inputs: MarketingInputs) -> Project:
     if not clipped.is_empty and clipped.area > 0:
         building_footprint = _largest_polygon(clipped)
 
-    # (2) Ограничить пятно по проценту застройки (лимит из ПДП/ГПЗУ). Если
-    # запроектированное пятно больше нормы — ужать к центроиду до нормы.
-    cov = inputs.max_coverage_pct
+    # (2) Ограничить пятно по проценту застройки. Цель массинга = наше допущение
+    # (coverage_target_pct); откат на max_coverage_pct ради обратной совместимости.
+    # Это НЕ нормоконтроль — лимит ГПЗУ проверяется отдельно (validators/coverage).
+    cov = inputs.coverage_target_pct or inputs.max_coverage_pct
     if cov and 0 < cov < 100:
         max_area = site_boundary.area * cov / 100.0
         if building_footprint.area > max_area > 0:

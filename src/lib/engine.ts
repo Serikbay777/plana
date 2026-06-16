@@ -257,10 +257,11 @@ export type VisualizeFromInputsRequest = {
   insolation_priority?: boolean;
   insolation_min_hours?: number;
   // ГПЗУ / ПДП
-  max_coverage_pct?: number;
+  max_coverage_pct?: number;   // ЛИМИТ застройки из ГПЗУ (нормоконтроль); не задан → проверка молчит
   max_height_m?: number;
   max_far?: number;            // КИТ из ПДП/ГПЗУ (0 = не задан)
   max_floors?: number;         // предельная этажность из ПДП/ГПЗУ
+  coverage_target_pct?: number; // цель массинга по % застройки (допущение, не лимит)
   // класс жилья (стандарт/комфорт/комфорт+/бизнес/премиум | I-IV | эконом-элит)
   housing_class?: string | null;
   quality?: "low" | "medium" | "high";
@@ -996,6 +997,8 @@ export type SiteContext = {
   roads: number[][][];
   red_lines: number[][][];
   functional_zone: string;
+  pdp_floors?: string[];          // этажность по ПДП (как в ГИС)
+  pdp_floors_max?: number | null; // максимальная этажность по ПДП
   counts: Record<string, number>;
 };
 

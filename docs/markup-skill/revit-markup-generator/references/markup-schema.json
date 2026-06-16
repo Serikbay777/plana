@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://plana.local/schemas/revit-markup-v1.json",
+  "title": "Revit Markup — СПДС оформление АР (типовой этаж)",
+  "description": "Структурированное описание МАРКИРОВКИ плана АР, которое C#-исполнитель (Revit add-in / MCP) применяет к существующей модели: теги помещений, марки квартир, марки проёмов (ОК/Д/ПД/ВВ), отметки уровня, ведомости и штамп. Геометрию НЕ создаёт — только аннотации.",
+  "type": "object",
+  "required": ["metadata", "units", "room_tags", "apartments", "openings", "titleblock"],
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["section", "stage", "convention_id"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string" },
+        "section": { "type": "string", "enum": ["AR"], "description": "Раздел проекта" },
+        "stage": { "type": "string", "enum": ["RP", "P"], "description": "РП — рабочий проект, P — проект" },
+        "convention_id": { "type": "string", "description": "Профиль нумерации/штампа фирмы (Must Team)" },
+        "level": { "type": "string", "description": "Имя этажа Revit, напр. «2 этаж»" },
+        "elevation_m": { "type": "number", "description": "Отметка этажа, м (напр. 4.200)" },
+        "prompt": { "type": "string", "description": "Исходный запрос пользователя (для воспроизводимости)" }
+      }
+    },
+    "units": { "type": "string", "enum": ["mm", "m"], "default": "mm" },
+    "coefficients": {
+      "type": "object",
+      "description": "КЗ-коэффициенты площадей (СНиП РК). По умолчанию ориентировочные — уточняются Must Team.",
+      "additionalProperties": false,
+      "properties": {
+        "balcony": { "type": "number", "default": 0.3 },
+        "loggia": { "type": "number", "default": 0.5 },
+        "terrace": { "type": "number", "default": 0.3 }
+      }
+    },
+    "room_tags": { "type": "array", "items": { "$ref": "#/$defs/room_tag" } },
+    "apartments": { "type": "array", "items": { "$ref": "#/$defs/apartment" } },
+    "openings": { "type": "array", "items": { "$ref": "#/$defs/opening" } },
+    "level_marks": { "type": "array", "items": { "$ref": "#/$defs/level_mark" } },
+    "schedules": { "type": "array", "items": { "$ref": "#/$defs/schedule" } },
+    "titleblock": { "$ref": "#/$defs/titleblock" },
+    "_TODO": { "type": "array", "items": { "type": "string" }, "description": "Открытые вопросы к Must Team (нумерация/штамп/имена/коэф.)" }
+  },
+  "$defs": {
+    "point": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "description": "[x, y] в единицах units" },
+    "room_tag": {
+      "type": "object",
+      "required": ["room_id", "name", "area_m2", "tag_point"],
+      "additionalProperties": false,
+      "properties": {
+        "room_id": { "type": "string", "description": "Revit ElementId помещения (или временный id)" },
+        "name": { "type": "string", "description": "Наименование из словаря Must Team (Гостиная, Кухня-ниша, С/у, Прихожая, Лифтовой холл…)" },
+        "area_m2": { "type": "number" },
+        "tag_point": { "$ref": "#/$defs/point", "description": "Точка тега — центроид помещения (анти-наложение)" },
+        "apartment": { "type": "string", "description": "Номер квартиры, если помещение в составе квартиры" }
+      }
+    },
+    "apartment": {
+      "type": "object",
+      "required": ["number", "type", "living_m2", "total_m2"],
+      "additionalProperties": false,
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "type": { "type": "string", "enum": ["studio", "1k", "2k", "3k", "4k"] },
+        "living_m2": { "type": "number", "description": "Жилая площадь" },
+        "total_m2": { "type": "number", "description": "Общая площадь (без коэф.)" },
+        "total_coeff_m2": { "type": "number", "description": "Общая с КЗ-коэффициентами (балкон/лоджия)" },
+        "tag_point": { "$ref": "#/$defs/point" }
+      }
+    },
+    "opening": {
+      "type": "object",
+      "required": ["id", "kind", "mark", "host_wall"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "description": "Revit ElementId проёма (или временный id)" },
+        "kind": { "type": "string", "enum": ["window", "door", "sill", "vent"], "description": "window→ОК, door→Д, sill→ПД, vent→ВВ" },
+        "mark": { "type": "string", "pattern": "^(ОК|Д|ПД|ВВ)-\\d+$", "description": "Марка по конвенции Must Team" },
+        "host_wall": { "type": "string", "description": "ElementId стены-носителя" },
+        "width_mm": { "type": "number" },
+        "height_mm": { "type": "number" },
+        "tag_point": { "$ref": "#/$defs/point" }
+      }
+    },
+    "level_mark": {
+      "type": "object",
+      "required": ["point", "elevation_m"],
+      "additionalProperties": false,
+      "properties": {
+        "point": { "$ref": "#/$defs/point" },
+        "elevation_m": { "type": "number" }
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "required": ["kind", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["floors", "finish", "fill", "vent"], "description": "экспликация полов / ведомость отделки / спецификация заполнения / ведомость вытяжек" },
+        "title": { "type": "string" },
+        "sheet": { "type": "string", "description": "Лист размещения, напр. АР-012" }
+      }
+    },
+    "titleblock": {
+      "type": "object",
+      "required": ["project_name", "stage", "sheet_number"],
+      "additionalProperties": false,
+      "properties": {
+        "project_name": { "type": "string" },
+        "block": { "type": "string" },
+        "stage": { "type": "string" },
+        "sheet_number": { "type": "string", "description": "напр. 696_01_01_AR01_01" },
+        "format": { "type": "string", "description": "напр. А3А" },
+        "gip": { "type": "string" },
+        "normcontrol": { "type": "string" },
+        "executor": { "type": "string" },
+        "company": { "type": "string", "default": "Must Team" }
+      }
+    }
+  }
+}
