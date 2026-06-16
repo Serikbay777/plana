@@ -8,7 +8,9 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   ringFromFeature, projectRingToLocal, localToWgs84, classifyParcel, annotateBuiltParcels,
+  categorize, CATEGORIES, CATEGORY_BY_KEY, OWNER_TYPES,
   type BBox, type EnginePurpose, type ProjOrigin,
+  type CategoryKey, type OwnerTypeKey, type ParcelCounts,
 } from "@/lib/gis";
 import {
   fetchGisParcels, fetchGisNeighbors, fetchGisRedLines,
@@ -101,8 +103,14 @@ export default function MapPage() {
   const [err, setErr] = useState<string | null>(null);
   const [authNeeded, setAuthNeeded] = useState(false);
   const [gisLoading, setGisLoading] = useState(false);
-  const [onlyVacant, setOnlyVacant] = useState(false);
-  const [counts, setCounts] = useState<{ free: number; built: number; nondev: number } | null>(null);
+  // Фильтр участков: категория ПДП (цвет) + статус застройки + тип владельца + поиск.
+  const [activeCats, setActiveCats] = useState<Set<CategoryKey>>(
+    () => new Set(CATEGORIES.map((c) => c.key)),
+  );
+  const [statusFilter, setStatusFilter] = useState<"all" | "free" | "built">("all");
+  const [ownerTypeFilter, setOwnerTypeFilter] = useState<"all" | OwnerTypeKey>("all");
+  const [ownerSearch, setOwnerSearch] = useState("");
+  const [counts, setCounts] = useState<ParcelCounts | null>(null);
   const [saved, setSaved] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -361,17 +369,20 @@ export default function MapPage() {
         paint: { "fill-color": "#94a3b8", "fill-opacity": 0.35 } });
       map.addLayer({ id: "redlines-line", type: "line", source: "redlines",
         paint: { "line-color": "#dc2626", "line-width": 1.5, "line-dasharray": [2, 1] } });
-      // свободное пятно под застройку — зелёное; застроенное — серое;
-      // непрофильный отвод (щит/благоустройство/сети) — бледно-нейтральный
+      // цвет участка = категория ПДП (по name); застроенные приглушены прозрачностью
+      const byCat = (fallback: string): maplibregl.DataDrivenPropertyValueSpecification<string> =>
+        ["match", ["get", "category"],
+          ...CATEGORIES.flatMap((c) => [c.key, c.color]), fallback] as never;
       map.addLayer({ id: "parcels-fill", type: "fill", source: "parcels",
         paint: {
-          "fill-color": ["case", ["get", "built"], "#94a3b8", ["get", "developable"], "#22c55e", "#cbd5e1"],
-          "fill-opacity": ["case", ["get", "built"], 0.10, ["get", "developable"], 0.22, 0.05],
+          "fill-color": byCat("#d1d5db"),
+          "fill-opacity": ["case", ["get", "built"], 0.14, 0.32],
         } });
       map.addLayer({ id: "parcels-line", type: "line", source: "parcels",
         paint: {
-          "line-color": ["case", ["get", "built"], "#64748b", ["get", "developable"], "#059669", "#cbd5e1"],
+          "line-color": byCat("#d1d5db"),
           "line-width": 1,
+          "line-opacity": ["case", ["get", "built"], 0.45, 0.85],
         } });
       map.addLayer({ id: "selected-line", type: "line", source: "selected",
         paint: { "line-color": "#16a34a", "line-width": 3 } });
@@ -393,17 +404,27 @@ export default function MapPage() {
     return () => { map.remove(); mapRef.current = null; };
   }, [refresh, onParcelClick]);
 
-  // Тоггл «только свободные»: прячем застроенные отводы фильтром слоя.
+  // Фильтр слоя участков: категории + статус застройки + тип владельца + поиск.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
-    // «только свободные» = под застройку И без здания (прячем застроенные и непрофильные)
-    const filter = onlyVacant
-      ? (["all", ["!", ["get", "built"]], ["get", "developable"]] as maplibregl.FilterSpecification)
-      : null;
+    const clauses: unknown[] = ["all"];
+    // категории: показываем только отмеченные (если выбраны не все)
+    if (activeCats.size < CATEGORIES.length) {
+      clauses.push(["in", ["get", "category"], ["literal", Array.from(activeCats)]]);
+    }
+    // статус застройки
+    if (statusFilter === "free") clauses.push(["all", ["!", ["get", "built"]], ["get", "developable"]]);
+    else if (statusFilter === "built") clauses.push(["get", "built"]);
+    // тип владельца
+    if (ownerTypeFilter !== "all") clauses.push(["==", ["get", "ownerType"], ownerTypeFilter]);
+    // поиск по застройщику (подстрока, без регистра)
+    const needle = ownerSearch.trim().toLowerCase();
+    if (needle) clauses.push(["in", needle, ["downcase", ["coalesce", ["get", "owner"], ""]]]);
+    const filter = (clauses.length > 1 ? clauses : null) as maplibregl.FilterSpecification | null;
     if (map.getLayer("parcels-fill")) map.setFilter("parcels-fill", filter);
     if (map.getLayer("parcels-line")) map.setFilter("parcels-line", filter);
-  }, [onlyVacant, ready, counts]);
+  }, [activeCats, statusFilter, ownerTypeFilter, ownerSearch, ready, counts]);
 
   const s = result?.summary;
   const zoneState = zoneBuildability(zone, result, sel);
@@ -419,27 +440,86 @@ export default function MapPage() {
         <p className="mb-1 text-xs text-gray-500">{ready ? hint : "Загрузка карты…"}</p>
         {gisLoading && <p className="mb-2 text-xs text-blue-600">Загрузка участков из ГИС…</p>}
 
-        <label className="mb-2 flex items-center gap-2 text-xs text-gray-700">
-          <input
-            type="checkbox"
-            checked={onlyVacant}
-            onChange={(e) => setOnlyVacant(e.target.checked)}
-          />
-          <span>Только свободные участки под застройку</span>
-          {counts && (
-            <span className="ml-auto whitespace-nowrap text-gray-400">
-              <span className="text-emerald-600">●</span> {counts.free} ·{" "}
-              <span className="text-slate-400">●</span> {counts.built} ·{" "}
-              <span className="text-slate-300">●</span> {counts.nondev}
-            </span>
-          )}
-        </label>
-        <p className="mb-2 text-[10px] leading-tight text-gray-400">
-          «Свободно» (<span className="text-emerald-600">●</span>) = пятно под застройку без здания внутри.
-          <span className="text-slate-400"> ●</span> застроено,
-          <span className="text-slate-300"> ●</span> непрофильное (щит/благоустройство/сети).
-          Оценка по геометрии и назначению, не юр-статус — проверяйте по ГПЗУ.
-        </p>
+        {/* Фильтр участков: категория ПДП (цвет) + статус застройки + владелец */}
+        <details open className="mb-3 rounded-lg border border-gray-200">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-700">
+            Фильтр участков{counts ? ` · в кадре ${counts.total}` : ""}
+          </summary>
+          <div className="space-y-2 border-t border-gray-100 px-3 py-2">
+            {/* статус застройки */}
+            <div className="flex gap-1">
+              {([["all", "Все"], ["free", "Свободные"], ["built", "Застроенные"]] as const).map(([k, l]) => (
+                <button
+                  key={k}
+                  onClick={() => setStatusFilter(k)}
+                  className={`rounded px-2 py-0.5 text-[11px] ${statusFilter === k ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                >
+                  {l}{counts && k === "free" ? ` ${counts.free}` : counts && k === "built" ? ` ${counts.built}` : ""}
+                </button>
+              ))}
+            </div>
+
+            {/* категории ПДП — цвет + чекбокс + счётчик */}
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[11px] font-medium text-gray-500">Категории по ПДП</span>
+                <span className="flex gap-2 text-[10px]">
+                  <button onClick={() => setActiveCats(new Set(CATEGORIES.map((c) => c.key)))} className="text-blue-600 hover:underline">все</button>
+                  <button onClick={() => setActiveCats(new Set())} className="text-blue-600 hover:underline">очистить</button>
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                {CATEGORIES.map((c) => {
+                  const cc = counts?.byCategory[c.key];
+                  return (
+                    <label key={c.key} className="flex items-center gap-2 text-[11px] text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={activeCats.has(c.key)}
+                        onChange={() => setActiveCats((prev) => {
+                          const n = new Set(prev);
+                          if (n.has(c.key)) n.delete(c.key); else n.add(c.key);
+                          return n;
+                        })}
+                      />
+                      <span className="inline-block h-3 w-3 shrink-0 rounded-sm border border-black/10" style={{ backgroundColor: c.color }} />
+                      <span className="min-w-0 flex-1 truncate" title={c.label}>{c.label}</span>
+                      <span className="shrink-0 tabular-nums text-gray-400">{cc?.total ?? 0}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* владелец (застройщик): тип + поиск по подстроке */}
+            <div className="border-t border-gray-100 pt-2">
+              <div className="mb-1 text-[11px] font-medium text-gray-500">Владелец (застройщик)</div>
+              <select
+                value={ownerTypeFilter}
+                onChange={(e) => setOwnerTypeFilter(e.target.value as "all" | OwnerTypeKey)}
+                className="mb-1 w-full rounded border border-gray-300 px-1 py-0.5 text-xs"
+              >
+                <option value="all">Все типы{counts ? ` (${counts.total})` : ""}</option>
+                {OWNER_TYPES.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label}{counts?.byOwner[o.key] ? ` (${counts.byOwner[o.key]})` : ""}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={ownerSearch}
+                onChange={(e) => setOwnerSearch(e.target.value)}
+                placeholder="Поиск по застройщику…"
+                className="w-full rounded border border-gray-300 px-1.5 py-0.5 text-xs"
+              />
+            </div>
+
+            <p className="text-[10px] leading-tight text-gray-400">
+              Цвет = категория по «Наименованию отвода» (ПДП). Бледная заливка — участок уже застроен.
+              Оценка по имени/геометрии, не юр-статус — проверяйте по ГПЗУ.
+            </p>
+          </div>
+        </details>
 
         {authNeeded && (
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
@@ -474,7 +554,12 @@ export default function MapPage() {
                 {sel.built ? "застроен" : "свободен"}
               </span>
             </div>
-            <div className="mt-1 text-xs">
+            <div className="mt-1 flex items-center gap-1.5 text-xs">
+              <span
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm border border-black/10"
+                style={{ backgroundColor: CATEGORY_BY_KEY[categorize(sel.name)].color }}
+                title={CATEGORY_BY_KEY[categorize(sel.name)].label}
+              />
               <span className="text-gray-400">назначение отвода: </span>{sel.designation}
             </div>
             <dl className="mt-1 space-y-0.5 text-xs">

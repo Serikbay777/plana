@@ -64,6 +64,131 @@ export function classifyParcel(name: string): ParcelClass {
   return { purpose: "residential", label: "Назначение не распознано", isHousing: true, isSocial: false };
 }
 
+// ─── Категории отводов по ПДП (для окраски и фильтра карты) ──────────────────
+// В данных Астаны (gis.esaulet.kz) НЕТ заполненного поля «функциональное
+// назначение» (function почти пустое, target = название ЖК, id_style = мусор),
+// поэтому категория выводится парсингом «Наименование отвода» (name) — как и
+// classifyParcel. 7 категорий + fallback ложатся на 4 зоны генплана
+// (Жилая/Коммерческая/Социальная/Иная). Цвета — для слоя parcels на карте.
+
+export type CategoryKey =
+  | "housing_mkd" | "housing_izh" | "mixed" | "commercial"
+  | "social" | "industrial" | "infra" | "other";
+
+export type CategoryDef = {
+  key: CategoryKey;
+  label: string;        // полная подпись для легенды
+  color: string;        // цвет заливки участка
+  developable: boolean; // пятно под застройку (а не сеть/реклама/улица)
+};
+
+// Порядок = порядок в легенде.
+export const CATEGORIES: CategoryDef[] = [
+  { key: "housing_mkd", label: "Жильё многоквартирное (ЖК/МКД)", color: "#f59e0b", developable: true },
+  { key: "housing_izh", label: "Жильё ИЖС / малоэтажное", color: "#facc15", developable: true },
+  { key: "mixed", label: "Многофункциональное (МФК)", color: "#a855f7", developable: true },
+  { key: "commercial", label: "Коммерция / бизнес", color: "#ef4444", developable: true },
+  { key: "social", label: "Соцобъекты (образование/мед/спорт)", color: "#06b6d4", developable: true },
+  { key: "industrial", label: "Производство / коммунальное", color: "#4f46e5", developable: true },
+  { key: "infra", label: "Инфраструктура / нестационарные", color: "#94a3b8", developable: false },
+  { key: "other", label: "Прочее / не распознано", color: "#d1d5db", developable: true },
+];
+
+export const CATEGORY_BY_KEY: Record<CategoryKey, CategoryDef> =
+  Object.fromEntries(CATEGORIES.map((c) => [c.key, c])) as Record<CategoryKey, CategoryDef>;
+
+// ВАЖНО: в JS `\b` опирается на ASCII-\w и НЕ работает с кириллицей
+// («\bофис», «\bТОО\b» молча не матчатся). Поэтому границы слова задаём
+// Unicode-aware lookaround по буквам. w() — целое слово, wl() — граница слева.
+const _L = "а-яёa-z"; // буквы (regexp с флагом i)
+const _NB = `(?<![${_L}])`;
+const _NA = `(?![${_L}])`;
+const w = (t: string) => `${_NB}${t}${_NA}`;
+const wl = (t: string) => `${_NB}${t}`;
+const rx = (parts: string[]) => new RegExp(parts.join("|"), "i");
+
+// Нестационарные/инфраструктура/сети/улицы/реклама — НЕ пятно под застройку.
+// Проверяется ПЕРВОЙ: «нестационарный торговый объект» — это киоск, не коммерция.
+const RX_INFRA = rx([
+  "нестационарн", "мобильн", "реклам", "информацион", "навигацион", "газетн", "цветочн",
+  "киоск", "павильон", "остановочн", "благоустро", "озеленени", wl("сквер"), "бульвар",
+  "набережн", wl("мост"), "пешеходн", "велосипедн", "велодорож", w("лрт"), "\\blrt\\b",
+  wl("улиц"), wl("ул\\."), "проспект", wl("дорог"), "проезд", "магистрал", "развязк",
+  "путепровод", w("сет[ьие]"), "инженерн", "водоснаб", "водопровод", "канализ", "теплоснаб",
+  "теплосет", "электроснаб", "электросет", "газоснаб", "газопровод", w("кнс"), "насосн",
+  "расширение территор", "ограждени", wl("навес"), "памятник", "монумент", wl("стел"),
+  "кладбищ", "временн",
+]);
+const RX_SOCIAL = rx([
+  "школ", "детс", "ясли", "больниц", "поликлин", "клиник", "амбулатор", "медиц", "госпит",
+  "спорт", "фитнес", w("фок"), "бассейн", "стадион", "футбол", "манеж", "универ", "институт",
+  "колледж", wl("учеб"), "образоват", "культур", "музе", "театр", "библиотек", "молод[её]жн",
+]);
+const RX_IZH = rx(["индивидуальн", "коттедж", "малоэтажн", "усадебн", "садоводств", wl("дач"), "таунхаус", "приусадебн"]);
+const RX_MIXED = rx(["многофункц", w("мфк"), w("мфжк"), "смешанн"]);
+// жил[а-яё]* ловит жилой/жилые/жилых/жилая/жилому + комплекс/дом/застройка/массив.
+const RX_MKD = rx(["многокварт", "жил[а-яё]*\\s*(комплекс|дом|здани|застройк|массив)", w("жк"), "общежит", "апарт"]);
+const RX_COMMERCIAL = rx([
+  "гостиниц", wl("отел"), "гостев", "торгов", wl("офис"), "бизнес[\\s-]?центр", "магазин",
+  w("тц"), w("трц"), "админист", w("азс"), "автозаправ", "автогаз", "придорожн", wl("склад"),
+  "логист", w("сто"), "автосервис", "автомойк", "автокомплекс", "рынок", "базар", wl("кафе"),
+  "ресторан", "развлекат", "выставочн", "делов", "обслуживан", "паркинг", "банн", wl("баня"),
+  "салон", "фудкорт", "фаст-?фуд", "дом\\s*быта",
+]);
+const RX_INDUSTRIAL = rx([
+  "производ", wl("завод"), "фабрик", wl("цех"), "промышлен", "хозяйственно-бытов", "очистн",
+  "котельн", "подстанц", "трансформатор",
+]);
+
+/** Категория отвода по имени (+ целевое назначение) для окраски/фильтра карты.
+ * Порядок приоритетов: инфра-маркеры → МФК → ИЖС → МКД → соц → коммерция → пром.
+ * Жильё проверяется ДО соц/коммерции, чтобы «ЖК со встроенным детсадом» был МКД,
+ * а не соцобъектом (назначение отвода — жилой комплекс). */
+export function categorize(name: string, target = ""): CategoryKey {
+  const s = `${name} ${target}`.toLowerCase();
+  if (RX_INFRA.test(s)) return "infra";
+  if (RX_MIXED.test(s)) return "mixed";
+  if (RX_IZH.test(s)) return "housing_izh";
+  if (RX_MKD.test(s)) return "housing_mkd";
+  if (RX_SOCIAL.test(s)) return "social";
+  if (RX_COMMERCIAL.test(s)) return "commercial";
+  if (RX_INDUSTRIAL.test(s)) return "industrial";
+  return "other";
+}
+
+// ─── Тип владельца («кому принадлежит», поле owner = «Застройщик») ────────────
+// В данных owner — это 2000+ преимущественно физлиц (Ф.И.О.) + компании/госорганы.
+// Группируем в 4 типа для фильтра. Поиск по подстроке — отдельно (см. карту).
+export type OwnerTypeKey = "individual" | "company" | "gov" | "unknown";
+
+export const OWNER_TYPES: { key: OwnerTypeKey; label: string }[] = [
+  { key: "individual", label: "Физлицо" },
+  { key: "company", label: "Компания" },
+  { key: "gov", label: "Госорган" },
+  { key: "unknown", label: "Не указан / прочее" },
+];
+
+const RX_GOV = rx([
+  w("гу"), w("кгу"), w("кгкп"), w("гкп"), w("ргп"), w("кгп"), "акимат", "маслихат",
+  "министерств", "департамент", "управлен", w("отдел"), "госуд", w("сэс"), "учрежден",
+]);
+const RX_COMPANY = rx([
+  w("тоо"), w("ао"), w("оо"), w("ип"), w("пк"), w("оф"), w("кск"), "компани", "корпораци",
+  "холдинг", "групп", "\\bgroup\\b", "\\bltd\\b", "\\bllp\\b", "\\bllc\\b", "девелоп", "инвест",
+  "строй", "курылыс", "құрылыс", "[\"«»]",
+]);
+const RX_FIO = /[а-яёұқөғүһәі]+\s+[а-яёұқөғүһәі]\.\s?[а-яёұқөғүһәі]?\.?/i; // «Фамилия И.О.»
+
+/** Тип владельца отвода: физлицо / компания / госорган / не определён. */
+export function ownerType(owner: string): OwnerTypeKey {
+  const s = (owner || "").trim().toLowerCase();
+  if (!s) return "unknown";
+  if (RX_GOV.test(s)) return "gov";
+  if (RX_COMPANY.test(s)) return "company";
+  if (RX_FIO.test(s)) return "individual";
+  return "unknown";
+}
+
 /** Достать внешнее кольцо [[lon,lat],...] из GeoJSON Polygon/MultiPolygon. */
 export function ringFromFeature(geom: GeoJSON.Geometry | null): [number, number][] | null {
   if (!geom) return null;
@@ -122,22 +247,32 @@ export function isDevelopableParcel(name: string, target = ""): boolean {
   return true;                                  // не распознано — не прячем
 }
 
+export type ParcelCounts = {
+  total: number;
+  free: number; built: number; nondev: number;
+  byCategory: Record<string, { total: number; free: number; built: number }>;
+  byOwner: Record<string, number>;
+};
+
 /**
  * Пометить отводы свойствами `built` (есть ли внутри существующее здание — слой
- * ГИС «Существующие здания») и `developable` (пятно под застройку по назначению).
- * Готового слоя «свободные участки» в API нет — выводим геометрией + назначением.
+ * ГИС «Существующие здания»), `developable` (пятно под застройку), `category`
+ * (категория ПДП по имени) и `ownerType` (тип владельца). Готового слоя
+ * «свободные участки» в API нет — выводим геометрией + назначением.
  * «Свободно» = developable && !built. Мутирует properties; возвращает счётчики.
  */
 export function annotateBuiltParcels(
   parcels: GeoJSON.FeatureCollection,
   buildings: GeoJSON.FeatureCollection,
-): { free: number; built: number; nondev: number } {
+): ParcelCounts {
   const pts: [number, number][] = [];
   for (const b of buildings.features) {
     const r = ringFromFeature(b.geometry);
     if (r && r.length) pts.push(ringCentroid(r));
   }
   let free = 0, built = 0, nondev = 0;
+  const byCategory: ParcelCounts["byCategory"] = {};
+  const byOwner: ParcelCounts["byOwner"] = {};
   for (const p of parcels.features) {
     const ring = ringFromFeature(p.geometry);
     let isBuilt = false;
@@ -149,11 +284,17 @@ export function annotateBuiltParcels(
       }
     }
     const props = (p.properties ?? {}) as Record<string, unknown>;
-    const developable = isDevelopableParcel(String(props.name ?? ""), String(props.target ?? ""));
-    p.properties = { ...props, built: isBuilt, developable };
-    if (isBuilt) built++;
-    else if (developable) free++;
+    const category = categorize(String(props.name ?? ""), String(props.target ?? ""));
+    const developable = CATEGORY_BY_KEY[category].developable;
+    const oType = ownerType(String(props.owner ?? ""));
+    p.properties = { ...props, built: isBuilt, developable, category, ownerType: oType };
+
+    const cc = (byCategory[category] ??= { total: 0, free: 0, built: 0 });
+    cc.total++;
+    if (isBuilt) { built++; cc.built++; }
+    else if (developable) { free++; cc.free++; }
     else nondev++;
+    byOwner[oType] = (byOwner[oType] ?? 0) + 1;
   }
-  return { free, built, nondev };
+  return { total: parcels.features.length, free, built, nondev, byCategory, byOwner };
 }
