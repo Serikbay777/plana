@@ -54,3 +54,11 @@ dist/
 
 # claude
 .claude/
+
+# heavy source assets — kept local, NOT for GitHub (Revit .rvt / large PDFs)
+/docs/Files MUST TEAM/
+
+# local dev artifacts
+*_dev.log
+/.archsmarter_test/
+/.md

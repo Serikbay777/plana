@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import ssl
 import urllib.parse
 import urllib.request
@@ -39,6 +40,7 @@ _LAYERS: dict[str, int] = {
     "red_lines": 5,            # Красные линии существующие (polyline)
 }
 _ZONE_LAYER = 6  # Градостроительный регламент (функциональная зона по точке)
+_PDP_BUILDINGS_LAYER = 7  # «Здания (ПДП)» — запланированные здания + этажность (FLOOR)
 
 _EARTH_LAT_M = 110574.0  # метров на градус широты
 _EARTH_LON_M = 111320.0  # метров на градус долготы на экваторе
@@ -60,6 +62,8 @@ class SiteContext:
     roads: list[Polygon] = field(default_factory=list)
     red_lines: list[LineString] = field(default_factory=list)
     functional_zone: str = ""   # «Жилая»/«Коммерческая»/«Социальная»/«Иная» (Градрегламент)
+    pdp_floors: list[str] = field(default_factory=list)  # этажность по ПДП (как в ГИС, напр. «9», «7,9,12»)
+    pdp_floors_max: int | None = None                    # максимальная этажность по ПДП
     counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -168,6 +172,46 @@ def fetch_site_context(
     except Exception:  # noqa: BLE001 — зона необязательна, не валим весь контекст
         out.functional_zone = ""
 
+    # этажность по ПДП — слой 7 «Здания (ПДП)»: здания, попадающие в контур участка.
+    # Достоверный источник этажности (план города), особенно для пустых участков,
+    # где у самого отвода поле floor не заполнено.
+    try:
+        parcel_poly = Polygon([(p[0], p[1]) for p in parcel_ring_wgs84])
+        poly = json.dumps({"rings": [[[p[0], p[1]] for p in parcel_ring_wgs84]]})
+        pparams = {
+            "where": "1=1", "geometry": poly,
+            "geometryType": "esriGeometryPolygon", "inSR": "4326", "outSR": "4326",
+            "spatialRel": "esriSpatialRelIntersects",
+            "returnGeometry": "true", "geometryPrecision": "6", "outFields": "FLOOR",
+            "resultRecordCount": "50", "f": "json",
+        }
+        purl = f"{_BASE}/{_PDP_BUILDINGS_LAYER}/query?" + urllib.parse.urlencode(pparams)
+        with urllib.request.urlopen(purl, timeout=timeout, context=ctx) as resp:
+            pdata = json.load(resp)
+        seen: list[str] = []
+        nums: list[int] = []
+        for f in pdata.get("features", []):
+            rings = (f.get("geometry") or {}).get("rings") or []
+            if not rings:
+                continue
+            try:
+                centroid = Polygon(rings[0]).centroid
+            except Exception:  # noqa: BLE001 — битая геометрия здания, пропускаем
+                continue
+            # только здания, чей ЦЕНТР внутри участка — иначе ловим соседей
+            if not parcel_poly.contains(centroid):
+                continue
+            raw = str((f.get("attributes") or {}).get("FLOOR", "") or "").strip()
+            if not raw:
+                continue
+            if raw not in seen:
+                seen.append(raw)
+            nums.extend(int(m) for m in re.findall(r"\d+", raw))
+        out.pdp_floors = seen
+        out.pdp_floors_max = max(nums) if nums else None
+    except Exception:  # noqa: BLE001 — ПДП необязателен, не валим контекст
+        pass
+
     return out
 
 
@@ -215,7 +259,12 @@ def fetch_parcels_geojson(bbox, limit: int = 500) -> dict:
         "geometryType": "esriGeometryEnvelope", "inSR": "4326", "outSR": "4326",
         "spatialRel": "esriSpatialRelIntersects", "returnGeometry": "true",
         "geometryPrecision": "6", "f": "json",
-        "outFields": "name,house_klass,floor,apart,house_area",
+        # name/класс/этаж/квартиры/площадь — для ТЭП; owner/target/stadia/
+        # cadastral_number/address — «кому принадлежит» и стадия освоения (панель).
+        "outFields": "name,house_klass,floor,apart,house_area,"
+                     "owner,target,stadia,cadastral_number,address,"
+                     # фактические ТЭП проекта на отводе (этажность/площади/парковка)
+                     "living_area,namber_parcing,real_otvod_pol_area",
         "resultRecordCount": str(limit),
     }
     url = _OTVODY_URL + "?" + urllib.parse.urlencode(params)
@@ -229,8 +278,36 @@ def fetch_parcels_geojson(bbox, limit: int = 500) -> dict:
     return _esri_to_geojson(data)
 
 
-def fetch_neighbors_geojson(bbox, limit: int = 800) -> dict:
-    return _fetch_geojson(f"{_BASE}/{_LAYERS['neighbor_buildings']}/query", bbox, "", limit)
+def _fetch_polygons_json(query_url: str, bbox, limit: int, timeout: float = 90.0) -> dict:
+    """f=json + ручная конвертация в GeoJSON (как для отводов).
+
+    На MapServer «Открытый_контур» формат f=geojson нестабилен — на средних
+    выборках (≈>1k фич) отдаёт «Failed to execute query», тогда как f=json тот же
+    bbox возвращает корректно. maxRecordCount слоя = 2000.
+    """
+    west, south, east, north = bbox
+    params = {
+        "where": "1=1", "geometry": f"{west},{south},{east},{north}",
+        "geometryType": "esriGeometryEnvelope", "inSR": "4326", "outSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects", "returnGeometry": "true",
+        "geometryPrecision": "6", "f": "json", "outFields": "",
+        "resultRecordCount": str(limit),
+    }
+    url = query_url + "?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout, context=_ssl_ctx()) as resp:
+            data = json.load(resp)
+    except Exception as e:  # noqa: BLE001
+        raise SiteContextError(f"GIS json запрос упал: {e}") from e
+    if "error" in data:
+        raise SiteContextError(f"GIS json: {data['error']}")
+    return _esri_to_geojson(data)
+
+
+def fetch_neighbors_geojson(bbox, limit: int = 2000) -> dict:
+    # Слой «Существующие здания» нужен и для отметки «отвод застроен/свободен» —
+    # нужна полнота зданий в кадре. f=json (а не geojson) ради надёжности.
+    return _fetch_polygons_json(f"{_BASE}/{_LAYERS['neighbor_buildings']}/query", bbox, limit)
 
 
 def fetch_redlines_geojson(bbox, limit: int = 500) -> dict:

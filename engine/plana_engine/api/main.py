@@ -262,10 +262,11 @@ class VisualizeFromInputsRequest(BaseModel):
     insolation_priority: bool = True
     insolation_min_hours: float = 2.0
     # ГПЗУ / ПДП
-    max_coverage_pct: float = 0.0
+    max_coverage_pct: float = 0.0   # ЛИМИТ застройки из ГПЗУ (нормоконтроль); 0 = не задан
     max_height_m: float = 30.0
     max_far: float = 0.0      # КИТ из ПДП/ГПЗУ; 0 = не задан
     max_floors: int = 0       # предельная этажность из ПДП/ГПЗУ; 0 = не задан
+    coverage_target_pct: float = 0.0  # цель массинга по % застройки (допущение, не лимит)
     # рендер
     quality: str = "medium"
     # свободный контур участка [[x, y], ...] в метрах. None = прямоугольник.
@@ -313,6 +314,7 @@ def _inputs_from_req(req: VisualizeFromInputsRequest) -> MarketingInputs:
         max_height_m=req.max_height_m,
         max_far=req.max_far,
         max_floors=req.max_floors,
+        coverage_target_pct=req.coverage_target_pct,
         site_polygon=tuple((p[0], p[1]) for p in req.site_polygon) if req.site_polygon else None,
         bedrooms=req.bedrooms,
         bathrooms=req.bathrooms,
@@ -2038,6 +2040,8 @@ class SiteContextResponse(BaseModel):
     roads: list[list[list[float]]] = []
     red_lines: list[list[list[float]]] = []
     functional_zone: str = ""
+    pdp_floors: list[str] = []        # этажность по ПДП (как в ГИС)
+    pdp_floors_max: int | None = None # максимальная этажность по ПДП
     counts: dict[str, int] = {}
 
 
@@ -2066,6 +2070,8 @@ def import_site_context(req: SiteContextRequest) -> SiteContextResponse:
         roads=[poly_coords(p) for p in c.roads],
         red_lines=[line_coords(ls) for ls in c.red_lines],
         functional_zone=c.functional_zone,
+        pdp_floors=c.pdp_floors,
+        pdp_floors_max=c.pdp_floors_max,
         counts=c.counts,
     )
 

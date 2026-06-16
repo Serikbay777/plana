@@ -56,10 +56,14 @@ class MarketingInputs:
     insolation_priority: bool = True
     insolation_min_hours: float = 2.0
 
-    max_coverage_pct: float = 50.0
+    max_coverage_pct: float = 50.0  # ЛИМИТ застройки из ГПЗУ (для нормоконтроля)
     max_height_m: float = 30.0
     max_far: float = 0.0      # КИТ из ПДП/ГПЗУ; 0 = не задан (валидатор молчит)
     max_floors: int = 0       # предельная этажность из ПДП/ГПЗУ; 0 = не задан
+    # Цель массинга по % застройки (наше допущение — формирует пятно). Отделена
+    # от max_coverage_pct (=лимит ГПЗУ), чтобы нормоконтроль не сравнивал
+    # допущение сам с собой. 0 = использовать max_coverage_pct (обратная совм.).
+    coverage_target_pct: float = 0.0
 
     site_polygon: tuple[tuple[float, float], ...] | None = None
 

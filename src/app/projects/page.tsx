@@ -36,9 +36,13 @@ function formatDate(iso: string): string {
 
 function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: string) => void }) {
   const params = project.params as Record<string, unknown>;
-  const floors = params.floors as number | undefined;
+  const isPosadka = params.kind === "posadka";
+  const tep = (params.tep ?? {}) as Record<string, number>;
+  const pp = (params.params ?? {}) as Record<string, unknown>;
+  const floors = (isPosadka ? pp.floors : params.floors) as number | undefined;
   const purpose = params.purpose as string | undefined;
   const thumbs = project.thumbnails ?? (project.thumbnail_url ? [project.thumbnail_url] : []);
+  const href = isPosadka ? `/map?project=${project.id}` : `/app?project=${project.id}`;
 
   return (
     <motion.div
@@ -49,10 +53,19 @@ function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: s
       exit={{ opacity: 0, scale: 0.97 }}
       className="group relative rounded-2xl border border-white/[0.07] bg-white/[0.025] hover:bg-white/[0.04] overflow-hidden transition cursor-pointer"
     >
-      <Link href={`/app?project=${project.id}`} className="block">
+      <Link href={href} className="block">
         {/* Thumbnail grid */}
         <div className="h-40 bg-black/20 overflow-hidden">
-          {thumbs.length === 0 ? (
+          {isPosadka ? (
+            <div className="w-full h-full grid place-items-center bg-gradient-to-br from-emerald-500/10 to-blue-500/10">
+              <div className="text-center">
+                <Layers size={28} className="mx-auto text-emerald-300/40" strokeWidth={1} />
+                <div className="mt-2 text-[12px] text-white/60">
+                  {tep.site_area_m2 ? `${Math.round(tep.site_area_m2).toLocaleString("ru-RU")} м²` : "посадка"}
+                </div>
+              </div>
+            </div>
+          ) : thumbs.length === 0 ? (
             <div className="w-full h-full grid place-items-center">
               <Layers size={32} className="text-white/[0.07]" strokeWidth={1} />
             </div>
@@ -73,7 +86,15 @@ function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: s
         <div className="px-4 py-3">
           <p className="text-[14px] font-medium text-white/90 truncate mb-1">{project.name}</p>
           <div className="flex items-center gap-2 flex-wrap">
-            {purpose && (
+            {isPosadka && (
+              <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300/80">
+                Посадка
+              </span>
+            )}
+            {isPosadka && typeof tep.far === "number" && (
+              <span className="text-[10.5px] text-white/35">КИТ {tep.far}</span>
+            )}
+            {!isPosadka && purpose && (
               <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/50">
                 {PURPOSE_LABEL[purpose] ?? purpose}
               </span>
