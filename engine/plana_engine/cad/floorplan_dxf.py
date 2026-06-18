@@ -344,17 +344,11 @@ class FloorPlanDxfBuilder:
 
     def _avg_apartment_area(self) -> float:
         """Средняя площадь квартиры по проценту микса (площади — из norms по классу)."""
-        s = self.inputs.studio_pct + self.inputs.k1_pct + \
-            self.inputs.k2_pct + self.inputs.k3_pct
-        if s < 0.01:
-            return 50.0
-        area = norms.norms_for(self.inputs.housing_class).apt_area_m2
-        return (
-            area["studio"] * self.inputs.studio_pct +
-            area["k1"] * self.inputs.k1_pct +
-            area["k2"] * self.inputs.k2_pct +
-            area["k3"] * self.inputs.k3_pct
-        ) / s
+        return norms.avg_apartment_area_m2(
+            self.inputs.housing_class,
+            self.inputs.studio_pct, self.inputs.k1_pct,
+            self.inputs.k2_pct, self.inputs.k3_pct,
+        )
 
     # ── 5a. Оконные проёмы ───────────────────────────────────────────────────
 

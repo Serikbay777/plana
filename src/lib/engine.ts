@@ -978,6 +978,21 @@ export type ProjectViolation = {
   target: string;
 };
 
+// Баланс площади участка (шаг 2a): нормы (озеленение + наземный паркинг) → остаток
+// под дом. Коэффициенты — DRAFT (norms.py), уточняются ГПЗУ/ресерчем норм.
+export type PosadkaBalance = {
+  apartments: number;
+  residents: number;
+  parking_spaces: number;
+  parking_area_m2: number;      // наземный паркинг
+  green_required_m2: number;    // озеленение по % класса (на участке)
+  green_per_capita_m2: number;  // подушевая норма (жители × 19 м²) — справочно
+  reserves_m2: number;          // озеленение + паркинг
+  footprint_m2: number;         // фактическое пятно
+  leftover_m2: number;          // участок − резервы − пятно (минус = перебор)
+  fits: boolean;                // озеленение + паркинг + пятно ≤ участка
+};
+
 export type ProjectValidationSummary = {
   site_area_m2: number;
   total_footprint_m2: number;
@@ -989,6 +1004,7 @@ export type ProjectValidationSummary = {
   green_area_m2: number;
   green_pct: number;
   footprints_local?: number[][][];   // пятна застройки в локальных метрах
+  balance?: PosadkaBalance;          // баланс площади участка (2a)
 };
 
 // Контекст участка из GIS (соседи/дороги/красные линии) в локальных метрах.

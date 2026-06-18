@@ -170,6 +170,42 @@ def green_area_m2(site_area_m2: float, housing_class: HousingClass | str | None)
     return site_area_m2 * norms_for(housing_class).green_pct_of_plot / 100.0
 
 
+# Наземное машино-место с долей проезда/манёвра — DRAFT (≈2.5×5.3 стоянка +
+# проезд/разворот). Уточнить по паркинг-нормам РК (см. ресерч норм / СН РК 3.01-01).
+SURFACE_PARKING_SPACE_M2 = 25.0
+
+
+def surface_parking_area_m2(spaces: float) -> float:
+    """Площадь наземного паркинга, м² = число мест × норма места (с проездом)."""
+    return max(0.0, spaces) * SURFACE_PARKING_SPACE_M2
+
+
+def avg_apartment_area_m2(
+    housing_class: HousingClass | str | None,
+    studio_pct: float, k1_pct: float, k2_pct: float, k3_pct: float,
+) -> float:
+    """Средняя площадь квартиры по миксу типов (площади типов — из норм класса)."""
+    s = studio_pct + k1_pct + k2_pct + k3_pct
+    if s < 0.01:
+        return 50.0
+    a = norms_for(housing_class).apt_area_m2
+    return (a["studio"] * studio_pct + a["k1"] * k1_pct
+            + a["k2"] * k2_pct + a["k3"] * k3_pct) / s
+
+
+def estimate_apartments(
+    gfa_m2: float,
+    housing_class: HousingClass | str | None,
+    studio_pct: float, k1_pct: float, k2_pct: float, k3_pct: float,
+) -> int:
+    """Число квартир из общей площади: GFA × продаваемая доля / ср. площадь кв."""
+    avg = avg_apartment_area_m2(housing_class, studio_pct, k1_pct, k2_pct, k3_pct)
+    if avg <= 0:
+        return 0
+    saleable = gfa_m2 * norms_for(housing_class).saleable_ratio
+    return max(0, round(saleable / avg))
+
+
 # ── Обеспеченность (город / на жителя) — СНиП РК ──────────────────────────────
 # Это НЕ геометрия участка, а проверка «хватает ли на жителей» (4-й слой посадки).
 
@@ -212,4 +248,8 @@ __all__ = [
     "norms_for",
     "green_area_m2",
     "parking_ratio",
+    "SURFACE_PARKING_SPACE_M2",
+    "surface_parking_area_m2",
+    "avg_apartment_area_m2",
+    "estimate_apartments",
 ]
