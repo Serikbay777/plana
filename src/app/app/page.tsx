@@ -60,6 +60,8 @@ import {
   type GisMasterplanHandoff,
 } from "@/lib/gis-masterplan-handoff";
 import { svgToPngBlob } from "@/lib/export/toPng";
+import BuildPlotView from "@/components/BuildPlotView";
+import { readPosadkaHandoff, type PosadkaHandoff } from "@/lib/posadkaHandoff";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -67,7 +69,7 @@ import { svgToPngBlob } from "@/lib/export/toPng";
 
 type GenState = "idle" | "loading" | "ready" | "error";
 type CadExportKind = "dxf" | "ifc";
-type TopTab = "site" | "viz" | "ai_plans" | "placement" | "cost_placement" | "pdf_viz" | "arch_drawings";
+type TopTab = "site" | "viz" | "ai_plans" | "placement" | "cost_placement" | "pdf_viz" | "arch_drawings" | "build";
 type VizMode = "exterior" | "floorplan_furniture" | "interior";
 
 function topTabForRun(tab: string): TopTab {
@@ -455,6 +457,8 @@ export default function AppPage() {
   const [selectedGisScenarioKey, setSelectedGisScenarioKey] = useState<string | null>(null);
   const [gisStrategyHint, setGisStrategyHint] = useState(DEFAULT_GIS_STRATEGY_HINT);
   const [gisRenderBag, setGisRenderBag] = useState<ImageBag>(EMPTY_IMAGE_BAG);
+  // Участок, переданный из /map («Перейти к Застройке») — для таба «Застройка».
+  const [handoff, setHandoff] = useState<PosadkaHandoff | null>(null);
 
   // ГПЗУ-импорт PDF → автозаполнение формы (Vision)
   const [gpzuLoading, setGpzuLoading] = useState(false);
@@ -900,6 +904,29 @@ export default function AppPage() {
       setSaveError((e as Error).message || "Не удалось открыть проект");
     });
   }, [authChecked]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- участок из /map (handoff): открыть таб «Застройка» и предзаполнить форму,
+  // чтобы AI Чертежи/Визуализации унаследовали выбранное пятно.
+  useEffect(() => {
+    if (!authChecked) return;
+    const h = readPosadkaHandoff();
+    if (!h) return;
+    setHandoff(h);
+    const wantBuild = new URLSearchParams(window.location.search).get("build");
+    if (!wantBuild) return;
+    setTab("build");
+    restoringRef.current = true;
+    setForm((f) => ({
+      ...f,
+      site_width_m: h.width,
+      site_depth_m: h.height,
+      floors: h.params.floors,
+      purpose: h.params.purpose,
+      max_coverage_pct: h.params.max_coverage_pct,
+      site_polygon: h.local,
+    }));
+    setTimeout(() => { restoringRef.current = false; }, 50);
+  }, [authChecked]);
 
   // ---- сохранение проекта
   const saveProject = useCallback(async () => {
@@ -1540,6 +1567,7 @@ export default function AppPage() {
     : tab === "ai_plans"  ? generateAiPlans
     : tab === "placement" ? generatePlacement
     : tab === "cost_placement" ? (() => {})
+    : tab === "build" ? (() => {})
     : generateViz;
 
   // active state для индикатора loading в кнопке
@@ -1550,6 +1578,7 @@ export default function AppPage() {
     : tab === "ai_plans"  ? currentFloorBag.state === "loading"
     : tab === "placement" ? placementBag.state === "loading"
     : tab === "cost_placement" ? false
+    : tab === "build" ? false
     : vizAnyLoading;
 
   if (!authChecked) {
@@ -1592,10 +1621,10 @@ export default function AppPage() {
 
       <main
         className="flex-1 px-6 pb-6 pt-4 grid gap-4"
-        style={{ gridTemplateColumns: (tab === "placement" || tab === "cost_placement" || tab === "site" || tab === "pdf_viz" || tab === "arch_drawings") ? "1fr" : "300px minmax(0, 1fr)" }}
+        style={{ gridTemplateColumns: (tab === "placement" || tab === "cost_placement" || tab === "site" || tab === "pdf_viz" || tab === "arch_drawings" || tab === "build") ? "1fr" : "300px minmax(0, 1fr)" }}
       >
         {/* LEFT — форма + панель валидации (скрыто на фото-табах) */}
-        {tab !== "placement" && tab !== "cost_placement" && tab !== "site" && tab !== "pdf_viz" && tab !== "arch_drawings" && (
+        {tab !== "placement" && tab !== "cost_placement" && tab !== "site" && tab !== "pdf_viz" && tab !== "arch_drawings" && tab !== "build" && (
           <div className="flex flex-col gap-3 min-h-0">
             <PromptForm
               value={form}
@@ -1774,6 +1803,12 @@ export default function AppPage() {
               onChange={setCostPlacementDraft}
             />
           )}
+          {tab === "build" && (
+            <BuildPlotView
+              handoff={handoff}
+              onProceed={(patch) => { setForm((f) => ({ ...f, ...patch })); setTab("ai_plans"); }}
+            />
+          )}
           <div className={tab === "pdf_viz" ? "flex flex-col flex-1 min-h-0" : "hidden"}>
             <PdfVizTab
               onAutoSave={(pageIndex, asset) => {
@@ -1794,7 +1829,7 @@ export default function AppPage() {
         {historyOpen && (
           <HistoryPanel
             projectId={projectId}
-            currentTab={tab === "cost_placement" ? undefined : tab}
+            currentTab={tab === "cost_placement" || tab === "build" ? undefined : tab}
             onRestoreImages={handleRestoreRun}
             onRestoreParams={handleRestoreParams}
             onClose={() => setHistoryOpen(false)}
@@ -3417,6 +3452,19 @@ function TabStrip({
         >
           <Calculator size={13} />
           Стоимость участка
+        </button>
+        <button
+          data-testid="top-tab-build"
+          onClick={() => onChange("build")}
+          className={[
+            "h-8 px-3.5 rounded-lg text-[12.5px] flex items-center gap-1.5 transition",
+            tab === "build"
+              ? "bg-white text-black font-medium"
+              : "text-white/65 hover:text-white/90 hover:bg-white/[0.04]",
+          ].join(" ")}
+        >
+          <Building2 size={13} />
+          Застройка
         </button>
       </div>
       {/* Экспорт CAD/BIM скрыт по просьбе пользователя.
