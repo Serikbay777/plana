@@ -2087,6 +2087,22 @@ class ProjectValidationViolation(BaseModel):
     target: str = ""
 
 
+class PosadkaBalance(BaseModel):
+    """Баланс площади участка (шаг 2a): сначала нормы (озеленение + наземный
+    паркинг), затем остаток — бюджет под дом. Все площади в м².
+    Коэффициенты — DRAFT (см. norms.py), уточняются ГПЗУ/ресерчем норм."""
+    apartments: int                 # оценка числа квартир (из GFA × прод. доля)
+    residents: int                  # жители (квартиры × заселённость)
+    parking_spaces: int             # требуемые машино-места (квартиры × норма класса)
+    parking_area_m2: float          # площадь наземного паркинга
+    green_required_m2: float        # озеленение по % класса (на участке)
+    green_per_capita_m2: float      # подушевая норма (жители × 19 м²) — справочно
+    reserves_m2: float              # озеленение + паркинг
+    footprint_m2: float             # фактическое пятно застройки
+    leftover_m2: float              # участок − резервы − пятно (минус = перебор)
+    fits: bool                      # озеленение + паркинг + пятно ≤ участка
+
+
 class ProjectValidationSummary(BaseModel):
     """Геометрические метрики проекта, посчитанные через shapely."""
     site_area_m2: float
@@ -2100,6 +2116,7 @@ class ProjectValidationSummary(BaseModel):
     green_pct: float                # % озеленения по классу жилья
     # пятна застройки в ЛОКАЛЬНЫХ метрах (для отрисовки на карте обратной проекцией)
     footprints_local: list[list[list[float]]] = []
+    balance: PosadkaBalance | None = None   # баланс площади участка (2a)
 
 
 class ProjectValidationResponse(BaseModel):
@@ -2170,6 +2187,32 @@ def validate_project_endpoint(
 
     from .. import norms
     green_pct = norms.norms_for(inputs.housing_class).green_pct_of_plot
+
+    # Баланс площади участка (2a): нормы (озеленение + наземный паркинг) → остаток
+    # под дом. Квартиры выводим из ФАКТИЧЕСКОЙ площади проекта (а не из
+    # прямоугольника), чтобы баланс был консистентен с показываемым GFA.
+    gfa = project.total_floor_area_m2
+    apartments = norms.estimate_apartments(
+        gfa, inputs.housing_class,
+        inputs.studio_pct, inputs.k1_pct, inputs.k2_pct, inputs.k3_pct,
+    )
+    p_ratio = norms.parking_ratio(inputs.housing_class, inputs.parking_spaces_per_apt)
+    parking_spaces = max(0, round(apartments * p_ratio))
+    parking_area = round(norms.surface_parking_area_m2(parking_spaces), 1)
+    residents = round(apartments * norms.OBESPECHENNOST["household_persons"])
+    green_req = round(norms.green_area_m2(project.site_area_m2, inputs.housing_class), 1)
+    green_pc = round(residents * norms.OBESPECHENNOST["green_m2_per_capita"], 1)
+    footprint_m2 = round(project.total_footprint_m2, 1)
+    reserves = round(green_req + parking_area, 1)
+    leftover = round(project.site_area_m2 - reserves - footprint_m2, 1)
+    balance = PosadkaBalance(
+        apartments=apartments, residents=residents,
+        parking_spaces=parking_spaces, parking_area_m2=parking_area,
+        green_required_m2=green_req, green_per_capita_m2=green_pc,
+        reserves_m2=reserves, footprint_m2=footprint_m2,
+        leftover_m2=leftover, fits=leftover >= 0,
+    )
+
     summary = ProjectValidationSummary(
         site_area_m2=round(project.site_area_m2, 1),
         total_footprint_m2=round(project.total_footprint_m2, 1),
@@ -2184,6 +2227,7 @@ def validate_project_endpoint(
             [[round(x, 2), round(y, 2)] for x, y in b.footprint.exterior.coords]
             for b in project.buildings
         ],
+        balance=balance,
     )
 
     items = [

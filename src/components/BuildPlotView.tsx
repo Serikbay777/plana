@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Building2, Loader2, ArrowRight, Ruler } from "lucide-react";
-import { validateProject, type ProjectValidationResponse } from "@/lib/engine";
+import { validateProject, type ProjectValidationResponse, type PosadkaBalance } from "@/lib/engine";
 import type { PosadkaHandoff } from "@/lib/posadkaHandoff";
 import type { EnginePurpose } from "@/lib/gis";
 
@@ -207,6 +207,11 @@ function BuildPlotInner({
           </p>
         </div>
 
+        {/* Баланс площади участка (2a): нормы (озеленение+паркинг) → остаток под дом */}
+        {s?.balance && (
+          <BalancePanel b={s.balance} siteArea={s.site_area_m2} greenPct={s.green_pct} coveragePct={s.coverage_pct} />
+        )}
+
         {err && <div className="rounded-xl bg-red-500/10 px-3 py-2 text-[11.5px] text-red-200">{err}</div>}
 
         {/* 8 ТЭП */}
@@ -321,6 +326,66 @@ function PlotCanvas({
         />
       ))}
     </svg>
+  );
+}
+
+// Баланс площади участка (2a): озеленение + паркинг (нормы) → пятно → остаток.
+function BalancePanel({ b, siteArea, greenPct, coveragePct }: {
+  b: PosadkaBalance; siteArea: number; greenPct: number; coveragePct: number;
+}) {
+  const pct = (v: number) => (siteArea > 0 ? (v / siteArea) * 100 : 0);
+  const over = b.leftover_m2 < 0;
+  const freeP = Math.max(0, pct(b.leftover_m2));
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+      <div className="mb-1 text-[12px] font-medium text-white/70">Баланс площади участка</div>
+      <div className="mb-2 text-[10px] text-white/35">
+        Сначала нормы (озеленение + наземный паркинг) → остаток под дом.
+      </div>
+      {/* стек-бар: доли участка */}
+      <div className="mb-2.5 flex h-3 w-full overflow-hidden rounded-full bg-white/[0.05]">
+        <span style={{ width: `${pct(b.green_required_m2)}%`, backgroundColor: "#22c55e" }} />
+        <span style={{ width: `${pct(b.parking_area_m2)}%`, backgroundColor: "#38bdf8" }} />
+        <span style={{ width: `${pct(b.footprint_m2)}%`, backgroundColor: "#f97316" }} />
+        {!over && <span style={{ width: `${freeP}%`, backgroundColor: "#334155" }} />}
+      </div>
+      <div className="space-y-1 text-[11.5px]">
+        <BalRow color="#22c55e" label="Озеленение" note={`${greenPct}%`} value={`${fmt(b.green_required_m2)} м²`} />
+        <BalRow color="#38bdf8" label="Паркинг наземный" note={`${b.parking_spaces} мест`} value={`${fmt(b.parking_area_m2)} м²`} />
+        <BalRow color="#f97316" label="Пятно застройки" note={`${coveragePct}%`} value={`${fmt(b.footprint_m2)} м²`} />
+        <div className="my-1 border-t border-white/[0.06]" />
+        {over ? (
+          <div className="flex items-center justify-between rounded-lg bg-red-500/10 px-2 py-1 text-red-200">
+            <span>Перебор — не помещается</span>
+            <span className="font-medium">−{fmt(Math.abs(b.leftover_m2))} м²</span>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between rounded-lg bg-emerald-500/10 px-2 py-1 text-emerald-200">
+            <span>Свободно под двор/резерв</span>
+            <span className="font-medium">{fmt(b.leftover_m2)} м²</span>
+          </div>
+        )}
+      </div>
+      <dl className="mt-2 space-y-0.5 text-[11px] text-white/55">
+        <KV label="квартир (оценка)">{b.apartments}</KV>
+        <KV label="жителей">{b.residents}</KV>
+        <KV label="озеленение на жителя (город, справочно)">{fmt(b.green_per_capita_m2)} м²</KV>
+      </dl>
+      <p className="mt-1 text-[10px] leading-tight text-white/30">
+        Коэффициенты озеленения/паркинга — черновые (DRAFT), уточняются ГПЗУ и нормами РК.
+      </p>
+    </div>
+  );
+}
+
+function BalRow({ color, label, note, value }: { color: string; label: string; note?: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: color }} />
+      <span className="flex-1 text-white/65">{label}</span>
+      {note && <span className="text-white/35">{note}</span>}
+      <span className="w-20 text-right font-medium text-white/90">{value}</span>
+    </div>
   );
 }
 
