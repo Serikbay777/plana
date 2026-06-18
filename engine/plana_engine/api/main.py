@@ -2296,6 +2296,9 @@ class ProjectValidationSummary(BaseModel):
     # пятна застройки в ЛОКАЛЬНЫХ метрах (для отрисовки на карте обратной проекцией)
     footprints_local: list[list[list[float]]] = []
     balance: PosadkaBalance | None = None   # баланс площади участка (2a)
+    # зоны раскладки (2b) в локальных метрах: озеленение и наземный паркинг
+    green_zones_local: list[list[list[float]]] = []
+    parking_zones_local: list[list[list[float]]] = []
 
 
 class ProjectValidationResponse(BaseModel):
@@ -2392,6 +2395,15 @@ def validate_project_endpoint(
         leftover_m2=leftover, fits=leftover >= 0,
     )
 
+    # Раскладка зон (2b): из свободной площади (участок − пятна) режем наземный
+    # паркинг и озеленение по требуемой площади — для отрисовки в вакууме.
+    from ..domain.site_layout import layout_site_zones
+    zones = layout_site_zones(
+        project.site.boundary,
+        [b.footprint for b in project.buildings],
+        parking_area, green_req,
+    )
+
     summary = ProjectValidationSummary(
         site_area_m2=round(project.site_area_m2, 1),
         total_footprint_m2=round(project.total_footprint_m2, 1),
@@ -2407,6 +2419,8 @@ def validate_project_endpoint(
             for b in project.buildings
         ],
         balance=balance,
+        green_zones_local=zones["green"],
+        parking_zones_local=zones["parking"],
     )
 
     items = [

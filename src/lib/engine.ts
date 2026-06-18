@@ -1005,6 +1005,8 @@ export type ProjectValidationSummary = {
   green_pct: number;
   footprints_local?: number[][][];   // пятна застройки в локальных метрах
   balance?: PosadkaBalance;          // баланс площади участка (2a)
+  green_zones_local?: number[][][];     // зоны озеленения (2b), локальные метры
+  parking_zones_local?: number[][][];   // зоны наземного паркинга (2b)
 };
 
 // Контекст участка из GIS (соседи/дороги/красные линии) в локальных метрах.
