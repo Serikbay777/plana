@@ -17,6 +17,7 @@ import {
   importSiteContext, validateProject,
   type ProjectValidationResponse, type SiteContext,
 } from "@/lib/engine";
+import { writePosadkaHandoff } from "@/lib/posadkaHandoff";
 
 const ASTANA: [number, number] = [71.43, 51.13];
 const MIN_FETCH_ZOOM = 13; // ниже — слишком много отводов
@@ -291,6 +292,23 @@ export default function MapPage() {
       setSaving(false);
     }
   }, [sel, params, result, zone, loadSavedList]);
+
+  // «Перейти к Застройке»: сохраняем участок (история) + кладём его в handoff и
+  // открываем /app, где пятно застройки прорабатывается в вакууме.
+  const goToBuild = useCallback(async () => {
+    if (!sel || !params) return;
+    writePosadkaHandoff({
+      name: sel.name, designation: sel.designation,
+      isHousing: sel.isHousing, isSocial: sel.isSocial,
+      owner: sel.owner, cadastral: sel.cadastral, address: sel.address, zone,
+      local: sel.local, width: sel.width, height: sel.height, ctx: sel.ctx,
+      params,
+      footprints_local: result?.summary.footprints_local ?? [],
+      savedAt: new Date().toISOString(),
+    });
+    try { await saveProject(); } catch { /* персист не критичен для перехода */ }
+    window.location.href = "/app?build=1";
+  }, [sel, params, result, zone, saveProject]);
 
   const loadProject = useCallback(async (id: string) => {
     setErr(null); setLoading(true);
@@ -689,12 +707,16 @@ export default function MapPage() {
             </ul>
 
             <button
-              onClick={saveProject}
+              onClick={goToBuild}
               disabled={saving}
-              className="mt-3 w-full rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {saving ? "Сохраняю…" : "Сохранить проект"}
+              {saving ? "Открываю…" : "Перейти к Застройке →"}
             </button>
+            <p className="mt-1 text-[10px] leading-tight text-gray-400">
+              Сохранит участок и откроет пятно застройки в приложении — там
+              этажность/% застройки/назначение пересчитывают пятно и ТЭП.
+            </p>
             {savedMsg && <p className="mt-1 text-xs text-green-700">{savedMsg}</p>}
           </>
         )}
