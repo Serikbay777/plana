@@ -125,9 +125,17 @@ function BuildPlotInner({
           height={handoff.height}
           redLines={handoff.ctx.red_lines}
           footprints={footprints}
+          greenZones={s?.green_zones_local ?? []}
+          parkingZones={s?.parking_zones_local ?? []}
         />
         <div className="pointer-events-none absolute left-4 top-4 text-[11px] text-white/40">
           участок в вакууме · {Math.round(handoff.width)}×{Math.round(handoff.height)} м
+        </div>
+        <div className="pointer-events-none absolute bottom-4 left-4 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-white/55">
+          <LegendDot color="#22c55e" label="озеленение" />
+          <LegendDot color="#38bdf8" label="паркинг" />
+          <LegendDot color="#f97316" label="пятно дома" />
+          <LegendDot color="#ef4444" label="красные линии" />
         </div>
         {loading && (
           <div className="absolute right-4 top-4 flex items-center gap-1.5 text-[11px] text-cyan-300/80">
@@ -269,16 +277,25 @@ function BuildPlotInner({
   );
 }
 
-// SVG-холст вакуума: участок (контур) + красные линии + пятно застройки.
+// Кольца (внешние + дырки) → один SVG path; рисуется с fill-rule=evenodd.
+function ringsToPath(rings: number[][][], fy: (y: number) => number): string {
+  return rings
+    .map((ring) => ring.map((p, i) => `${i === 0 ? "M" : "L"}${p[0]},${fy(p[1])}`).join(" ") + "Z")
+    .join(" ");
+}
+
+// SVG-холст вакуума: участок (контур) + зоны (озеленение/паркинг) + пятно.
 // Локальные метры; ось Y инвертируется (север вверх).
 function PlotCanvas({
-  local, width, height, redLines, footprints,
+  local, width, height, redLines, footprints, greenZones, parkingZones,
 }: {
   local: [number, number][];
   width: number;
   height: number;
   redLines: number[][][];
   footprints: number[][][];
+  greenZones: number[][][];
+  parkingZones: number[][][];
 }) {
   const pad = useMemo(() => Math.max(width, height) * 0.08 + 4, [width, height]);
   const fy = (y: number) => height - y; // флип: север вверх
@@ -300,6 +317,32 @@ function PlotCanvas({
         vectorEffect="non-scaling-stroke"
         strokeLinejoin="round"
       />
+      {/* зона озеленения (2b) — один path с evenodd (дырка на месте пятна) */}
+      {greenZones.length > 0 && (
+        <path
+          d={ringsToPath(greenZones, fy)}
+          fill="#22c55e"
+          fillOpacity={0.28}
+          fillRule="evenodd"
+          stroke="#16a34a"
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+          strokeLinejoin="round"
+        />
+      )}
+      {/* зона наземного паркинга (2b) */}
+      {parkingZones.length > 0 && (
+        <path
+          d={ringsToPath(parkingZones, fy)}
+          fill="#38bdf8"
+          fillOpacity={0.30}
+          fillRule="evenodd"
+          stroke="#0ea5e9"
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+          strokeLinejoin="round"
+        />
+      )}
       {/* красные линии (если попали в кадр участка) */}
       {redLines.map((line, i) => (
         <polyline
@@ -386,6 +429,15 @@ function BalRow({ color, label, note, value }: { color: string; label: string; n
       {note && <span className="text-white/35">{note}</span>}
       <span className="w-20 text-right font-medium text-white/90">{value}</span>
     </div>
+  );
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1">
+      <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} />
+      {label}
+    </span>
   );
 }
 
