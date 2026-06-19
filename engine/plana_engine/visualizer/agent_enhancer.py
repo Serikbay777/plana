@@ -264,7 +264,7 @@ def _format_inputs_for_critic(inputs: MarketingInputs) -> str:
   • Паркинг: {norms.parking_ratio(inputs.housing_class, inputs.parking_spaces_per_apt)} м/м на квартиру, {inputs.parking_underground_levels} подземных этажа
   • Эвакуация: ≤ {inputs.fire_evacuation_max_m} м, тупиковые ≤ {inputs.fire_dead_end_corridor_max_m} м
   • Инсоляция: {"приоритет инсоляции" if inputs.insolation_priority else "без приоритета"}, мин. {inputs.insolation_min_hours} ч
-  • ГПЗУ: КИТ {inputs.max_coverage_pct}%, высота ≤ {inputs.max_height_m} м
+  • ГПЗУ: застройка ≤ {inputs.max_coverage_pct}%, КИТ {inputs.max_far if inputs.max_far > 0 else round(inputs.floors * inputs.max_coverage_pct / 100, 1)}, высота ≤ {inputs.max_height_m} м
 """
 
 
