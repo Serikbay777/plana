@@ -2042,6 +2042,10 @@ class SiteContextResponse(BaseModel):
     functional_zone: str = ""
     pdp_floors: list[str] = []        # этажность по ПДП (как в ГИС)
     pdp_floors_max: int | None = None # максимальная этажность по ПДП
+    # ПДП-массинг участка (план города) для отрисовки реальных очертаний
+    pdp_buildings: list[list[list[float]]] = []  # дома по ПДП
+    pdp_greenery: list[list[list[float]]] = []   # озеленение по ПДП
+    pdp_roads: list[list[list[float]]] = []       # проезды/парковки по ПДП
     counts: dict[str, int] = {}
 
 
@@ -2072,6 +2076,9 @@ def import_site_context(req: SiteContextRequest) -> SiteContextResponse:
         functional_zone=c.functional_zone,
         pdp_floors=c.pdp_floors,
         pdp_floors_max=c.pdp_floors_max,
+        pdp_buildings=[poly_coords(p) for p in c.pdp_buildings],
+        pdp_greenery=[poly_coords(p) for p in c.pdp_greenery],
+        pdp_roads=[poly_coords(p) for p in c.pdp_roads],
         counts=c.counts,
     )
 

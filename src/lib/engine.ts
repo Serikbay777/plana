@@ -1017,6 +1017,9 @@ export type SiteContext = {
   functional_zone: string;
   pdp_floors?: string[];          // этажность по ПДП (как в ГИС)
   pdp_floors_max?: number | null; // максимальная этажность по ПДП
+  pdp_buildings?: number[][][];   // дома по ПДП (план города) — реальные очертания
+  pdp_greenery?: number[][][];    // озеленение по ПДП
+  pdp_roads?: number[][][];       // проезды/парковки по ПДП
   counts: Record<string, number>;
 };
 

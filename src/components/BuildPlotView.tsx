@@ -101,6 +101,11 @@ function BuildPlotInner({
   const s = result?.summary;
   // Пятно: свежий расчёт, иначе — снимок из посадки (мгновенный показ).
   const footprints = s?.footprints_local ?? handoff.footprints_local;
+  // Есть ли реальный ПДП-массинг участка (дома по плану города)?
+  const pdpBuildings = handoff.ctx.pdp_buildings ?? [];
+  const pdpGreenery = handoff.ctx.pdp_greenery ?? [];
+  const pdpRoads = handoff.ctx.pdp_roads ?? [];
+  const hasPdp = pdpBuildings.length > 0 || pdpGreenery.length > 0 || pdpRoads.length > 0;
 
   const proceed = () => {
     onProceed?.({
@@ -127,14 +132,27 @@ function BuildPlotInner({
           footprints={footprints}
           greenZones={s?.green_zones_local ?? []}
           parkingZones={s?.parking_zones_local ?? []}
+          pdpBuildings={pdpBuildings}
+          pdpGreenery={pdpGreenery}
+          pdpRoads={pdpRoads}
         />
         <div className="pointer-events-none absolute left-4 top-4 text-[11px] text-white/40">
-          участок в вакууме · {Math.round(handoff.width)}×{Math.round(handoff.height)} м
+          {hasPdp ? "ПДП-массинг (план города)" : "предложенный вариант"} · {Math.round(handoff.width)}×{Math.round(handoff.height)} м
         </div>
         <div className="pointer-events-none absolute bottom-4 left-4 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-white/55">
-          <LegendDot color="#22c55e" label="озеленение" />
-          <LegendDot color="#38bdf8" label="паркинг" />
-          <LegendDot color="#f97316" label="пятно дома" />
+          {hasPdp ? (
+            <>
+              <LegendDot color="#f59e0b" label="дома (ПДП)" />
+              <LegendDot color="#22c55e" label="озеленение" />
+              <LegendDot color="#64748b" label="проезды/парковка" />
+            </>
+          ) : (
+            <>
+              <LegendDot color="#22c55e" label="озеленение" />
+              <LegendDot color="#38bdf8" label="паркинг" />
+              <LegendDot color="#f97316" label="пятно дома" />
+            </>
+          )}
           <LegendDot color="#ef4444" label="красные линии" />
         </div>
         {loading && (
@@ -288,6 +306,7 @@ function ringsToPath(rings: number[][][], fy: (y: number) => number): string {
 // Локальные метры; ось Y инвертируется (север вверх).
 function PlotCanvas({
   local, width, height, redLines, footprints, greenZones, parkingZones,
+  pdpBuildings, pdpGreenery, pdpRoads,
 }: {
   local: [number, number][];
   width: number;
@@ -296,7 +315,12 @@ function PlotCanvas({
   footprints: number[][][];
   greenZones: number[][][];
   parkingZones: number[][][];
+  pdpBuildings: number[][][];
+  pdpGreenery: number[][][];
+  pdpRoads: number[][][];
 }) {
+  // Есть реальный ПДП-массинг → рисуем план города; иначе — предложенный вариант.
+  const hasPdp = pdpBuildings.length > 0 || pdpGreenery.length > 0 || pdpRoads.length > 0;
   // Поле вокруг участка во viewBox: ~20% от большей стороны — чтобы участок не
   // упирался в края холста и был целиком виден с запасом (а не «огромным»).
   const pad = useMemo(() => Math.max(width, height) * 0.2 + 8, [width, height]);
@@ -319,32 +343,26 @@ function PlotCanvas({
         vectorEffect="non-scaling-stroke"
         strokeLinejoin="round"
       />
-      {/* зона озеленения (2b) — один path с evenodd (дырка на месте пятна) */}
-      {greenZones.length > 0 && (
-        <path
-          d={ringsToPath(greenZones, fy)}
-          fill="#22c55e"
-          fillOpacity={0.28}
-          fillRule="evenodd"
-          stroke="#16a34a"
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-          strokeLinejoin="round"
-        />
+      {/* ── РЕАЛЬНЫЙ ПДП-МАССИНГ (план города): озеленение + проезды ── */}
+      {hasPdp && pdpGreenery.map((z, i) => (
+        <polygon key={`pg${i}`} points={pts(z)} fill="#22c55e" fillOpacity={0.30}
+          stroke="#16a34a" strokeWidth={0.8} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      ))}
+      {hasPdp && pdpRoads.map((z, i) => (
+        <polygon key={`pr${i}`} points={pts(z)} fill="#64748b" fillOpacity={0.32}
+          stroke="#475569" strokeWidth={0.8} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      ))}
+
+      {/* ── ПРЕДЛОЖЕННЫЙ ВАРИАНТ (если ПДП нет): синтетические зоны ── */}
+      {!hasPdp && greenZones.length > 0 && (
+        <path d={ringsToPath(greenZones, fy)} fill="#22c55e" fillOpacity={0.28} fillRule="evenodd"
+          stroke="#16a34a" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
       )}
-      {/* зона наземного паркинга (2b) */}
-      {parkingZones.length > 0 && (
-        <path
-          d={ringsToPath(parkingZones, fy)}
-          fill="#38bdf8"
-          fillOpacity={0.30}
-          fillRule="evenodd"
-          stroke="#0ea5e9"
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-          strokeLinejoin="round"
-        />
+      {!hasPdp && parkingZones.length > 0 && (
+        <path d={ringsToPath(parkingZones, fy)} fill="#38bdf8" fillOpacity={0.30} fillRule="evenodd"
+          stroke="#0ea5e9" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
       )}
+
       {/* красные линии (если попали в кадр участка) */}
       {redLines.map((line, i) => (
         <polyline
@@ -357,19 +375,17 @@ function PlotCanvas({
           vectorEffect="non-scaling-stroke"
         />
       ))}
-      {/* пятно застройки */}
-      {footprints.map((fp, i) => (
-        <polygon
-          key={`f${i}`}
-          points={pts(fp)}
-          fill="#f97316"
-          fillOpacity={0.55}
-          stroke="#ea580c"
-          strokeWidth={2}
-          vectorEffect="non-scaling-stroke"
-          strokeLinejoin="round"
-        />
-      ))}
+
+      {/* дома: реальные блоки ПДП (амбер) ИЛИ предложенное пятно (оранж) */}
+      {hasPdp
+        ? pdpBuildings.map((b, i) => (
+            <polygon key={`pb${i}`} points={pts(b)} fill="#f59e0b" fillOpacity={0.62}
+              stroke="#b45309" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+          ))
+        : footprints.map((fp, i) => (
+            <polygon key={`f${i}`} points={pts(fp)} fill="#f97316" fillOpacity={0.55}
+              stroke="#ea580c" strokeWidth={2} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+          ))}
     </svg>
   );
 }
