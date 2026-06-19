@@ -297,7 +297,9 @@ function PlotCanvas({
   greenZones: number[][][];
   parkingZones: number[][][];
 }) {
-  const pad = useMemo(() => Math.max(width, height) * 0.08 + 4, [width, height]);
+  // Поле вокруг участка во viewBox: ~20% от большей стороны — чтобы участок не
+  // упирался в края холста и был целиком виден с запасом (а не «огромным»).
+  const pad = useMemo(() => Math.max(width, height) * 0.2 + 8, [width, height]);
   const fy = (y: number) => height - y; // флип: север вверх
   const pts = (ring: number[][]) => ring.map((p) => `${p[0]},${fy(p[1])}`).join(" ");
 
