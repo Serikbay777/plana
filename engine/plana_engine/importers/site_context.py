@@ -40,7 +40,9 @@ _LAYERS: dict[str, int] = {
     "red_lines": 5,            # Красные линии существующие (polyline)
 }
 _ZONE_LAYER = 6  # Градостроительный регламент (функциональная зона по точке)
-_PDP_BUILDINGS_LAYER = 7  # «Здания (ПДП)» — запланированные здания + этажность (FLOOR)
+_PDP_BUILDINGS_LAYER = 7   # «Здания (ПДП)» — запланированные здания + этажность (FLOOR)
+_PDP_GREENERY_LAYER = 14   # «Озеленение (ПДП)» — озеленение по плану (polygon)
+_PDP_ROADS_LAYER = 13      # «Проезжая часть (ПДП)» — проезды/парковки по плану (polygon)
 
 _EARTH_LAT_M = 110574.0  # метров на градус широты
 _EARTH_LON_M = 111320.0  # метров на градус долготы на экваторе
@@ -64,6 +66,11 @@ class SiteContext:
     functional_zone: str = ""   # «Жилая»/«Коммерческая»/«Социальная»/«Иная» (Градрегламент)
     pdp_floors: list[str] = field(default_factory=list)  # этажность по ПДП (как в ГИС, напр. «9», «7,9,12»)
     pdp_floors_max: int | None = None                    # максимальная этажность по ПДП
+    # Фактический ПДП-массинг участка (план города) — для отрисовки реальных
+    # очертаний: дома (слой 7) + озеленение (14) + проезды/парковки (13).
+    pdp_buildings: list[Polygon] = field(default_factory=list)  # дома по ПДП (центр внутри участка)
+    pdp_greenery: list[Polygon] = field(default_factory=list)   # озеленение по ПДП (обрезано по участку)
+    pdp_roads: list[Polygon] = field(default_factory=list)      # проезды/парковки по ПДП (обрезано)
     counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -172,43 +179,66 @@ def fetch_site_context(
     except Exception:  # noqa: BLE001 — зона необязательна, не валим весь контекст
         out.functional_zone = ""
 
-    # этажность по ПДП — слой 7 «Здания (ПДП)»: здания, попадающие в контур участка.
-    # Достоверный источник этажности (план города), особенно для пустых участков,
-    # где у самого отвода поле floor не заполнено.
+    # ПДП-массинг участка (план города): дома (7) + озеленение (14) + проезды (13).
+    # Дома — те, чей ЦЕНТР внутри участка (иначе ловим соседей); озеленение и
+    # проезды/парковки — обрезаем по контуру участка. Всё в локальных метрах.
     try:
-        parcel_poly = Polygon([(p[0], p[1]) for p in parcel_ring_wgs84])
+        parcel_poly = Polygon([(p[0], p[1]) for p in parcel_ring_wgs84])        # WGS84 (центроид)
+        parcel_local = Polygon([to_local(p) for p in parcel_ring_wgs84])        # локальные метры (клип)
         poly = json.dumps({"rings": [[[p[0], p[1]] for p in parcel_ring_wgs84]]})
-        pparams = {
-            "where": "1=1", "geometry": poly,
-            "geometryType": "esriGeometryPolygon", "inSR": "4326", "outSR": "4326",
-            "spatialRel": "esriSpatialRelIntersects",
-            "returnGeometry": "true", "geometryPrecision": "6", "outFields": "FLOOR",
-            "resultRecordCount": "50", "f": "json",
-        }
-        purl = f"{_BASE}/{_PDP_BUILDINGS_LAYER}/query?" + urllib.parse.urlencode(pparams)
-        with urllib.request.urlopen(purl, timeout=timeout, context=ctx) as resp:
-            pdata = json.load(resp)
+
+        def _query_polys(layer_id: int, out_fields: str, limit: int) -> list[dict]:
+            params = {
+                "where": "1=1", "geometry": poly,
+                "geometryType": "esriGeometryPolygon", "inSR": "4326", "outSR": "4326",
+                "spatialRel": "esriSpatialRelIntersects",
+                "returnGeometry": "true", "geometryPrecision": "6", "outFields": out_fields,
+                "resultRecordCount": str(limit), "f": "json",
+            }
+            url = f"{_BASE}/{layer_id}/query?" + urllib.parse.urlencode(params)
+            with urllib.request.urlopen(url, timeout=timeout, context=ctx) as resp:
+                return json.load(resp).get("features", [])
+
+        # дома по ПДП — геометрия + этажность (центр внутри участка)
         seen: list[str] = []
         nums: list[int] = []
-        for f in pdata.get("features", []):
+        for f in _query_polys(_PDP_BUILDINGS_LAYER, "FLOOR", 80):
             rings = (f.get("geometry") or {}).get("rings") or []
             if not rings:
                 continue
             try:
-                centroid = Polygon(rings[0]).centroid
-            except Exception:  # noqa: BLE001 — битая геометрия здания, пропускаем
-                continue
-            # только здания, чей ЦЕНТР внутри участка — иначе ловим соседей
-            if not parcel_poly.contains(centroid):
+                if not parcel_poly.contains(Polygon(rings[0]).centroid):
+                    continue
+                out.pdp_buildings.append(Polygon([to_local(pt) for pt in rings[0]]))
+            except Exception:  # noqa: BLE001 — битая геометрия, пропускаем
                 continue
             raw = str((f.get("attributes") or {}).get("FLOOR", "") or "").strip()
-            if not raw:
-                continue
-            if raw not in seen:
-                seen.append(raw)
-            nums.extend(int(m) for m in re.findall(r"\d+", raw))
+            if raw:
+                if raw not in seen:
+                    seen.append(raw)
+                nums.extend(int(m) for m in re.findall(r"\d+", raw))
         out.pdp_floors = seen
         out.pdp_floors_max = max(nums) if nums else None
+
+        # озеленение (14) и проезды/парковки (13) — обрезаем по контуру участка
+        for layer_id, bucket in ((_PDP_GREENERY_LAYER, out.pdp_greenery),
+                                 (_PDP_ROADS_LAYER, out.pdp_roads)):
+            for f in _query_polys(layer_id, "", 60):
+                rings = (f.get("geometry") or {}).get("rings") or []
+                if not rings:
+                    continue
+                try:
+                    clipped = Polygon([to_local(pt) for pt in rings[0]]).intersection(parcel_local)
+                except Exception:  # noqa: BLE001
+                    continue
+                if clipped.is_empty or clipped.area < 5.0:
+                    continue
+                geoms = clipped.geoms if clipped.geom_type == "MultiPolygon" else [clipped]
+                bucket.extend(g for g in geoms if g.geom_type == "Polygon" and g.area >= 5.0)
+
+        out.counts["pdp_buildings"] = len(out.pdp_buildings)
+        out.counts["pdp_greenery"] = len(out.pdp_greenery)
+        out.counts["pdp_roads"] = len(out.pdp_roads)
     except Exception:  # noqa: BLE001 — ПДП необязателен, не валим контекст
         pass
 
