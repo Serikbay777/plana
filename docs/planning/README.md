@@ -21,6 +21,7 @@
 | [OPERATING_MODEL.md](OPERATING_MODEL.md) | Как использовать Notion, GitHub, плагины и Ralph |
 | [BACKLOG.md](BACKLOG.md) | Приоритетный backlog до подготовки Ralph PRD |
 | [DECISIONS.md](DECISIONS.md) | Открытые и принятые продуктовые решения |
+| [BI_PARTNERSHIP_PLAN.md](BI_PARTNERSHIP_PLAN.md) | План направлений и запрос данных для совместной группы с BI Group |
 | [FUNCTIONAL_AUDIT.md](FUNCTIONAL_AUDIT.md) | Аудит реальных функций: стоимость, история, PDF и действия UI |
 
 Исполняемый PRD Phase 1: [`tasks/prd-stable-honest-mvp.md`](../../tasks/prd-stable-honest-mvp.md).
