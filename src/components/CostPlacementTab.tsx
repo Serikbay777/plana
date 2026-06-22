@@ -2085,7 +2085,11 @@ export function CostPlacementTab({ value, onChange }: Props) {
                         <div className="text-[12.5px] font-medium text-white/85">Class 5 range</div>
                         <div className="text-[10.5px] text-white/38">Screening estimate, not official Kazakhstan estimate documentation</div>
                       </div>
-                      <div className="rounded-full border border-white/[0.07] bg-white/[0.035] px-2.5 py-1 text-[10px] text-white/45">-50% / +50%</div>
+                      <div className="rounded-full border border-white/[0.07] bg-white/[0.035] px-2.5 py-1 text-[10px] text-white/45">
+                        {selected.cost.total_estimate > 0
+                          ? `${Math.round((selected.cost.range_low / selected.cost.total_estimate - 1) * 100)}% / +${Math.round((selected.cost.range_high / selected.cost.total_estimate - 1) * 100)}%`
+                          : "−20% / +30%"}
+                      </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2">
                       <RangeStat label="Low" value={`${fmt(selected.cost.range_low)} ₸`} />

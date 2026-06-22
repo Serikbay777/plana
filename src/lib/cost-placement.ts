@@ -133,8 +133,12 @@ export const DEFAULT_COST_PARAMS: CostParams = {
   open_parking_rate_kzt_m2: 18_000,
   landscape_rate_kzt_m2: 11_000,
   external_utilities_allowance_pct: 8,
-  overheads_pct: 10,
-  profit_pct: 8,
+  // НР (накладные расходы) и сметная прибыль = 0 по умолчанию: укрупнённый
+  // показатель (base_rate) их УЖЕ включает — начислять сверху = двойной счёт.
+  // Та же конвенция, что в бэкенде (aggregate_cost.py: overhead_profit_pct=0).
+  // Поля оставлены конфигурируемыми (CSV-импорт официальных ставок).
+  overheads_pct: 0,
+  profit_pct: 0,
   contingency_pct: 20,
 };
 
@@ -293,6 +297,8 @@ export function estimateCost(
   const cSite = (cRoads + cOpenParking + cLandscape + cUtilities) * siteSlopeMultiplier;
 
   const baseCost = cAbove + cUnderground + cSite;
+  // НР+прибыль обычно 0 (см. DEFAULT_COST_PARAMS) — укрупнённая ставка их уже
+  // содержит; формула оставлена для случая загрузки официальных ставок без них.
   const withOverheads = baseCost * (1 + params.overheads_pct / 100);
   const withProfit = withOverheads * (1 + params.profit_pct / 100);
   const contingency = withProfit * params.contingency_pct / 100;
@@ -307,12 +313,18 @@ export function estimateCost(
     c_site: Math.round(cSite),
     contingency: Math.round(contingency),
     total_estimate: Math.round(totalEstimate),
-    range_low: Math.round(totalEstimate * 0.5),
-    range_high: Math.round(totalEstimate * 1.5),
+    // Диапазон AACE Class 5 −20%/+30% — как в бэкенде (aggregate_cost.py),
+    // а не симметричные ±50%.
+    range_low: Math.round(totalEstimate * 0.8),
+    range_high: Math.round(totalEstimate * 1.3),
     method_meta: {
-      estimate_class: "Conceptual Class 5 screening estimate",
+      estimate_class: "AACE Class 5 (concept screening)",
       rate_source: "Placeholder KZT rates; replace with Kazakhstan USN/UPSS/BNS calibrated dataset",
-      disclaimer: "Not an official Kazakhstan estimate. Use for early option screening only.",
+      disclaimer:
+        "Предварительная расчётная стоимость (укрупнённый показатель стадии " +
+        "посадки), НЕ сметная стоимость. Не является сертифицированной сметой — " +
+        "требует подтверждения аттестованным сметчиком и Госэкспертизой РК. " +
+        "Точность: AACE Class 5, диапазон −20%/+30%.",
       lines: [
         { key: "above", label: "Above-ground building", amount: Math.round(cAbove) },
         { key: "underground", label: "Underground / parking", amount: Math.round(cUnderground) },
