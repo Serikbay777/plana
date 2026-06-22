@@ -29,7 +29,15 @@ RUN pip install --upgrade pip && \
 COPY vendor/ /tmp/oda/
 RUN if ls /tmp/oda/*.deb >/dev/null 2>&1; then \
         apt-get update && \
-        apt-get install -y --no-install-recommends xvfb xauth libxcb-util1 && \
+        apt-get install -y --no-install-recommends \
+            xvfb xauth \
+            libxkbcommon0 libxkbcommon-x11-0 \
+            libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 \
+            libxcb-xkb1 libxcb-util1 libx11-xcb1 libxrender1 libxi6 \
+            libsm6 libice6 libgl1 libegl1 libopengl0 libglib2.0-0 \
+            libdbus-1-3 libfontconfig1 libfreetype6 && \
         apt-get install -y --no-install-recommends /tmp/oda/*.deb && \
         ( ln -sf /usr/lib/x86_64-linux-gnu/libxcb-util.so.1 \
                  /usr/lib/x86_64-linux-gnu/libxcb-util.so.0 || true ) && \
