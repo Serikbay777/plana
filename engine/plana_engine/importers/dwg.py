@@ -27,6 +27,12 @@ class DwgConversionResult:
 
 
 @dataclass(frozen=True)
+class DwgExportResult:
+    dwg_bytes: bytes
+    converter: str
+
+
+@dataclass(frozen=True)
 class _Converter:
     kind: str
     path: str
@@ -51,6 +57,58 @@ def dwg_to_dxf(dwg_bytes: bytes, *, filename: str = "input.dwg", timeout_s: int 
         else:
             dxf_bytes = _convert_with_libredwg(converter.path, root, dwg_bytes, filename, timeout_s)
     return DwgConversionResult(dxf_bytes=dxf_bytes, converter=converter.kind)
+
+
+def dxf_to_dwg(
+    dxf_bytes: bytes,
+    *,
+    filename: str = "floorplan.dxf",
+    out_version: str = "ACAD2018",
+    timeout_s: int = 90,
+) -> DwgExportResult:
+    """Convert ASCII DXF bytes to DWG bytes through an external converter.
+
+    Mirror of :func:`dwg_to_dxf` for the export direction. Only the ODA File
+    Converter qualifies here: LibreDWG ``dwg2dxf`` is one-way (DWG→DXF), so the
+    LibreDWG fallback used for import is not usable for export.
+    """
+    if not dxf_bytes:
+        raise DwgConversionError("empty DXF")
+
+    converter = _find_oda_converter()
+    if converter is None:
+        raise DwgConversionError(
+            "DWG export requires the ODA File Converter (DXF→DWG). Install it and "
+            "set ODA_FILE_CONVERTER / PLANA_DWG_CONVERTER. LibreDWG dwg2dxf cannot "
+            "export DWG."
+        )
+
+    with tempfile.TemporaryDirectory(prefix="plana-dxf2dwg-") as tmp:
+        dwg_bytes = _convert_with_oda_to_dwg(
+            converter.path, Path(tmp), dxf_bytes, filename, out_version, timeout_s
+        )
+    return DwgExportResult(dwg_bytes=dwg_bytes, converter=converter.kind)
+
+
+def _find_oda_converter() -> _Converter | None:
+    """Find an ODA File Converter only (used for export; ignores LibreDWG)."""
+    explicit = (
+        os.environ.get("PLANA_DWG_CONVERTER")
+        or os.environ.get("ODA_FILE_CONVERTER")
+    )
+    if explicit:
+        return _Converter("oda", explicit)
+
+    for candidate in ("ODAFileConverter", "ODAFileConverter.exe"):
+        found = shutil.which(candidate)
+        if found:
+            return _Converter("oda", found)
+
+    for candidate_path in _common_oda_paths():
+        if candidate_path.exists():
+            return _Converter("oda", str(candidate_path))
+
+    return None
 
 
 def _find_converter() -> _Converter | None:
@@ -135,6 +193,38 @@ def _convert_with_oda(
     return out_file.read_bytes()
 
 
+def _convert_with_oda_to_dwg(
+    bin_path: str,
+    root: Path,
+    dxf_bytes: bytes,
+    filename: str,
+    out_version: str,
+    timeout_s: int,
+) -> bytes:
+    in_dir = root / "in"
+    out_dir = root / "out"
+    in_dir.mkdir()
+    out_dir.mkdir()
+    safe_name = _safe_dxf_filename(filename)
+    in_file = in_dir / safe_name
+    in_file.write_bytes(dxf_bytes)
+
+    # ODAFileConverter <in> <out> <out_version> <out_format> <recurse> <audit> [filter]
+    result = subprocess.run(
+        [bin_path, str(in_dir), str(out_dir), out_version, "DWG", "0", "1", "*.DXF"],
+        capture_output=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise DwgConversionError(_format_converter_error("ODA File Converter", result))
+
+    out_file = _find_output_dwg(out_dir, in_file.stem)
+    if out_file is None:
+        raise DwgConversionError("ODA File Converter finished but produced no DWG output")
+    return out_file.read_bytes()
+
+
 def _convert_with_libredwg(
     bin_path: str,
     root: Path,
@@ -165,6 +255,23 @@ def _safe_dwg_filename(filename: str) -> str:
     return f"{clean or 'input'}.dwg"
 
 
+def _safe_dxf_filename(filename: str) -> str:
+    stem = Path(filename or "floorplan.dxf").stem or "floorplan"
+    clean = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in stem)[:80]
+    return f"{clean or 'floorplan'}.dxf"
+
+
+def _find_output_dwg(out_dir: Path, stem: str) -> Path | None:
+    exact = out_dir / f"{stem}.dwg"
+    if exact.exists():
+        return exact
+    exact_upper = out_dir / f"{stem}.DWG"
+    if exact_upper.exists():
+        return exact_upper
+    found = sorted(out_dir.glob("*.dwg")) + sorted(out_dir.glob("*.DWG"))
+    return found[0] if found else None
+
+
 def _find_output_dxf(out_dir: Path, stem: str) -> Path | None:
     exact = out_dir / f"{stem}.dxf"
     if exact.exists():
@@ -183,4 +290,10 @@ def _format_converter_error(name: str, result: subprocess.CompletedProcess[bytes
     return f"{name} failed: {detail[:1200]}"
 
 
-__all__ = ["DwgConversionError", "DwgConversionResult", "dwg_to_dxf"]
+__all__ = [
+    "DwgConversionError",
+    "DwgConversionResult",
+    "DwgExportResult",
+    "dwg_to_dxf",
+    "dxf_to_dwg",
+]

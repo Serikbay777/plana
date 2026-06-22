@@ -10,6 +10,7 @@
 - `POST /visualize/interior-gallery`          — интерьер по типам квартир (text-to-image × N)
 - `POST /validate/project`                    — проверка норм РК + ГПЗУ (domain model + shapely)
 - `POST /export/floorplan-dxf`                — DXF плана типового этажа
+- `POST /export/floorplan-dwg`                — DWG плана типового этажа (DXF→DWG через ODA)
 - `POST /export/floorplan-ifc`                — IFC4 (BIM) плана типового этажа
 - `POST /export/floorplan-metrics`            — только метрики этажа (быстрый расчёт)
 - `POST /import/floorplan-dxf`                — DXF пользователя → summary/preview JSON
@@ -2970,6 +2971,46 @@ def export_floorplan_dxf(req: VisualizeFromInputsRequest) -> Response:
             "Access-Control-Expose-Headers":
                 "X-Apartments-Count, X-Floor-Area, X-Living-Area, "
                 "X-Efficiency-Pct, X-Sections",
+        },
+    )
+
+
+@app.post("/export/floorplan-dwg")
+def export_floorplan_dwg(req: VisualizeFromInputsRequest) -> Response:
+    """Сгенерировать DWG плана типового этажа (нативный формат AutoCAD/Revit).
+
+    Та же реальная геометрия, что и /export/floorplan-dxf, но конвертированная
+    DXF→DWG внешним ODA File Converter. Если конвертер не установлен — 503 с
+    понятным сообщением (PNG/PDF/DXF остаются доступны).
+    """
+    from ..importers.dwg import DwgConversionError, dxf_to_dwg
+
+    inputs = _inputs_from_req(req)
+    try:
+        dxf_bytes = build_floorplan_dxf(inputs)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DXF build failed: {e}")
+
+    try:
+        converted = dxf_to_dwg(dxf_bytes, filename="plana-floorplan.dxf")
+    except DwgConversionError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    metrics = compute_floorplan_metrics(inputs)
+    return Response(
+        content=converted.dwg_bytes,
+        media_type="application/acad",
+        headers={
+            "Content-Disposition": "attachment; filename=plana-floorplan.dwg",
+            "X-Apartments-Count": str(metrics.apartments_count),
+            "X-Floor-Area": f"{metrics.total_floor_area_m2}",
+            "X-Living-Area": f"{metrics.living_area_estimate_m2}",
+            "X-Efficiency-Pct": f"{metrics.efficiency_pct}",
+            "X-Sections": str(metrics.sections_count),
+            "X-Converter": converted.converter,
+            "Access-Control-Expose-Headers":
+                "X-Apartments-Count, X-Floor-Area, X-Living-Area, "
+                "X-Efficiency-Pct, X-Sections, X-Converter",
         },
     )
 

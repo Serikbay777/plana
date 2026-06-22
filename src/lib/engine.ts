@@ -921,6 +921,37 @@ export async function exportFloorplanDxf(
 }
 
 /**
+ * Скачать DWG плана типового этажа (нативный формат AutoCAD/Revit).
+ *
+ * Та же геометрия, что у DXF, но конвертированная DXF→DWG через ODA File
+ * Converter на бэке. Если конвертер не установлен, бэк вернёт 503 — вызывающий
+ * код должен показать понятную ошибку и оставить DXF/PDF как fallback.
+ */
+export async function exportFloorplanDwg(
+  req: VisualizeFromInputsRequest,
+): Promise<{ blob: Blob; filename: string; metricsHeaders: Record<string, string> }> {
+  const res = await fetch(`${ENGINE_URL}/export/floorplan-dwg`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new EngineError(res.status, await res.text());
+
+  const blob = await res.blob();
+  return {
+    blob,
+    filename: "plana-floorplan.dwg",
+    metricsHeaders: {
+      apartments: res.headers.get("X-Apartments-Count") ?? "",
+      floorArea: res.headers.get("X-Floor-Area") ?? "",
+      livingArea: res.headers.get("X-Living-Area") ?? "",
+      efficiency: res.headers.get("X-Efficiency-Pct") ?? "",
+      sections: res.headers.get("X-Sections") ?? "",
+    },
+  };
+}
+
+/**
  * Скачать IFC4 плана этажа (BIM-заготовка для Revit/ArchiCAD/BIMcollab).
  *
  * Возвращает blob + базовые проектные метрики из заголовков.
