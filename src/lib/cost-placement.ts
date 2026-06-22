@@ -111,20 +111,26 @@ export type PlacementOptions = {
 
 export const DEFAULT_COST_PARAMS: CostParams = {
   currency: "KZT",
-  // Placeholder conceptual rates. Replace with Kazakhstan USN/UPSS, BNS,
-  // calibrated project rows, and versioned source metadata before production.
-  base_rate_kzt_m2: 140_000,
+  // Ставки откалиброваны под канонический бэкенд-движок
+  // engine/plana_engine/cost/aggregate_cost.py (единый источник чисел):
+  // base × region_coeff × quality_coeff воспроизводит backend
+  // региональную ставку × классовый фактор.
+  //   default 256k; Алматы 290k, Астана 280k, Шымкент 305k, Актобе 144k.
+  //   классовые факторы: эконом 1.0 / комфорт 1.15 / бизнес 1.4.
+  // Это бенчмарк stat.gov.kz (official=False), НЕ лицензированный УПСС РК.
+  // Site-works (roads/parking/landscape) бэкенд не моделирует — остаются здесь.
+  base_rate_kzt_m2: 256_000,
   region_coefficients: {
-    Almaty: 1.18,
-    Astana: 1.12,
-    Shymkent: 0.98,
-    Aktobe: 0.96,
+    Almaty: 1.133,
+    Astana: 1.094,
+    Shymkent: 1.191,
+    Aktobe: 0.5625,
     default: 1,
   },
   quality_coefficients: {
-    economy: 0.92,
-    comfort: 1,
-    business: 1.22,
+    economy: 1.0,
+    comfort: 1.15,
+    business: 1.4,
   },
   underground_factor: 1.3,
   soil_factor: 1.25,
