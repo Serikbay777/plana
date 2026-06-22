@@ -1245,6 +1245,10 @@ export type AggregateCostRequest = {
   region?: string;
   building_type?: string;
   n_floors?: number;
+  residential_class?: string;
+  construction_type?: string;
+  parking_spaces?: number;
+  parking_rate_per_space?: number;
 };
 
 export async function costAggregate(
