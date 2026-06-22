@@ -19,7 +19,7 @@ import { IfcViewerModal } from "@/components/IfcViewerModal";
 import { PromptForm, DEFAULT_PROMPT_FORM, type PromptFormState } from "@/components/PromptForm";
 import {
   generateFloorLayout,
-  exportFloorplanDxf, exportFloorplanIfc,
+  exportFloorplanDxf, exportFloorplanDwg, exportFloorplanIfc,
   visualizeSheet,
   type LayoutFloor, type LayoutDoor, type LayoutWindow, type LayoutSide,
   type LayoutFurniture,
@@ -50,7 +50,7 @@ import { matchHotkey } from "@/lib/hotkeys";
 
 type Status = "idle" | "loading" | "ready" | "error";
 
-type ExportKind = "dxf" | "ifc" | "viz";
+type ExportKind = "dxf" | "dwg" | "ifc" | "viz";
 
 
 // buildVisReq: PromptFormState → VisualizeFromInputsRequest для бэкенда.
@@ -268,6 +268,25 @@ export function ArchitecturalDrawingsTab({
     }
   };
 
+  const handleExportDwg = async () => {
+    if (!result || exportBusy) return;
+    setExportBusy("dwg");
+    try {
+      const { blob, filename } = await exportFloorplanDwg(result.inputs);
+      downloadBlob(blob, filename);
+    } catch (e) {
+      const msg = (e as Error).message;
+      // 503 — ODA-конвертер не установлен на сервере; подсказываем fallback.
+      setError(
+        msg.includes("503") || msg.toLowerCase().includes("oda")
+          ? "DWG недоступен: на сервере не установлен ODA File Converter. Используйте DXF или IFC."
+          : `DWG: ${msg}`,
+      );
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
   const handleExportIfc = async () => {
     if (!result || exportBusy) return;
     setExportBusy("ifc");
@@ -425,6 +444,14 @@ export function ArchitecturalDrawingsTab({
               className="h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-violet-400/30 text-violet-200/90 hover:bg-violet-500/15 transition disabled:opacity-40"
             >
               {exportBusy === "dxf" ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} DXF
+            </button>
+            <button
+              onClick={handleExportDwg}
+              disabled={exportBusy !== null}
+              title="Скачать нативный DWG (требует ODA File Converter на сервере)"
+              className="h-7 px-3 rounded-full text-[11.5px] flex items-center gap-1.5 border border-amber-400/30 text-amber-200/90 hover:bg-amber-500/15 transition disabled:opacity-40"
+            >
+              {exportBusy === "dwg" ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} DWG
             </button>
             <button
               onClick={handleExportIfc}
