@@ -38,6 +38,36 @@ def test_no_converter_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         dxf_to_dwg(b"0\nSECTION\n", filename="x.dxf")
 
 
+def test_dangling_env_path_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Несуществующий ODA_FILE_CONVERTER (как в образе без vendored .deb) не
+    должен выдаваться за рабочий конвертер — иначе будет 500 вместо 503.
+
+    Машинно-независимо: если на хосте есть настоящий ODA, finder может вернуть
+    его через fallback — но никогда сам висячий explicit-путь."""
+    dangling = "/usr/local/bin/oda-convert-does-not-exist"
+    monkeypatch.delenv("PLANA_DWG_CONVERTER", raising=False)
+    monkeypatch.setenv("ODA_FILE_CONVERTER", dangling)
+    res = dwg_mod._find_oda_converter()
+    assert res is None or res.path != dangling
+
+
+def test_real_roundtrip_if_available() -> None:
+    """Настоящая конвертация DXF→DWG, если ODA установлен (иначе skip)."""
+    if dwg_mod._find_oda_converter() is None:
+        pytest.skip("ODA File Converter not installed on this host")
+
+    from plana_engine.cad.floorplan_dxf import build_floorplan_dxf
+    from plana_engine.visualizer.marketing_prompt import MarketingInputs
+
+    dxf_bytes = build_floorplan_dxf(
+        MarketingInputs(site_width_m=30.0, site_depth_m=15.0, floors=5, sections=2)
+    )
+    res = dxf_to_dwg(dxf_bytes, filename="rt.dxf")
+    # DWG-файлы начинаются с маркера версии "AC10xx".
+    assert res.dwg_bytes[:2] == b"AC"
+    assert len(res.dwg_bytes) > 1000
+
+
 # ── endpoint wiring ────────────────────────────────────────────────────────
 
 

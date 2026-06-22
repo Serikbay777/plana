@@ -62,3 +62,9 @@ dist/
 *_dev.log
 /.archsmarter_test/
 /.md
+
+# ODA File Converter — heavy vendored binary + trial activator, kept local
+/engine/vendor/*.deb
+/engine/vendor/*.rpm
+/engine/vendor/*.AppImage
+/docs/ODATrial.zip

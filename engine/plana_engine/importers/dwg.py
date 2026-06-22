@@ -91,12 +91,18 @@ def dxf_to_dwg(
 
 
 def _find_oda_converter() -> _Converter | None:
-    """Find an ODA File Converter only (used for export; ignores LibreDWG)."""
+    """Find an ODA File Converter only (used for export; ignores LibreDWG).
+
+    The explicit env path is validated for existence: the Docker image sets
+    ODA_FILE_CONVERTER unconditionally, but the wrapper only exists when an ODA
+    .deb was vendored. A dangling path must fall through to None (→ HTTP 503),
+    not be returned (→ subprocess FileNotFoundError → HTTP 500).
+    """
     explicit = (
         os.environ.get("PLANA_DWG_CONVERTER")
         or os.environ.get("ODA_FILE_CONVERTER")
     )
-    if explicit:
+    if explicit and (os.path.exists(explicit) or shutil.which(explicit)):
         return _Converter("oda", explicit)
 
     for candidate in ("ODAFileConverter", "ODAFileConverter.exe"):
