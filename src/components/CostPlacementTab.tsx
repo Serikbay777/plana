@@ -176,9 +176,9 @@ const DEFAULT_COST_ASSUMPTIONS: CostAssumptions = {
   contingencyPct: DEFAULT_COST_PARAMS.contingency_pct,
   vatIncluded: false,
   rateSourceType: "placeholder",
-  rateSourceName: "Internal MVP placeholder rate table",
+  rateSourceName: "stat.gov.kz benchmark, aligned with backend engine (aggregate_cost.py)",
   rateSourceYear: "2025/2026",
-  lastUpdated: "2026-06-05",
+  lastUpdated: "2026-06-22",
   confidenceLevel: "low",
   uploadedRateFileName: null,
   uploadedRateKeys: [],
@@ -803,14 +803,14 @@ function buildSourceRegistry(input: {
   if (placeholderRateKeys.length > 0) {
     entries.push({
       id: "rates.placeholder",
-      label: "MVP placeholder rate table",
+      label: "Benchmark rate table (backend-aligned)",
       sourceType: "placeholder",
-      sourceName: "Internal MVP placeholder rate table",
+      sourceName: "stat.gov.kz benchmark, aligned with backend engine (aggregate_cost.py)",
       sourceYear: state.rateSourceYear,
       lastUpdated: state.lastUpdated,
       confidenceLevel: "low",
       appliesTo: placeholderRateKeys.map(sourceFieldLabel),
-      note: "Temporary screening assumptions. Replace with official or calibrated Kazakhstan sources before client use.",
+      note: "Same benchmark rates as the backend cost engine (official=False). Replace with licensed УПСС РК before client use.",
     });
   }
 
