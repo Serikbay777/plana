@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, BarChart3, Calculator, CheckCircle2, Coins, Info, Map as MapIcon } from "lucide-react";
 import {
   analyzeSiteImageRisks,
+  costAggregate,
   explainCostSnapshot,
   extractCostInputsFromBrief,
+  type AggregateCostEstimate,
   type CostAnalystExplanation,
   type CostInputExtractionResponse,
   type SiteImageRiskAnalysisResponse,
@@ -306,6 +308,21 @@ type RevenueScenario = {
 const fmt = (n: number) => Math.round(n).toLocaleString("ru-RU");
 const pct = (n: number) => `${Math.round(n * 10) / 10}%`;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+// Маппинг локальных значений вкладки → формат канонического бэкенд-движка
+// (/cost/aggregate, engine/plana_engine/cost/aggregate_cost.py).
+const REGION_TO_BACKEND: Record<Region, string> = {
+  Almaty: "Алматы",
+  Astana: "Астана",
+  Shymkent: "Шымкент",
+  Aktobe: "Актобе",
+  default: "default",
+};
+const CLASS_TO_BACKEND: Record<QualityClass, string> = {
+  economy: "эконом",
+  comfort: "комфорт",
+  business: "бизнес",
+};
 
 type RateImportPatch = Partial<Omit<CostParams, "currency" | "region_coefficients" | "quality_coefficients">> & {
   region_coefficients?: Partial<Record<Region, number>>;
@@ -1231,6 +1248,41 @@ export function CostPlacementTab({ value, onChange }: Props) {
   const cheapest = model.rows.find((row) => row.isCheapest) ?? model.rows[0];
   const geoSuggestion = deriveGeoRegion(value);
 
+  // Авторитетная стоимость строительства из ЕДИНОГО бэкенд-движка
+  // (/cost/aggregate). Клиентская модель ниже (site-works/revenue/feasibility)
+  // остаётся, но «головная» цифра строительства берётся из одного источника.
+  // Fallback: если бэкенд недоступен — показываем клиентскую модель как раньше.
+  const [backendCost, setBackendCost] = useState<AggregateCostEstimate | null>(null);
+  const [backendCostError, setBackendCostError] = useState<string | null>(null);
+  const backendGfa = Math.round((value.gfa_above_ground_m2 || 0) + (value.gfa_underground_m2 || 0));
+  const backendParking = selected?.placement.parking_spots ?? value.parking_spots ?? 0;
+  const firstBackendRun = useRef(true);
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      if (backendGfa <= 0) {
+        if (!cancelled) { setBackendCost(null); setBackendCostError(null); }
+        return;
+      }
+      try {
+        const res = await costAggregate({
+          gfa_m2: backendGfa,
+          region: REGION_TO_BACKEND[value.region] ?? "default",
+          residential_class: CLASS_TO_BACKEND[value.quality_class],
+          parking_spaces: backendParking,
+        });
+        if (!cancelled) { setBackendCost(res); setBackendCostError(null); }
+      } catch (e) {
+        if (!cancelled) {
+          setBackendCost(null);
+          setBackendCostError(e instanceof Error ? e.message : "backend cost unavailable");
+        }
+      }
+    }, firstBackendRun.current ? 100 : 400);
+    firstBackendRun.current = false;
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [backendGfa, backendParking, value.region, value.quality_class]);
+
   const update = <K extends keyof CostPlacementDraft>(key: K, next: CostPlacementDraft[K]) => {
     const fieldSources = Object.prototype.hasOwnProperty.call(COST_AI_FIELD_LABELS, key)
       ? { ...(value.costAssumptions.fieldSources ?? {}), [key]: "manual" as AssumptionFieldSource }
@@ -1988,6 +2040,38 @@ export function CostPlacementTab({ value, onChange }: Props) {
                       <div data-testid="cost-placement-total" className="text-[20px] font-semibold text-white/90 tabular-nums">{fmt(selected.cost.total_estimate)} ₸</div>
                       <div className="text-[10.5px] text-white/35">AACE Class 5</div>
                     </div>
+                  </div>
+
+                  <div data-testid="cost-backend-authoritative" className="mb-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.05] p-3.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[12px] font-medium text-amber-100/85">
+                        Единый движок · стоимость строительства (укрупнённо)
+                      </div>
+                      {backendCost && (
+                        <div className="text-[15px] font-semibold tabular-nums text-amber-200">{fmt(backendCost.total)} ₸</div>
+                      )}
+                    </div>
+                    {backendCost ? (
+                      <>
+                        <div className="mt-1 text-[10.5px] tabular-nums text-white/45">
+                          диапазон {fmt(backendCost.total_low)} … {fmt(backendCost.total_high)} ₸ · {backendCost.estimate_class}
+                        </div>
+                        <div className="mt-1 text-[10px] leading-relaxed text-white/42">
+                          Базовая (СМР) {fmt(backendCost.rate_per_m2)} ₸/м² · источник: бэкенд /cost/aggregate
+                          (тот же движок, что в обзорной панели). Работы по участку не входят — см. модель ниже.
+                        </div>
+                        <div className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-200/70">
+                          <Info size={11} className="mt-0.5 shrink-0" />
+                          <span>{backendCost.disclaimer}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="mt-1 text-[10.5px] leading-relaxed text-white/42">
+                        {backendCostError
+                          ? `Бэкенд-движок недоступен (${backendCostError}); ниже — клиентская модель.`
+                          : "Расчёт…"}
+                      </div>
+                    )}
                   </div>
 
                   <div data-testid="cost-placement-class5-range" className="mb-4 rounded-xl border border-white/[0.07] bg-black/10 p-3.5">
